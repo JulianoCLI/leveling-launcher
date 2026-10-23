@@ -1,0 +1,182 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum PromotionOutcome {
+  PROMOTION_OUTCOME_UNSPECIFIED = 0;
+  PROMOTION_OUTCOME_VICTORY = 1;
+  PROMOTION_OUTCOME_DEFEAT = 2;
+}
+
+message AllocateStats {
+  repeated StatAmount points = 1;
+}
+
+message AllocateStatsResult {
+  repeated StatAmount allocated = 1;
+  uint32 remaining_points = 2;
+}
+
+message PreviewStats {
+  repeated StatAmount points = 1;
+}
+
+message PreviewStatsResult {
+  DerivedStats current = 1;
+  DerivedStats preview = 2;
+}
+
+message ResetStats {
+}
+
+message ResetStatsResult {
+  uint32 refunded_stat_points = 1;
+  RespecCost paid = 5;
+}
+
+message ResetTalents {
+}
+
+message ResetTalentsResult {
+  uint32 refunded_talent_points = 1;
+}
+
+message AllocateTalent {
+  string node_id = 1;
+  uint32 levels = 2;
+}
+
+message AllocateTalentResult {
+  string node_id = 1;
+  uint32 level = 2;
+  uint32 remaining_points = 3;
+}
+
+message ChooseClass {
+  string class_id = 1;
+}
+
+message ChooseClassResult {
+  string class_id = 1;
+}
+
+message ChangeClass {
+  string class_id = 1;
+  bool pay_with_diamonds = 2;
+}
+
+message ChangeClassResult {
+  string class_id = 1;
+  uint64 diamonds_spent = 2;
+}
+
+message Rename {
+  string name = 1;
+}
+
+message RenameResult {
+  string name = 1;
+  uint64 diamonds_spent = 2;
+}
+
+message ChangeGender {
+  Gender gender = 1;
+}
+
+message ChangeGenderResult {
+  Gender gender = 1;
+  string skin_id = 2;
+  uint64 diamonds_spent = 3;
+}
+
+message SetProfileLook {
+  string title_id = 1;
+  string frame_id = 2;
+  string background_id = 3;
+  string medal_id = 4;
+}
+
+message SetProfileLookResult {
+  string title_id = 1;
+  string frame_id = 2;
+  string background_id = 3;
+  string medal_id = 4;
+}
+
+message SetSkin {
+  string skin_id = 1;
+}
+
+message SetSkinResult {
+  string skin_id = 1;
+}
+
+message SetAppearance {
+  string hair_style = 1;
+  optional uint32 hair_color = 2;
+  string eye_style = 3;
+  optional uint32 eye_color = 4;
+  bool clear_hair_style = 5;
+  bool clear_hair_color = 6;
+  bool clear_eye_style = 7;
+  bool clear_eye_color = 8;
+  string skin_tone = 9;
+  bool clear_skin_tone = 10;
+}
+
+message SetAppearanceResult {
+  HunterAppearance appearance = 1;
+  uint64 gold_spent = 2;
+}
+
+message BuyHairStyle {
+  string hair_style = 1;
+}
+
+message BuyHairStyleResult {
+  string hair_style = 1;
+  repeated string owned_hair_styles = 2;
+  uint64 diamonds_spent = 3;
+  uint64 gold_spent = 4;
+}
+
+message SetAutomation {
+  Automation automation = 1;
+}
+
+message SetAutomationResult {
+  Automation automation = 1;
+}
+
+message Promotion {
+
+  oneof op {
+    bool info = 1;
+    bool start = 2;
+  }
+}
+
+message PromotionRank {
+  string id = 1;
+  string name = 2;
+  uint32 level = 3;
+  string boss_id = 5;
+  uint32 boss_level = 6;
+  uint64 boss_hp = 7;
+  uint64 boss_damage = 8;
+  uint64 boss_defense = 9;
+  uint32 time_limit_secs = 10;
+  double enrage_mult = 11;
+  string scene_id = 12;
+}
+
+message PromotionState {
+  uint32 rank = 1;
+  repeated PromotionRank ranks = 2;
+  bool active = 4;
+  bool notice = 5;
+  PromotionOutcome outcome = 6;
+  uint32 outcome_rank = 7;
+}
+

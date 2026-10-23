@@ -1,0 +1,522 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum MarketKind {
+  MARKET_KIND_UNSPECIFIED = 0;
+  MARKET_KIND_ITEM = 1;
+  MARKET_KIND_SHADOW = 2;
+  MARKET_KIND_EXCHANGE = 3;
+}
+
+enum MarketCurrency {
+  MARKET_CURRENCY_UNSPECIFIED = 0;
+  MARKET_CURRENCY_GOLD = 1;
+  MARKET_CURRENCY_DIAMOND = 2;
+  MARKET_CURRENCY_TOKEN = 3;
+}
+
+enum MarketStatus {
+  MARKET_STATUS_UNSPECIFIED = 0;
+  MARKET_STATUS_ACTIVE = 1;
+  MARKET_STATUS_SOLD = 2;
+  MARKET_STATUS_EXPIRED = 3;
+  MARKET_STATUS_CANCELED = 4;
+}
+
+enum MarketOfferStatus {
+  MARKET_OFFER_STATUS_UNSPECIFIED = 0;
+  MARKET_OFFER_STATUS_PENDING = 1;
+  MARKET_OFFER_STATUS_ACCEPTED = 2;
+  MARKET_OFFER_STATUS_DECLINED = 3;
+  MARKET_OFFER_STATUS_WITHDRAWN = 4;
+  MARKET_OFFER_STATUS_EXPIRED = 5;
+}
+
+enum LookSort {
+  LOOK_SORT_NEWEST = 0;
+  LOOK_SORT_PRICE_ASC = 1;
+  LOOK_SORT_PRICE_DESC = 2;
+}
+
+message MarketConfig {
+  repeated string categories = 1;
+  repeated string sorts = 2;
+  repeated uint32 durations_hours = 3;
+  double sale_fee = 4;
+  uint32 listing_limit = 5;
+  uint32 page_size = 6;
+  uint64 price_max = 7;
+  uint32 quantity_max = 8;
+  uint64 exchange_gold_min = 9;
+  uint64 exchange_gold_max = 10;
+  uint64 exchange_diamond_min = 11;
+  uint64 exchange_diamond_max = 12;
+  uint64 diamond_deposit = 13;
+}
+
+message MarketShadowInfo {
+  string monster_id = 1;
+  string rank = 2;
+  uint32 level = 3;
+  string quality = 5;
+  uint32 potential_total = 8;
+  string specialization = 9;
+  uint32 power = 4;
+  bool awakened = 6;
+}
+
+message MarketListing {
+  uint64 id = 1;
+  MarketKind kind = 2;
+  MarketStatus status = 3;
+  MarketCurrency currency = 4;
+  uint64 unit_price = 5;
+  uint64 quantity = 6;
+  uint64 total = 7;
+  string name = 8;
+  string category = 9;
+  string def_id = 10;
+  string slot = 11;
+  string rarity = 12;
+  uint32 level = 13;
+  uint32 enchant = 14;
+  MarketShadowInfo shadow = 15;
+  MarketCurrency offer_currency = 16;
+  string seller_name = 17;
+  bool mine = 18;
+  int64 created_at_ms = 19;
+  int64 expires_at_ms = 20;
+  string buyer_name = 21;
+  int64 closed_at_ms = 22;
+  ItemInstance item = 23;
+  Shadow shadow_full = 24;
+  bool offer_only = 25;
+  uint32 pending_offers = 26;
+  MarketOffer my_offer = 27;
+  uint64 best_offer = 28;
+  uint64 best_offer_diamonds = 29;
+  uint64 min_offer_gold = 30;
+  uint64 min_offer_diamonds = 31;
+  uint64 deposit = 32;
+}
+
+message MarketSearch {
+  string category = 1;
+  MarketKind kind = 2;
+  MarketCurrency currency = 3;
+  string name = 4;
+  repeated string def_ids = 5;
+  string rarity = 6;
+  string slot = 7;
+  string def_id = 8;
+  optional uint64 price_min = 9;
+  optional uint64 price_max = 10;
+  optional uint32 level_min = 11;
+  optional uint32 level_max = 12;
+  optional uint32 enchant_min = 13;
+  optional uint32 enchant_max = 14;
+  optional uint64 quantity_min = 15;
+  string shadow_rank = 16;
+  string shadow_monster = 18;
+  string shadow_quality = 17;
+  string shadow_specialization = 29;
+  optional uint32 shadow_level_min = 19;
+  optional uint32 shadow_level_max = 20;
+  optional uint32 shadow_power_min = 21;
+  optional uint32 shadow_power_max = 22;
+  bool shadow_awakened = 23;
+  string sort = 24;
+  uint32 page = 25;
+  bool offer_only = 26;
+  string class_id = 27;
+}
+
+message MarketPage {
+  repeated MarketListing listings = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 page_size = 4;
+  uint32 pages = 5;
+}
+
+message MarketGet {
+  uint64 id = 1;
+}
+
+message MarketPriceStats {
+  uint32 sales = 1;
+  uint64 lowest_sold = 2;
+  uint64 highest_sold = 3;
+  uint64 average_sold = 4;
+  uint32 active_listings = 5;
+  uint64 units_on_sale = 6;
+  uint64 lowest_now = 7;
+  uint64 highest_now = 8;
+}
+
+message MarketDetail {
+  MarketListing listing = 1;
+  MarketPriceStats prices = 2;
+}
+
+message MarketMine {
+}
+
+message MarketMyListings {
+  repeated MarketListing listings = 1;
+  uint32 active = 2;
+  uint32 limit = 3;
+}
+
+message MarketHistory {
+}
+
+message MarketSale {
+  uint64 id = 1;
+  uint64 listing_id = 2;
+  MarketKind kind = 3;
+  string def_id = 4;
+  string name = 5;
+  string category = 6;
+  string rarity = 7;
+  uint32 enchant = 8;
+  MarketCurrency currency = 9;
+  uint64 quantity = 10;
+  uint64 unit_price = 11;
+  uint64 total = 12;
+  uint64 fee = 13;
+  uint64 net = 14;
+  int64 sold_at_ms = 15;
+  string seller_name = 16;
+  string buyer_name = 17;
+}
+
+message MarketSales {
+  repeated MarketSale sales = 1;
+}
+
+message MarketOverviewRequest {
+}
+
+message MarketOverview {
+  uint32 active_listings = 1;
+  uint64 total_sales = 2;
+  uint64 gold_moved = 3;
+  uint64 diamonds_moved = 4;
+}
+
+message MarketGetConfig {
+}
+
+message MarketCreate {
+  MarketKind kind = 1;
+  uint64 item_uid = 2;
+  uint32 quantity = 3;
+  uint64 shadow_uid = 4;
+  MarketCurrency currency = 5;
+  uint64 unit_price = 6;
+  uint32 hours = 7;
+  MarketCurrency offer_currency = 8;
+  uint64 offer_amount = 9;
+  bool offer_only = 10;
+  uint64 min_offer_gold = 11;
+  uint64 min_offer_diamonds = 12;
+}
+
+message MarketCreated {
+  MarketListing listing = 1;
+}
+
+message MarketBuy {
+  uint64 id = 1;
+  uint64 quantity = 2;
+}
+
+message MarketBought {
+  uint64 id = 1;
+  MarketKind kind = 2;
+  MarketCurrency currency = 3;
+  uint64 total = 4;
+  bool to_mail = 5;
+  uint64 quantity = 6;
+  uint64 remaining = 7;
+}
+
+message MarketExchangeBundle {
+  repeated uint64 listing_ids = 1;
+  uint64 max_total = 2;
+  MarketCurrency currency = 3;
+}
+
+message MarketBundleBought {
+  repeated uint64 ids = 1;
+  MarketCurrency currency = 2;
+  uint64 total = 3;
+  MarketCurrency received_currency = 4;
+  uint64 received = 5;
+  uint32 listings = 6;
+  uint32 sellers = 7;
+}
+
+message MarketCancel {
+  uint64 id = 1;
+}
+
+message MarketCanceled {
+  uint64 id = 1;
+  bool to_mail = 2;
+}
+
+message MarketOffer {
+  uint64 id = 1;
+  uint64 listing_id = 2;
+  MarketOfferStatus status = 3;
+  MarketCurrency currency = 4;
+  uint64 amount = 5;
+  string buyer_name = 6;
+  int64 created_at_ms = 7;
+  int64 closed_at_ms = 8;
+  bool mine = 9;
+  MarketListing listing = 10;
+}
+
+message MarketOfferMake {
+  uint64 listing_id = 1;
+  uint64 amount = 2;
+  MarketCurrency currency = 3;
+}
+
+message MarketOfferWithdraw {
+  uint64 id = 1;
+}
+
+message MarketListingOffers {
+  uint64 listing_id = 1;
+}
+
+message MarketOfferRespond {
+  uint64 id = 1;
+  bool accept = 2;
+}
+
+message MarketMyOffers {
+}
+
+message MarketOfferList {
+  repeated MarketOffer offers = 1;
+}
+
+message MarketOfferDone {
+  MarketOffer offer = 1;
+}
+
+message MarketRequest {
+
+  oneof op {
+    MarketGetConfig config = 1;
+    MarketSearch search = 2;
+    MarketGet get = 3;
+    MarketMine mine = 4;
+    MarketHistory history = 5;
+    MarketCreate create = 6;
+    MarketBuy buy = 7;
+    MarketCancel cancel = 8;
+    MarketOverviewRequest overview = 9;
+    MarketOfferMake offer_make = 10;
+    MarketOfferWithdraw offer_withdraw = 11;
+    MarketListingOffers listing_offers = 12;
+    MarketOfferRespond offer_respond = 13;
+    MarketMyOffers my_offers = 14;
+    MarketExchangeBundle exchange_bundle = 15;
+    LookSearch look_search = 16;
+    LookMine look_mine = 17;
+    LookSell look_sell = 18;
+    LookBuy look_buy = 19;
+    LookCancel look_cancel = 20;
+    LookGift look_gift = 21;
+    MarketPriceHint price_hint = 22;
+    LookSellable look_sellable = 23;
+  }
+}
+
+message MarketResponse {
+
+  oneof result {
+    MarketConfig config = 1;
+    MarketPage page = 2;
+    MarketDetail detail = 3;
+    MarketMyListings mine = 4;
+    MarketSales history = 5;
+    MarketCreated created = 6;
+    MarketBought bought = 7;
+    MarketCanceled canceled = 8;
+    MarketOverview overview = 9;
+    MarketOfferDone offer_made = 10;
+    MarketOfferDone offer_withdrawn = 11;
+    MarketOfferList listing_offers = 12;
+    MarketOfferDone offer_responded = 13;
+    MarketOfferList my_offers = 14;
+    MarketBundleBought bundle_bought = 15;
+    LookPage look_page = 16;
+    LookPage look_mine = 17;
+    LookDone look_done = 18;
+    MarketPriceHintResult price_hint = 19;
+    LookSellableResult look_sellable = 20;
+  }
+}
+
+message MarketPriceHint {
+  string def_id = 1;
+  string rarity = 2;
+  MarketCurrency currency = 3;
+  uint32 days = 4;
+}
+
+message MarketPriceHintResult {
+  uint32 sales = 1;
+  uint64 average = 2;
+  uint64 median = 3;
+  uint64 lowest_sold = 4;
+  uint64 highest_sold = 5;
+  uint64 lowest_now = 6;
+  uint32 days = 7;
+}
+
+message LookItem {
+  string kind = 1;
+  string id = 2;
+}
+
+message LookListing {
+  uint64 id = 1;
+  string look_id = 2;
+  string seller = 3;
+  MarketCurrency currency = 4;
+  uint64 price = 5;
+  int64 expires_at_ms = 6;
+  bool mine = 7;
+  uint32 status = 8;
+  string buyer = 9;
+  int64 closed_at_ms = 10;
+  uint64 fee = 11;
+  int64 created_at_ms = 12;
+  string package_id = 13;
+  repeated LookItem items = 14;
+}
+
+message LookSearch {
+  repeated string look_ids = 1;
+  uint32 page = 2;
+  repeated string package_ids = 3;
+  MarketCurrency currency = 4;
+  LookSort sort = 5;
+}
+
+message LookMine {
+}
+
+message LookPage {
+  repeated LookListing listings = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 page_size = 4;
+  uint32 max_open = 5;
+  uint32 fee_percent = 6;
+}
+
+message LookSell {
+  string look_id = 1;
+  MarketCurrency currency = 2;
+  uint64 price = 3;
+  uint32 hours = 4;
+  string package_id = 5;
+}
+
+message LookBuy {
+  uint64 id = 1;
+}
+
+message LookCancel {
+  uint64 id = 1;
+}
+
+message LookGift {
+  string look_id = 1;
+  string to = 2;
+}
+
+message LookDone {
+  string look_id = 1;
+  uint64 listing_id = 2;
+  uint64 price = 3;
+  MarketCurrency currency = 4;
+  string to = 5;
+  string package_id = 6;
+}
+
+message LookSellable {
+}
+
+message LookSellablePackage {
+  string package_id = 1;
+  repeated LookItem items = 2;
+  bool sellable = 3;
+  string reason = 4;
+  repeated LookItem missing = 5;
+  repeated LookItem bound = 6;
+}
+
+message LookSellableResult {
+  repeated LookSellablePackage packages = 1;
+  uint32 max_open = 2;
+  uint32 fee_percent = 3;
+  uint32 open = 4;
+}
+
+message MarketSold {
+  uint64 listing_id = 1;
+  MarketKind kind = 2;
+  string name = 3;
+  uint64 quantity = 4;
+  MarketCurrency currency = 5;
+  uint64 total = 6;
+  uint64 fee = 7;
+  uint64 net = 8;
+  string def_id = 9;
+  uint64 deposit = 10;
+}
+
+message MarketOfferUpdate {
+  MarketOffer offer = 1;
+}
+
+message MarketPush {
+
+  oneof event {
+    MarketSold sold = 1;
+    MarketOfferUpdate offer = 2;
+  }
+}
+
+message MarketLogEntry {
+  uint64 id = 1;
+  uint64 listing_id = 2;
+  string action = 3;
+  string actor = 4;
+  string detail = 5;
+  int64 at_ms = 6;
+}
+
+message MarketAdminResult {
+  repeated MarketListing listings = 1;
+  repeated MarketSale sales = 2;
+  repeated MarketLogEntry logs = 3;
+  string term = 4;
+  repeated MarketOffer offers = 5;
+  uint32 offers_pending = 6;
+  uint64 offers_held_gold = 7;
+  uint64 offers_held_diamonds = 8;
+}
+

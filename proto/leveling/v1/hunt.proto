@@ -1,0 +1,394 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum BossDungeonOutcome {
+  BOSS_DUNGEON_OUTCOME_UNSPECIFIED = 0;
+  BOSS_DUNGEON_OUTCOME_VICTORY = 1;
+  BOSS_DUNGEON_OUTCOME_DEFEAT = 2;
+  BOSS_DUNGEON_OUTCOME_ABORTED = 3;
+}
+
+enum ChannelLoad {
+  CHANNEL_LOAD_UNSPECIFIED = 0;
+  CHANNEL_LOAD_NORMAL = 1;
+  CHANNEL_LOAD_BUSY = 2;
+  CHANNEL_LOAD_FULL = 3;
+}
+
+message HuntPrefs {
+  uint32 tier_min = 1;
+  string difficulty = 2;
+  uint32 streak = 3;
+  uint32 best_streak = 4;
+  uint64 boss_kills = 5;
+  uint64 bosses_cleared = 6;
+  DeathReport last_death = 7;
+}
+
+message DeathReport {
+  int64 died_at_ms = 1;
+  string gate_id = 2;
+  uint32 tier_min = 3;
+  uint32 tier_max = 4;
+  string difficulty = 5;
+  uint64 xp_lost = 6;
+  float xp_lost_pct = 7;
+}
+
+message StartHunt {
+  string gate_id = 1;
+  uint32 tier_min = 2;
+  string difficulty = 3;
+}
+
+message StartHuntResult {
+  string gate_id = 1;
+  uint32 tier_min = 2;
+  string difficulty = 3;
+  string scene_id = 4;
+}
+
+message LeaveHunt {
+}
+
+message LeaveHuntResult {
+  string scene_id = 1;
+}
+
+message ResetHuntStats {
+}
+
+message ResetHuntStatsResult {
+  HuntSession session = 1;
+}
+
+message EnterBossDungeon {
+  string key_id = 1;
+  uint32 runs = 2;
+}
+
+message StopBossAuto {
+}
+
+message BossAutoState {
+  string key_id = 1;
+  uint32 run = 2;
+  uint32 total = 3;
+  string ended = 4;
+}
+
+message EnterBossDungeonResult {
+  uint64 attempt_id = 1;
+  string boss_id = 2;
+  string scene_id = 3;
+}
+
+message BossDungeonResult {
+  uint64 attempt_id = 1;
+  string boss_id = 2;
+  BossDungeonOutcome outcome = 3;
+  uint64 gold = 4;
+  uint64 xp = 5;
+}
+
+message HuntSession {
+  string gate_id = 1;
+  uint32 tier_min = 2;
+  string difficulty = 3;
+  string boss_id = 4;
+  int64 started_at_ms = 5;
+  uint64 kills = 6;
+  uint64 xp = 7;
+  uint64 gold = 8;
+  uint64 chests = 9;
+  uint64 gold_spent = 10;
+  repeated ItemCount drops = 11;
+  uint32 wave = 12;
+  uint32 streak = 13;
+  int64 red_portal_until_ms = 16;
+  string dungeon_id = 17;
+  uint32 dungeon_wave = 18;
+  uint32 dungeon_waves = 19;
+  int64 exit_at_ms = 21;
+}
+
+message FightRules {
+  uint32 hp_potion_limit = 1;
+  uint32 hp_potions_remaining = 2;
+  uint32 hp_potion_cooldown_ms = 3;
+  uint32 hp_potion_cooldown_secs = 4;
+  bool no_heal_items = 5;
+  bool no_revive = 6;
+  uint64 instance_id = 7;
+}
+
+message EnterDungeon {
+  string dungeon_id = 1;
+  bool party = 2;
+}
+
+message EnterDungeonResult {
+  string dungeon_id = 1;
+  string scene_id = 2;
+  uint64 run_id = 3;
+}
+
+message DungeonList {
+}
+
+message DungeonStatus {
+  string id = 1;
+  uint32 pity = 3;
+}
+
+message DungeonListResult {
+  repeated DungeonStatus dungeons = 1;
+}
+
+message DungeonProgress {
+  string dungeon_id = 1;
+  uint32 wave = 2;
+  uint32 waves = 3;
+  bool boss = 4;
+  bool cleared = 5;
+}
+
+message DungeonResult {
+  string dungeon_id = 1;
+  string boss_id = 2;
+  repeated ItemInstance items = 4;
+  bool mailed = 5;
+  bool unique = 6;
+  uint32 fight_ms = 7;
+  uint64 xp = 10;
+  uint64 gold = 11;
+}
+
+message UseConsumable {
+  ConsumableKind kind = 1;
+  PotionTier tier = 2;
+}
+
+message UseConsumableResult {
+  ConsumableKind kind = 1;
+  PotionTier tier = 2;
+  uint32 remaining = 3;
+}
+
+message DeathState {
+  bool dead = 1;
+  int64 died_at_ms = 2;
+  int64 auto_return_at_ms = 3;
+  uint64 xp_lost = 4;
+  bool revive_blocked = 5;
+  bool spectator = 6;
+  bool no_heal_items = 7;
+  float xp_lost_pct = 8;
+}
+
+message Revive {
+  PotionTier tier = 1;
+}
+
+message ReviveResult {
+  PotionTier tier = 1;
+  uint32 remaining = 2;
+}
+
+message GiveUp {
+}
+
+message GiveUpResult {
+  string scene_id = 1;
+}
+
+message DismissDeathReport {
+  int64 died_at_ms = 1;
+}
+
+message DismissDeathReportResult {
+}
+
+message Travel {
+  string scene_id = 1;
+  uint32 channel = 2;
+}
+
+message TravelResult {
+  string scene_id = 1;
+  uint32 channel = 2;
+}
+
+message ChannelList {
+}
+
+message ChannelInfo {
+  uint32 number = 1;
+  uint32 players = 2;
+  uint32 capacity = 3;
+  ChannelLoad load = 4;
+  bool current = 5;
+  bool recommended = 6;
+  uint32 friends = 7;
+  uint32 guild_mates = 8;
+  bool fresh = 9;
+}
+
+message ChannelListResult {
+  string scene_id = 1;
+  repeated ChannelInfo channels = 2;
+  uint32 current = 3;
+  int64 cooldown_until_ms = 4;
+  string blocked = 5;
+}
+
+message SwitchChannel {
+  uint32 channel = 1;
+}
+
+message SwitchChannelResult {
+  uint32 channel = 1;
+  int64 cooldown_until_ms = 2;
+}
+
+message Fenda {
+
+  oneof op {
+    bool info = 1;
+    FendaStart start = 2;
+  }
+}
+
+message FendaStart {
+  string id = 1;
+  uint32 tier = 2;
+}
+
+message FendaReward {
+  string item_id = 1;
+  bool random_gem = 2;
+  uint32 qty = 3;
+  uint32 level = 4;
+  double chance = 5;
+}
+
+message FendaTier {
+  uint32 tier = 1;
+  uint32 boss_level = 2;
+  uint64 boss_hp = 3;
+  uint64 boss_damage = 4;
+  uint64 boss_defense = 5;
+  uint32 recommended_level = 6;
+  string recommended_shadow_rank = 7;
+  uint64 fee = 8;
+  repeated FendaReward first_clear = 9;
+  repeated FendaReward repeat = 10;
+}
+
+message FendaBoardLine {
+  uint32 position = 1;
+  uint64 account = 2;
+  string name = 3;
+  uint32 tier = 4;
+  uint32 time_ms = 5;
+  int64 at_ms = 6;
+}
+
+message FendaBoss {
+  string id = 1;
+  string boss_id = 2;
+  repeated string mechanics = 3;
+  uint32 enrage_secs = 4;
+  repeated FendaTier tiers = 5;
+  uint32 best_tier = 6;
+  uint32 best_ms = 7;
+  repeated FendaBoardLine top = 8;
+  bool daily_free = 9;
+  bool daily_loot = 10;
+}
+
+message FendaState {
+  repeated FendaBoss bosses = 1;
+  string active = 2;
+  uint32 active_tier = 3;
+  string scene_id = 4;
+  int64 daily_resets_at_ms = 5;
+  double daily_gem_chance = 6;
+}
+
+message FendaResult {
+  string id = 1;
+  string boss_id = 2;
+  uint32 tier = 3;
+  bool victory = 4;
+  uint32 time_ms = 5;
+  bool first_clear = 6;
+  repeated ItemInstance items = 7;
+  bool mailed = 8;
+  bool new_best = 9;
+  uint32 position = 10;
+  bool daily_loot = 11;
+}
+
+message DailyBoss {
+
+  oneof op {
+    bool info = 1;
+    string start = 2;
+  }
+}
+
+message DailyBossTime {
+  uint32 position = 1;
+  uint64 account = 2;
+  string name = 3;
+  uint32 hunter_rank = 4;
+  uint32 time_ms = 5;
+  int64 at_ms = 6;
+}
+
+message DailyBossEntry {
+  string id = 1;
+  uint32 rank = 2;
+  uint32 min_level = 3;
+  uint32 item_level_cap = 4;
+  uint32 gem_level = 5;
+  string boss_id = 6;
+  uint32 boss_level = 7;
+  uint64 boss_hp = 8;
+  uint64 boss_damage = 9;
+  uint64 boss_defense = 10;
+  uint32 time_limit_secs = 11;
+  double enrage_mult = 12;
+  bool done_today = 13;
+  repeated DailyBossTime top = 14;
+  uint32 my_best_ms = 15;
+  string scene_id = 16;
+}
+
+message DailyBossRarity {
+  string rarity = 1;
+  double chance = 2;
+}
+
+message DailyBossState {
+  repeated DailyBossEntry bosses = 1;
+  repeated DailyBossRarity rarities = 2;
+  int64 reset_at_ms = 3;
+  string active = 4;
+}
+
+message DailyBossResult {
+  string id = 1;
+  string boss_id = 2;
+  bool victory = 3;
+  uint32 time_ms = 4;
+  ItemInstance item = 5;
+  ItemInstance gem = 6;
+  bool mailed = 7;
+  bool new_record = 8;
+  uint32 position = 9;
+}
+

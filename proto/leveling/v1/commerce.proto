@@ -1,0 +1,852 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum PayMethod {
+  PAY_METHOD_UNSPECIFIED = 0;
+  PAY_METHOD_CARD = 1;
+  PAY_METHOD_PIX = 2;
+  PAY_METHOD_STRIPE = 3;
+  PAY_METHOD_STRIPE_PIX = 4;
+}
+
+enum PartnerList {
+  PARTNER_LIST_COMMISSIONS = 0;
+  PARTNER_LIST_REFERRED = 1;
+  PARTNER_LIST_WITHDRAWALS = 2;
+  PARTNER_LIST_ENTRIES = 3;
+}
+
+message CommercePaging {
+  uint32 page = 1;
+  uint32 per_page = 2;
+}
+
+message CommercePageInfo {
+  uint64 total = 1;
+  uint32 page = 2;
+  uint32 per_page = 3;
+}
+
+message CommercePeriod {
+  int64 since_ms = 1;
+  int64 until_ms = 2;
+}
+
+message CommerceOrder {
+  uint64 id = 1;
+  uint64 account_id = 2;
+  string username = 3;
+  string provider = 4;
+  string method = 5;
+  uint64 diamonds = 6;
+  int64 amount_cents = 7;
+  string status = 8;
+  string actor = 9;
+  string note = 10;
+  int64 created_at_ms = 11;
+  string provider_ref = 12;
+  string product = 13;
+  string product_name = 14;
+}
+
+message CommerceDelivery {
+  uint64 order_id = 1;
+  uint64 diamonds = 2;
+  int64 amount_cents = 3;
+  string referral_program = 4;
+  uint64 referral_bonus = 5;
+  string referrer = 6;
+  bool repeated = 7;
+  bool online = 8;
+}
+
+message FinanceSummary {
+  int64 revenue_cents = 1;
+  uint64 orders = 2;
+  uint64 diamonds = 3;
+  uint64 buyers = 4;
+  int64 reversed_cents = 5;
+  uint64 reversed_orders = 6;
+  uint64 test_diamonds = 7;
+}
+
+message TopBuyer {
+  uint64 account_id = 1;
+  string username = 2;
+  int64 total_cents = 3;
+  uint64 diamonds = 4;
+  uint64 orders = 5;
+}
+
+message CommerceMethodsGet {
+}
+
+message CommerceMethods {
+  bool card = 1;
+  bool pix = 2;
+  uint64 pending_diamonds = 3;
+  uint32 min_diamonds = 4;
+  uint32 max_diamonds = 5;
+  uint32 card_fee_bps = 6;
+  int64 card_fee_fixed_cents = 7;
+  bool stripe = 8;
+  bool stripe_pix = 9;
+}
+
+message CommerceCheckout {
+  PayMethod method = 1;
+  uint32 diamonds = 2;
+  string lang = 3;
+}
+
+message CommerceCheckoutResult {
+  PayMethod method = 1;
+  uint32 diamonds = 2;
+  int64 amount_cents = 3;
+  string url = 4;
+  string pix_code = 5;
+  string pix_qr_base64 = 6;
+  string pix_expires_at = 7;
+  string product = 8;
+  string product_name = 9;
+  int64 reserved_until_ms = 10;
+}
+
+message CommerceClaimPending {
+}
+
+message CommerceClaimed {
+  uint64 diamonds = 1;
+  uint64 balance = 2;
+}
+
+message CommerceHistoryGet {
+  CommercePaging paging = 1;
+}
+
+message CommerceHistory {
+  repeated CommerceOrder orders = 1;
+  CommercePageInfo page = 2;
+}
+
+message CommerceTestCredit {
+  uint32 diamonds = 1;
+}
+
+message ReferralGet {
+  CommercePaging paging = 1;
+}
+
+message ReferralBonusRow {
+  uint64 id = 1;
+  string referred = 2;
+  uint64 base_diamonds = 3;
+  uint32 rate_bp = 4;
+  uint64 diamonds = 5;
+  uint64 withheld = 6;
+  uint64 credited = 7;
+  string rule = 8;
+  string state = 9;
+  int64 created_at_ms = 10;
+}
+
+message ReferralReferred {
+  string name = 1;
+  int64 created_at_ms = 2;
+  uint64 generated = 3;
+  uint64 purchases = 4;
+}
+
+message ReferralOverview {
+  string code = 1;
+  uint32 rate_bp = 2;
+  string referred_by = 3;
+  uint64 referred_count = 4;
+  uint64 buyers = 5;
+  uint64 generated = 6;
+  uint64 reversed = 7;
+  uint64 to_compensate = 8;
+  repeated ReferralBonusRow history = 9;
+  CommercePageInfo page = 10;
+  repeated ReferralReferred referred = 11;
+  bool is_partner = 12;
+}
+
+message PartnerTerms {
+  uint64 id = 1;
+  optional uint32 rate_bp = 2;
+  string base = 3;
+  optional uint32 deduction_bp = 4;
+  optional uint32 grace_days = 5;
+  optional int64 min_withdraw_cents = 6;
+  string payment_terms = 7;
+  string note = 8;
+  int64 valid_from_ms = 9;
+  int64 valid_until_ms = 10;
+  repeated string missing = 11;
+  bool current = 12;
+  string created_by = 13;
+}
+
+message PartnerSummary {
+  uint64 referred = 1;
+  uint64 buyers = 2;
+  uint64 orders = 3;
+  int64 gross_cents = 4;
+  int64 eligible_cents = 5;
+  int64 pending_cents = 6;
+  int64 released_cents = 7;
+  int64 reverted_cents = 8;
+  uint64 not_generated = 9;
+  int64 adjustments_cents = 10;
+  int64 reversals_cents = 11;
+  int64 paid_cents = 12;
+  uint64 paid_withdrawals = 13;
+  int64 withdrawing_cents = 14;
+  int64 balance_cents = 15;
+  int64 generated_cents = 16;
+  uint64 eligible_orders = 17;
+  int64 to_compensate_cents = 18;
+}
+
+message PartnerCommissionRow {
+  uint64 id = 1;
+  string referred = 2;
+  optional uint32 rate_bp = 3;
+  string base = 4;
+  int64 gross_cents = 5;
+  int64 base_cents = 6;
+  int64 amount_cents = 7;
+  string state = 8;
+  string reason = 9;
+  int64 available_at_ms = 10;
+  int64 created_at_ms = 11;
+  string order_key = 12;
+  int64 reversed_cents = 13;
+  string currency = 14;
+  string reference = 15;
+  int64 refunded_cents = 16;
+  string product = 17;
+  string product_name = 18;
+}
+
+message PartnerReferredRow {
+  string name = 1;
+  int64 created_at_ms = 2;
+  uint64 purchases = 3;
+  int64 gross_cents = 4;
+  int64 eligible_cents = 5;
+  int64 commission_cents = 6;
+  string signal = 7;
+}
+
+message PartnerWithdrawalRow {
+  uint64 id = 1;
+  int64 amount_cents = 2;
+  string state = 3;
+  string pix_kind = 4;
+  string pix_mask = 5;
+  int64 requested_at_ms = 6;
+  int64 processing_at_ms = 7;
+  int64 done_at_ms = 8;
+  string receipt_ref = 9;
+  bool has_receipt_file = 10;
+  string reason = 11;
+  string partner = 12;
+  string partner_code = 13;
+  uint64 partner_id = 14;
+  string receipt_sha256 = 15;
+}
+
+message PartnerEntryRow {
+  uint64 id = 1;
+  string kind = 2;
+  int64 amount_cents = 3;
+  uint64 commission_id = 4;
+  uint64 withdrawal_id = 5;
+  string reason = 6;
+  int64 created_at_ms = 7;
+  string actor = 8;
+}
+
+message PartnerPix {
+  string kind = 1;
+  string mask = 2;
+  int64 created_at_ms = 3;
+}
+
+message PartnerGet {
+  PartnerList list = 1;
+  CommercePeriod period = 2;
+  CommercePaging paging = 3;
+  string state = 4;
+}
+
+message PartnerOverview {
+  string code = 1;
+  string name = 2;
+  bool active = 3;
+  int64 since_ms = 4;
+  PartnerTerms terms = 5;
+  PartnerSummary summary = 6;
+  PartnerPix pix = 7;
+  PartnerWithdrawalRow open_withdrawal = 8;
+  PartnerList list = 9;
+  CommercePageInfo page = 10;
+  repeated PartnerCommissionRow commissions = 11;
+  repeated PartnerReferredRow referred = 12;
+  repeated PartnerWithdrawalRow withdrawals = 13;
+  repeated PartnerEntryRow entries = 14;
+}
+
+message PartnerSetPix {
+  string kind = 1;
+  string key = 2;
+}
+
+message PartnerWithdraw {
+  int64 amount_cents = 1;
+}
+
+message PartnerWithdrawRequested {
+  uint64 id = 1;
+  int64 balance_after_cents = 2;
+}
+
+message PartnerCancelWithdraw {
+  uint64 id = 1;
+}
+
+message StaffOverviewGet {
+}
+
+message StaffPartnerRow {
+  uint64 id = 1;
+  uint64 account_id = 2;
+  string username = 3;
+  string code = 4;
+  string name = 5;
+  bool active = 6;
+  int64 created_at_ms = 7;
+  uint64 referred = 8;
+  int64 pending_cents = 9;
+  int64 cost_cents = 10;
+  int64 balance_cents = 11;
+  int64 paid_cents = 12;
+  uint64 open_withdrawals = 13;
+  uint64 not_generated = 14;
+  PartnerTerms terms = 15;
+}
+
+message StaffProgramCost {
+  int64 gross_cents = 1;
+  int64 pending_cents = 2;
+  int64 released_cents = 3;
+  int64 reverted_cents = 4;
+  int64 paid_cents = 5;
+  int64 withdrawing_cents = 6;
+  uint64 open_withdrawals = 7;
+  int64 adjustments_cents = 8;
+  int64 cost_cents = 9;
+}
+
+message StaffOverview {
+  uint64 common_entries = 1;
+  uint64 common_credited = 2;
+  uint64 common_withheld = 3;
+  uint64 common_reversed = 4;
+  uint32 common_rate_bp = 5;
+  StaffProgramCost cost = 6;
+  repeated StaffPartnerRow partners = 7;
+  repeated PartnerWithdrawalRow queue = 8;
+}
+
+message StaffPartnerGet {
+  uint64 partner_id = 1;
+  CommercePeriod period = 2;
+  CommercePaging paging = 3;
+  string commission_state = 4;
+}
+
+message ReferralEventRow {
+  uint64 id = 1;
+  string program = 2;
+  string kind = 3;
+  string order_key = 4;
+  uint64 ref_id = 5;
+  uint64 partner_id = 6;
+  string account = 7;
+  string from_state = 8;
+  string to_state = 9;
+  int64 amount = 10;
+  string unit = 11;
+  string reason = 12;
+  string actor = 13;
+  int64 created_at_ms = 14;
+}
+
+message StaffPartnerDetail {
+  StaffPartnerRow partner = 1;
+  PartnerSummary summary = 2;
+  repeated PartnerTerms terms = 3;
+  repeated PartnerCommissionRow commissions = 4;
+  CommercePageInfo commissions_page = 5;
+  repeated PartnerReferredRow referred = 6;
+  repeated PartnerWithdrawalRow withdrawals = 7;
+  repeated PartnerEntryRow entries = 8;
+  repeated ReferralEventRow events = 9;
+  PartnerPix pix = 10;
+}
+
+message StaffWithdrawalsGet {
+  string state = 1;
+  CommercePaging paging = 2;
+}
+
+message StaffWithdrawals {
+  repeated PartnerWithdrawalRow rows = 1;
+  CommercePageInfo page = 2;
+}
+
+message ReferralOrderRow {
+  string order_key = 1;
+  string buyer = 2;
+  string program = 3;
+  string method = 4;
+  uint64 diamonds = 5;
+  int64 amount_cents = 6;
+  string state = 7;
+  int64 created_at_ms = 8;
+  string product = 9;
+  string product_name = 10;
+}
+
+message StaffOrdersGet {
+  string buyer = 1;
+  string program = 2;
+  CommercePaging paging = 3;
+}
+
+message StaffOrders {
+  repeated ReferralOrderRow rows = 1;
+  CommercePageInfo page = 2;
+}
+
+message StaffEventsGet {
+  uint64 partner_id = 1;
+  string order_key = 2;
+  string account = 3;
+  string program = 4;
+  CommercePaging paging = 5;
+}
+
+message StaffEvents {
+  repeated ReferralEventRow rows = 1;
+  CommercePageInfo page = 2;
+}
+
+message StaffPartnerCreate {
+  string username = 1;
+  string code = 2;
+  string name = 3;
+}
+
+message StaffPartnerSetActive {
+  uint64 partner_id = 1;
+  bool active = 2;
+  string reason = 3;
+}
+
+message StaffPartnerSetTerms {
+  uint64 partner_id = 1;
+  string rate = 2;
+  string base = 3;
+  string deduction = 4;
+  string grace_days = 5;
+  string min_withdraw = 6;
+  string payment_terms = 7;
+  string note = 8;
+  int64 valid_from_ms = 9;
+}
+
+message StaffReleaseCommission {
+  uint64 commission_id = 1;
+  string reason = 2;
+}
+
+message StaffReverseOrder {
+  string order_key = 1;
+  string kind = 2;
+  string reason = 3;
+}
+
+message StaffAdjust {
+  uint64 partner_id = 1;
+  string amount = 2;
+  string reason = 3;
+  string key = 4;
+}
+
+message StaffWithdrawalMove {
+  uint64 withdrawal_id = 1;
+  string to = 2;
+  string receipt_ref = 3;
+  string reason = 4;
+  string receipt_name = 5;
+  bytes receipt = 6;
+}
+
+message StaffRevealPix {
+  uint64 withdrawal_id = 1;
+}
+
+message StaffPixRevealed {
+  string kind = 1;
+  string key = 2;
+  string mask = 3;
+}
+
+message StaffReceiptGet {
+  uint64 withdrawal_id = 1;
+}
+
+message StaffReceipt {
+  string name = 1;
+  string mime = 2;
+  bytes data = 3;
+}
+
+message StaffDone {
+  uint64 id = 1;
+  bool repeated = 2;
+  repeated string missing = 3;
+  string order_key = 4;
+  string program = 5;
+}
+
+message CommerceRequest {
+
+  oneof op {
+    CommerceMethodsGet methods = 1;
+    CommerceCheckout checkout = 2;
+    CommerceClaimPending claim_pending = 3;
+    CommerceHistoryGet history = 4;
+    CommerceTestCredit test_credit = 5;
+    ReferralGet referral = 10;
+    PartnerGet partner = 11;
+    PartnerSetPix partner_set_pix = 12;
+    PartnerWithdraw partner_withdraw = 13;
+    PartnerCancelWithdraw partner_cancel_withdraw = 14;
+    AffiliateStatusGet affiliate_status = 15;
+    RmtGet rmt = 16;
+    RmtSet rmt_set = 17;
+    StaffOverviewGet staff_overview = 20;
+    StaffPartnerGet staff_partner = 21;
+    StaffWithdrawalsGet staff_withdrawals = 22;
+    StaffOrdersGet staff_orders = 23;
+    StaffEventsGet staff_events = 24;
+    StaffPartnerCreate staff_create = 25;
+    StaffPartnerSetActive staff_set_active = 26;
+    StaffPartnerSetTerms staff_set_terms = 27;
+    StaffReleaseCommission staff_release = 28;
+    StaffReverseOrder staff_reverse = 29;
+    StaffAdjust staff_adjust = 30;
+    StaffWithdrawalMove staff_withdrawal = 31;
+    StaffRevealPix staff_reveal_pix = 32;
+    StaffReceiptGet staff_receipt = 33;
+    StaffRmtGet staff_rmt = 34;
+    StaffRmtNotify staff_rmt_notify = 35;
+    StaffRmtRoadmapSet staff_rmt_roadmap = 36;
+    PackagesGet packages = 40;
+    PackageCheckout package_checkout = 41;
+    StaffPackagesGet staff_packages = 42;
+    StaffPackageCreate staff_package_create = 43;
+    StaffPackageSet staff_package_set = 44;
+    StaffPackageGrant staff_package_grant = 45;
+    StaffPackageSalesGet staff_package_sales = 46;
+    StaffPackageStatsGet staff_package_stats = 47;
+    StaffFounderAnnounce staff_founder_announce = 48;
+  }
+}
+
+message CommerceResponse {
+
+  oneof result {
+    CommerceMethods methods = 1;
+    CommerceCheckoutResult checkout = 2;
+    CommerceClaimed claimed = 3;
+    CommerceHistory history = 4;
+    CommerceDelivery delivery = 5;
+    ReferralOverview referral = 10;
+    PartnerOverview partner = 11;
+    PartnerPix pix = 12;
+    PartnerWithdrawRequested withdraw = 13;
+    PartnerWithdrawalRow withdrawal = 14;
+    AffiliateStatus affiliate_status = 15;
+    RmtState rmt = 16;
+    StaffOverview staff_overview = 20;
+    StaffPartnerDetail staff_partner = 21;
+    StaffWithdrawals staff_withdrawals = 22;
+    StaffOrders staff_orders = 23;
+    StaffEvents staff_events = 24;
+    StaffDone staff_done = 25;
+    StaffPixRevealed staff_pix = 26;
+    StaffReceipt staff_receipt = 27;
+    StaffRmt staff_rmt = 28;
+    PackageList packages = 40;
+    StaffPackages staff_packages = 41;
+    StaffPackageSales staff_package_sales = 42;
+    StaffPackageStats staff_package_stats = 43;
+  }
+}
+
+message CommercePendingArrived {
+}
+
+message CommerceCredited {
+  uint64 diamonds = 1;
+  string reason = 2;
+  uint64 balance = 3;
+}
+
+message RmtGet {
+}
+
+message RmtSet {
+  bool notify = 1;
+  repeated string choices = 2;
+}
+
+message RmtVote {
+  string choice = 1;
+  uint64 votes = 2;
+}
+
+message RmtState {
+  bool notify = 1;
+  repeated string choices = 2;
+  uint64 interested = 3;
+  uint64 voters = 4;
+  repeated RmtVote votes = 5;
+  repeated string options = 6;
+  uint32 stage = 7;
+  repeated RmtRoadmapStage roadmap = 8;
+}
+
+message RmtRoadmapStage {
+  string id = 1;
+  string message_pt = 2;
+  string message_en = 3;
+  string message_es = 4;
+}
+
+message StaffRmtGet {
+}
+
+message StaffRmt {
+  uint64 interested = 1;
+  uint64 notified = 2;
+  uint64 voters = 3;
+  repeated RmtVote votes = 4;
+  uint64 pending = 5;
+  uint32 stage = 6;
+  repeated RmtRoadmapStage roadmap = 7;
+  int64 roadmap_updated_at_ms = 8;
+  string roadmap_updated_by = 9;
+}
+
+message StaffRmtRoadmapSet {
+  uint32 stage = 1;
+  repeated RmtRoadmapStage roadmap = 2;
+}
+
+message StaffRmtNotify {
+}
+
+message AffiliateStatusGet {
+}
+
+message AffiliateStatus {
+  bool active = 1;
+  string code = 2;
+}
+
+message CommercePush {
+
+  oneof event {
+    CommercePendingArrived pending = 1;
+    CommerceCredited credited = 2;
+    AffiliateStatus affiliate = 3;
+    FounderAnnounce founder_announce = 4;
+    PackagesChanged packages_changed = 5;
+    DiamondDebt diamond_debt = 6;
+  }
+}
+
+message DiamondDebt {
+  uint64 diamonds = 1;
+}
+
+message PackagesGet {
+  string lang = 1;
+}
+
+message PackageGood {
+  string kind = 1;
+  string id = 2;
+  uint32 qty = 3;
+}
+
+message PackageOffer {
+  uint64 offer_id = 1;
+  string package_id = 2;
+  string name = 3;
+  string description = 4;
+  string art = 5;
+  int64 price_cents = 6;
+  string currency = 7;
+  uint32 cap_total = 8;
+  uint32 remaining = 9;
+  uint32 sold = 10;
+  string state = 11;
+  uint32 cap_per_account = 12;
+  uint32 your_units = 13;
+  repeated uint32 your_serials = 14;
+  bool numbered = 15;
+  repeated PackageGood goods = 16;
+  int64 starts_at_ms = 17;
+  int64 ends_at_ms = 18;
+  bool your_held = 19;
+  int64 held_until_ms = 20;
+}
+
+message PackageList {
+  repeated PackageOffer offers = 1;
+}
+
+message PackageCheckout {
+  uint64 offer_id = 1;
+  PayMethod method = 2;
+  string lang = 3;
+}
+
+message StaffPackagesGet {
+}
+
+message StaffPackageOfferRow {
+  PackageOffer offer = 1;
+  uint32 held = 2;
+  uint32 granted = 3;
+  uint32 grant_cap = 4;
+  string created_by = 5;
+  int64 created_at_ms = 6;
+  uint32 refunds_due = 7;
+  uint32 pending_goods = 8;
+}
+
+message StaffPackages {
+  repeated StaffPackageOfferRow offers = 1;
+  repeated string package_ids = 2;
+}
+
+message StaffPackageCreate {
+  string package_id = 1;
+  int64 price_cents = 2;
+  uint32 cap_total = 3;
+  uint32 cap_per_account = 4;
+  uint32 grant_cap = 5;
+  int64 starts_at_ms = 6;
+  int64 ends_at_ms = 7;
+}
+
+message StaffPackageSet {
+  uint64 offer_id = 1;
+  string state = 2;
+  uint32 cap_total = 3;
+  string reason = 4;
+  uint32 open_days = 5;
+}
+
+message StaffPackageGrant {
+  uint64 offer_id = 1;
+  string account = 2;
+  string reason = 3;
+}
+
+message StaffPackageSalesGet {
+  uint64 offer_id = 1;
+}
+
+message StaffPackageSaleRow {
+  uint32 serial = 1;
+  string buyer = 2;
+  string state = 3;
+  int64 amount_cents = 4;
+  string method = 5;
+  string program = 6;
+  string partner = 7;
+  uint32 rate_bp = 8;
+  int64 commission_cents = 9;
+  string commission_state = 10;
+  int64 at_ms = 11;
+  string order_key = 12;
+}
+
+message StaffPackageSales {
+  uint64 offer_id = 1;
+  repeated StaffPackageSaleRow rows = 2;
+}
+
+message StaffPackageStatsGet {
+  uint64 offer_id = 1;
+}
+
+message StaffPackageMoney {
+  string currency = 1;
+  string method = 2;
+  uint32 orders = 3;
+  int64 gross_cents = 4;
+  int64 refunded_cents = 5;
+  int64 commission_cents = 6;
+  uint32 refunded_orders = 7;
+}
+
+message StaffPackageDay {
+  int64 day_ms = 1;
+  uint32 orders = 2;
+  int64 gross_cents = 3;
+}
+
+message StaffPackagePartner {
+  string code = 1;
+  uint32 orders = 2;
+  int64 gross_cents = 3;
+  int64 commission_cents = 4;
+}
+
+message StaffPackageStats {
+  uint64 offer_id = 1;
+  repeated StaffPackageMoney money = 2;
+  repeated StaffPackageDay days = 3;
+  repeated StaffPackagePartner partners = 4;
+  int64 first_sale_ms = 5;
+  int64 last_sale_ms = 6;
+  int64 avg_checkout_ms = 7;
+  uint32 abandoned = 8;
+  uint32 refunds_due = 9;
+}
+
+message StaffFounderAnnounce {
+  string message = 1;
+  bool only_non_buyers = 2;
+}
+
+message FounderAnnounce {
+  string message = 1;
+}
+
+message PackagesChanged {
+}
+

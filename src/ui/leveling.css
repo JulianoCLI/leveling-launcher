@@ -1,0 +1,455 @@
+/* Modal do Leveling Idle 2D — monitor headless somente leitura */
+
+#levelingOverlay {
+  background: rgba(0, 0, 0, .72);
+  backdrop-filter: blur(4px);
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+#levelingOverlay.show {
+  display: flex;
+}
+
+#levelingModal {
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100vh - 36px);
+  padding: 22px 24px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, .5);
+  color-scheme: var(--theme-color-scheme);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+#levelingModal .lv-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+#levelingModal .lv-head h2 {
+  color: var(--color-text-primary);
+  font-size: 21px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-weight: 700;
+}
+
+#levelingModal .lv-icon {
+  font-size: 20px;
+  color: var(--color-accent);
+}
+
+#levelingModal .hint {
+  color: var(--color-text-secondary);
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+#levelingModal .lv-close {
+  background: transparent;
+  border: 0;
+  color: var(--color-text-secondary);
+  width: 34px;
+  height: 34px;
+  font-size: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  transition: background .15s ease, color .15s ease;
+}
+
+#levelingModal .lv-close:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/* Aviso de sessão única: a regra que mais confunde quem usa */
+#levelingModal .lv-warn {
+  background: rgba(230, 170, 50, .14);
+  border: 1px solid rgba(230, 170, 50, .3);
+  color: #ffd27a;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  margin-bottom: 12px;
+}
+
+#levelingModal .lv-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+#levelingModal .lv-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+#levelingModal .lv-tab {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--color-text-secondary);
+  border-radius: 7px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#levelingModal .lv-tab:hover {
+  background: var(--color-surface-hover);
+}
+
+#levelingModal .lv-tab[aria-selected="true"] {
+  background: rgba(110, 231, 183, .16);
+  border-color: rgba(110, 231, 183, .35);
+  color: var(--color-accent);
+}
+
+#levelingModal .lv-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+#levelingModal .lv-account {
+  background: var(--color-surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 11px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+#levelingModal .lv-account-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#levelingModal .lv-account-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+#levelingModal .lv-pill {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--color-surface-2, rgba(255, 255, 255, .06));
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+#levelingModal .lv-pill.is-connected {
+  background: rgba(56, 211, 159, .16);
+  color: #7ee8c0;
+}
+
+#levelingModal .lv-pill.is-working {
+  background: rgba(230, 170, 50, .16);
+  color: #ffd27a;
+}
+
+#levelingModal .lv-pill.is-error {
+  background: rgba(224, 70, 54, .18);
+  color: #ff9b89;
+}
+
+#levelingModal .lv-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+/* A rota tem um campo só, e ele é longo: ocupa tudo até o botão. */
+#levelingModal .lv-fields-proxy {
+  grid-template-columns: 1fr auto;
+  margin-top: 6px;
+}
+
+#levelingModal .lv-fields input {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  padding: 6px 9px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+#levelingModal .lv-fields input:disabled {
+  opacity: .55;
+}
+
+#levelingModal .lv-fields button {
+  border-radius: 7px;
+  padding: 6px 11px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1px solid var(--border-subtle);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+#levelingModal .lv-fields button.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #0b0f14;
+}
+
+#levelingModal .lv-fields button.is-on {
+  background: rgba(224, 70, 54, .18);
+  border-color: rgba(224, 70, 54, .36);
+  color: #ff9b89;
+}
+
+#levelingModal .lv-fields button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+#levelingModal .lv-account-meta {
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+#levelingModal .lv-status-bar {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  min-height: 16px;
+}
+
+@media (max-width: 560px) {
+  #levelingModal .lv-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* ----------------------------------------- modal da reposição automática ---
+   Reaproveita as classes do modal de contas (`lv-head`, `hint`, `lv-warn`,
+   `lv-status-bar`), que são escopadas por id; só o que é próprio do refill
+   ganha regra nova. */
+
+#refillOverlay {
+  background: rgba(0, 0, 0, .72);
+  backdrop-filter: blur(4px);
+  position: fixed;
+  inset: 0;
+  /* Acima do modal de contas: os dois podem estar abertos. */
+  z-index: 1410;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+#refillOverlay.show {
+  display: flex;
+}
+
+#refillModal {
+  width: min(600px, calc(100vw - 32px));
+  max-height: calc(100vh - 36px);
+  padding: 22px 24px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, .5);
+  color-scheme: var(--theme-color-scheme);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+#refillModal .lv-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+#refillModal .lv-head h2 {
+  color: var(--color-text-primary);
+  font-size: 21px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-weight: 700;
+}
+
+#refillModal .lv-icon {
+  font-size: 20px;
+}
+
+#refillModal .hint {
+  color: var(--color-text-secondary);
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+#refillModal .lv-close {
+  background: transparent;
+  border: 0;
+  color: var(--color-text-secondary);
+  width: 34px;
+  height: 34px;
+  font-size: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  transition: background .15s ease, color .15s ease;
+}
+
+#refillModal .lv-close:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/* Gasta ouro da conta: o aviso é o mesmo amarelo do modal de contas. */
+#refillModal .lv-warn {
+  background: rgba(230, 170, 50, .14);
+  border: 1px solid rgba(230, 170, 50, .3);
+  color: #ffd27a;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  margin-bottom: 12px;
+}
+
+#refillModal .rf-master {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+#refillModal .rf-reserve {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  padding-bottom: 12px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+#refillModal .rf-reserve input {
+  width: 120px;
+}
+
+/* As dez linhas rolam; cabeçalho e ações ficam fixos. */
+#refillModal .rf-items {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding-right: 4px;
+}
+
+#refillModal .rf-group {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--color-text-secondary);
+  margin: 12px 0 6px;
+  font-weight: 700;
+}
+
+#refillModal .rf-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+#refillModal .rf-label {
+  flex: 1;
+  font-size: 12.5px;
+}
+
+#refillModal .rf-field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+#refillModal .rf-field input {
+  width: 72px;
+}
+
+#refillModal input[type="number"] {
+  background: var(--color-surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--color-text-primary);
+  border-radius: 7px;
+  padding: 5px 7px;
+  font-size: 12px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+#refillModal input[type="number"]:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+#refillModal .lv-status-bar {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  min-height: 16px;
+}
+
+#refillModal .lv-status-bar.is-error {
+  color: #ff9b89;
+}
+
+#refillModal .modal-actions button.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #0b0f14;
+  font-weight: 600;
+}

@@ -1,0 +1,268 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum PartyPlace {
+  PARTY_PLACE_UNKNOWN = 0;
+  PARTY_PLACE_CITY = 1;
+  PARTY_PLACE_HUNT = 2;
+  PARTY_PLACE_BOSS = 3;
+  PARTY_PLACE_ARENA = 4;
+}
+
+enum PartyPrivacy {
+  PARTY_PRIVACY_REQUEST = 0;
+  PARTY_PRIVACY_OPEN = 1;
+  PARTY_PRIVACY_CLOSED = 2;
+}
+
+enum PartyRole {
+  PARTY_ROLE_NONE = 0;
+  PARTY_ROLE_TANK = 1;
+  PARTY_ROLE_SUPPORT = 2;
+  PARTY_ROLE_DAMAGE = 3;
+}
+
+enum PartyTargetMode {
+  PARTY_TARGET_MODE_FOCUS = 0;
+  PARTY_TARGET_MODE_SPREAD = 1;
+}
+
+enum PartyQuickOutcome {
+  PARTY_QUICK_NONE = 0;
+  PARTY_QUICK_JOINED = 1;
+  PARTY_QUICK_ASKED = 2;
+}
+
+message PartyMember {
+  int64 account_id = 1;
+  string name = 2;
+  string class_id = 3;
+  uint32 level = 4;
+  bool online = 5;
+  bool leader = 6;
+  uint64 hp = 7;
+  uint64 max_hp = 8;
+  uint64 shield = 9;
+  bool dead = 10;
+  string scene_id = 11;
+  uint64 instance_id = 12;
+  uint32 entity_id = 13;
+  PartyRole role = 14;
+  bool role_native = 15;
+  bool role_picked = 16;
+  PartyPlace place = 17;
+  string hunt_gate_id = 18;
+  uint32 hunt_tier_min = 19;
+  uint32 hunt_tier_max = 20;
+  string hunt_difficulty = 21;
+  string skin_id = 22;
+  string gender = 23;
+  uint64 xp = 24;
+  uint64 xp_to_next = 25;
+  repeated string gear = 26;
+  HunterAppearance appearance = 27;
+}
+
+message PartyJoinAsk {
+  int64 account_id = 1;
+  string name = 2;
+  string class_id = 3;
+  uint32 level = 4;
+  int64 expires_ms = 5;
+}
+
+message PartySummary {
+  uint64 party_id = 1;
+  repeated PartyMember members = 2;
+  uint32 max_members = 3;
+  bool requested = 4;
+  bool mine = 5;
+  PartySettings settings = 6;
+  bool friend = 7;
+  bool guild = 8;
+  repeated PartyRole open_roles = 9;
+}
+
+message PartySettings {
+  PartyPrivacy privacy = 1;
+  uint32 min_level = 2;
+  uint32 capacity = 3;
+  string objective = 4;
+  bool auto_accept_friends = 5;
+  bool auto_accept_guild = 6;
+  string code = 7;
+  bool hide_hunt = 8;
+}
+
+message PartySentInvite {
+  int64 account_id = 1;
+  string name = 2;
+  int64 expires_ms = 3;
+}
+
+message PartyMyRequest {
+  uint64 party_id = 1;
+  string leader_name = 2;
+  int64 expires_ms = 3;
+}
+
+message PartyInbox {
+  repeated PartyInvite invites = 1;
+}
+
+message PartyState {
+  uint64 party_id = 1;
+  repeated PartyMember members = 2;
+  uint32 max_members = 3;
+  repeated PartyJoinAsk join_requests = 4;
+  PartyTargetMode target_mode = 5;
+  PartySettings settings = 6;
+  repeated PartySentInvite invites_sent = 7;
+  PartyMyRequest my_request = 8;
+}
+
+message PartyInvite {
+  int64 from_account = 1;
+  string from_name = 2;
+  int64 expires_ms = 3;
+  uint64 party_id = 4;
+  uint32 members = 5;
+  uint32 from_level = 6;
+  string objective = 7;
+}
+
+message PartyGet {
+}
+
+message PartyInviteByName {
+  string name = 1;
+}
+
+message PartyAnswer {
+  int64 from_account = 1;
+  bool accept = 2;
+}
+
+message PartyLeave {
+}
+
+message PartyKick {
+  int64 account_id = 1;
+}
+
+message PartySetRole {
+  int64 account_id = 1;
+  PartyRole role = 2;
+}
+
+message PartyPromote {
+  int64 account_id = 1;
+}
+
+message PartySetTargetMode {
+  PartyTargetMode mode = 1;
+}
+
+message PartyList {
+}
+
+message PartyJoin {
+  uint64 party_id = 1;
+}
+
+message PartyJoinCancel {
+}
+
+message PartyJoinAnswer {
+  int64 account_id = 1;
+  bool accept = 2;
+}
+
+message PartyUpdateSettings {
+  PartySettings settings = 1;
+}
+
+message PartyJoinByCode {
+  string code = 1;
+}
+
+message PartyNewCode {
+}
+
+message PartyInviteCancel {
+  int64 account_id = 1;
+}
+
+message PartyCreate {
+  PartySettings settings = 1;
+}
+
+message PartyDisband {
+}
+
+message PartyQuickJoin {
+  PartyRole role = 1;
+}
+
+message PartyQuickResult {
+  PartyQuickOutcome outcome = 1;
+  uint64 party_id = 2;
+  string leader_name = 3;
+}
+
+message PartyRequest {
+
+  oneof op {
+    PartyGet get = 1;
+    PartyInviteByName invite = 2;
+    PartyAnswer answer = 3;
+    PartyLeave leave = 4;
+    PartyKick kick = 5;
+    PartySetRole set_role = 6;
+    PartyPromote promote = 7;
+    PartyList list = 8;
+    PartyJoin join = 9;
+    PartyJoinCancel join_cancel = 10;
+    PartyJoinAnswer join_answer = 11;
+    PartySetTargetMode set_target_mode = 12;
+    PartyUpdateSettings update_settings = 13;
+    PartyJoinByCode join_code = 14;
+    PartyNewCode new_code = 15;
+    PartyInviteCancel invite_cancel = 16;
+    PartyCreate create = 17;
+    PartyDisband disband = 18;
+    PartyQuickJoin quick_join = 19;
+  }
+}
+
+message PartyResponse {
+  PartyState state = 1;
+  repeated PartySummary parties = 2;
+  repeated PartyInvite invites = 3;
+  PartyQuickResult quick = 4;
+}
+
+message PartyMeterEntry {
+  uint64 account_id = 1;
+  string name = 2;
+  string class_id = 3;
+  double damage = 4;
+  double secs = 5;
+}
+
+message PartyMeter {
+  repeated PartyMeterEntry entries = 1;
+}
+
+message PartyPush {
+
+  oneof event {
+    PartyState state = 1;
+    PartyInvite invite = 2;
+    PartyInbox inbox = 3;
+    PartyMeter meter = 4;
+  }
+}
+

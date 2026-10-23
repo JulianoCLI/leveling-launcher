@@ -1,0 +1,145 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+message TowerSettings {
+  bool auto_advance = 1;
+  bool pause_before_boss = 2;
+  uint32 stop_after = 3;
+}
+
+message TowerRequest {
+
+  oneof op {
+    uint32 info = 1;
+    uint32 start = 2;
+    TowerSettings settings = 3;
+    bool resume = 4;
+    bool stop = 5;
+    string buy_look = 6;
+  }
+}
+
+message TowerMonster {
+  string monster_id = 1;
+  string rank = 2;
+  uint32 level = 3;
+  uint64 hp = 4;
+  uint64 damage = 5;
+  uint64 defense = 6;
+  uint32 count = 7;
+}
+
+message TowerReward {
+  uint64 seals = 1;
+  string material_id = 2;
+  uint32 material = 3;
+  repeated string pieces = 4;
+  bool unlocks_infinite = 5;
+}
+
+message TowerFloor {
+  uint32 floor = 1;
+  string kind = 2;
+  uint32 level = 3;
+  uint32 waves = 4;
+  uint32 time_limit_secs = 5;
+  repeated TowerMonster monsters = 6;
+  uint64 recommended_power = 7;
+  TowerReward reward = 8;
+  bool cleared = 9;
+  double elite_hp_mult = 10;
+  double elite_damage_mult = 11;
+  double boss_hp_mult = 12;
+  double boss_damage_mult = 13;
+  bool open = 14;
+}
+
+message TowerMilestone {
+  uint32 floor = 1;
+  TowerReward reward = 2;
+  bool done = 3;
+}
+
+message TowerRankLine {
+  uint32 position = 1;
+  uint64 account = 2;
+  string name = 3;
+  uint32 hunter_rank = 4;
+  uint32 floor = 5;
+  int64 at_ms = 6;
+  string class_id = 7;
+  uint32 level = 8;
+  string skin_id = 9;
+  HunterAppearance appearance = 10;
+  int64 guild_id = 11;
+  string guild_tag = 12;
+}
+
+message TowerRun {
+  uint64 run = 1;
+  uint32 floor = 2;
+  uint32 cleared = 3;
+  bool paused = 4;
+  uint32 next_floor = 5;
+}
+
+message TowerState {
+  uint32 min_level = 1;
+  bool unlocked = 2;
+  uint32 best = 3;
+  uint64 seals = 4;
+  uint32 max_floor = 5;
+  uint32 floor_limit = 6;
+  bool infinite = 7;
+  uint32 initial_floors = 8;
+  TowerSettings settings = 9;
+  TowerFloor preview = 10;
+  repeated TowerMilestone milestones = 11;
+  repeated TowerRankLine top = 12;
+  TowerRankLine me = 13;
+  TowerRun run = 14;
+  uint64 fights = 15;
+  uint64 clears = 16;
+  uint32 elite_every = 17;
+  uint32 boss_every = 18;
+}
+
+message TowerFight {
+  uint64 run = 1;
+  uint32 floor = 2;
+  string kind = 3;
+  uint32 wave = 4;
+  uint32 waves = 5;
+  uint32 monsters_left = 6;
+  uint64 elapsed_ms = 7;
+  uint32 starts_in_ms = 8;
+  uint64 time_limit_ms = 9;
+  uint32 run_cleared = 10;
+}
+
+message TowerResult {
+  uint64 run = 1;
+  uint32 floor = 2;
+  string end = 3;
+  uint32 time_ms = 4;
+  bool first_clear = 5;
+  TowerReward reward = 6;
+  bool mailed = 7;
+  uint32 best = 8;
+  uint64 seals = 9;
+  string next = 10;
+  uint32 next_floor = 11;
+  string pause_reason = 12;
+  uint32 run_cleared = 13;
+}
+
+message TowerPush {
+
+  oneof event {
+    TowerFight fight = 1;
+    TowerResult result = 2;
+  }
+}
+

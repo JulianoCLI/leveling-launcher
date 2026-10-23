@@ -1,0 +1,102 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+message BattlePassRequest {
+
+  oneof op {
+    bool state = 1;
+    BattlePassClaim claim = 2;
+    bool claim_all = 3;
+    bool buy_knight = 4;
+    BattlePassRelease release = 5;
+  }
+}
+
+message BattlePassClaim {
+  uint32 level = 1;
+  bool knight = 2;
+}
+
+message BattlePassRelease {
+  bool on = 1;
+}
+
+message BattlePassReward {
+  string kind = 1;
+  string id = 2;
+  uint64 qty = 3;
+}
+
+message BattlePassLevel {
+  uint32 level = 1;
+  repeated BattlePassReward free = 2;
+  repeated BattlePassReward knight = 3;
+  bool free_claimed = 4;
+  bool knight_claimed = 5;
+}
+
+message BattlePassDecree {
+  string id = 1;
+  string kind = 2;
+  uint32 goal = 3;
+  uint32 progress = 4;
+  uint64 honor = 5;
+  bool done = 6;
+}
+
+message BattlePassState {
+  bool enabled = 1;
+  bool released = 2;
+  bool can_release = 3;
+  string season = 4;
+  int64 starts_at_ms = 5;
+  int64 ends_at_ms = 6;
+  int64 now_ms = 7;
+  bool ended = 8;
+  uint64 honor = 9;
+  uint32 level = 10;
+  uint64 honor_per_level = 11;
+  uint32 max_level = 12;
+  bool knight = 13;
+  uint64 knight_price = 14;
+  repeated BattlePassLevel levels = 15;
+  repeated BattlePassDecree decrees = 16;
+  int64 day_reset_at_ms = 17;
+  uint64 kill_honor_today = 18;
+  uint64 kill_honor_cap = 19;
+  uint64 honor_kill = 20;
+  uint64 honor_elite = 21;
+  uint64 honor_boss = 22;
+}
+
+message BattlePassClaimed {
+  BattlePassState state = 1;
+  repeated BattlePassReward rewards = 2;
+  uint32 count = 3;
+}
+
+message BattlePassBought {
+  BattlePassState state = 1;
+  bool already = 2;
+  uint64 diamonds_spent = 3;
+}
+
+message BattlePassResponse {
+
+  oneof result {
+    BattlePassState state = 1;
+    BattlePassClaimed claimed = 2;
+    BattlePassBought bought = 3;
+  }
+}
+
+message BattlePassPush {
+
+  oneof event {
+    BattlePassState state = 1;
+    bool availability = 2;
+  }
+}
+

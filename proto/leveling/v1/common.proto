@@ -1,0 +1,126 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_PLAYER = 1;
+  ROLE_TUTOR = 2;
+  ROLE_GM = 3;
+  ROLE_ADMIN = 4;
+}
+
+enum Gender {
+  GENDER_UNSPECIFIED = 0;
+  GENDER_M = 1;
+  GENDER_F = 2;
+}
+
+enum StatId {
+  STAT_ID_UNSPECIFIED = 0;
+  STAT_ID_STR = 1;
+  STAT_ID_AGI = 2;
+  STAT_ID_VIT = 3;
+  STAT_ID_INT = 6;
+  STAT_ID_PER = 7;
+}
+
+enum EquipSlot {
+  EQUIP_SLOT_UNSPECIFIED = 0;
+  EQUIP_SLOT_ARMA = 1;
+  EQUIP_SLOT_ESCUDO = 2;
+  EQUIP_SLOT_CAPACETE = 3;
+  EQUIP_SLOT_PEITORAL = 4;
+  EQUIP_SLOT_CALCA = 5;
+  EQUIP_SLOT_LUVAS = 6;
+  EQUIP_SLOT_BOTAS = 7;
+  EQUIP_SLOT_CINTO = 8;
+  EQUIP_SLOT_CAPA = 9;
+  EQUIP_SLOT_COLAR = 10;
+  EQUIP_SLOT_ANEL = 11;
+  EQUIP_SLOT_BRINCO = 12;
+  EQUIP_SLOT_TESOURO = 13;
+}
+
+enum PotionTier {
+  POTION_TIER_UNSPECIFIED = 0;
+  POTION_TIER_PEQUENA = 1;
+  POTION_TIER_MEDIA = 2;
+  POTION_TIER_GRANDE = 3;
+}
+
+enum ConsumableKind {
+  CONSUMABLE_KIND_UNSPECIFIED = 0;
+  CONSUMABLE_KIND_HP_POTION = 1;
+  CONSUMABLE_KIND_MANA_POTION = 2;
+  CONSUMABLE_KIND_REVIVE = 3;
+  CONSUMABLE_KIND_SHADOW_POTION = 4;
+  CONSUMABLE_KIND_SHADOW_REVIVE = 5;
+}
+
+enum ItemCategory {
+  ITEM_CATEGORY_UNSPECIFIED = 0;
+  ITEM_CATEGORY_WEAPONS = 1;
+  ITEM_CATEGORY_ARMOR = 2;
+  ITEM_CATEGORY_ACCESSORIES = 3;
+  ITEM_CATEGORY_MATERIALS = 4;
+  ITEM_CATEGORY_IMBUE_MATERIALS = 5;
+}
+
+enum Currency {
+  CURRENCY_UNSPECIFIED = 0;
+  CURRENCY_GOLD = 1;
+  CURRENCY_DIAMONDS = 2;
+}
+
+enum BoolFilter {
+  BOOL_FILTER_ANY = 0;
+  BOOL_FILTER_YES = 1;
+  BOOL_FILTER_NO = 2;
+}
+
+message StatAmount {
+  StatId stat = 1;
+  uint32 points = 2;
+}
+
+message TierCounts {
+  uint32 pequena = 1;
+  uint32 media = 2;
+  uint32 grande = 3;
+}
+
+message ItemCount {
+  string def_id = 1;
+  uint64 qty = 2;
+  string rarity = 3;
+}
+
+message Vec2 {
+  sint32 x = 1;
+  sint32 y = 2;
+}
+
+message Notice {
+  enum Level {
+    LEVEL_INFO = 0;
+    LEVEL_SUCCESS = 1;
+    LEVEL_WARNING = 2;
+    LEVEL_ERROR = 3;
+    LEVEL_BANNER = 4;
+  }
+
+  string code = 1;
+  map<string, string> params = 2;
+  Notice.Level level = 3;
+}
+
+message HunterAppearance {
+  string hair_style = 1;
+  optional uint32 hair_color = 2;
+  string eye_style = 3;
+  optional uint32 eye_color = 4;
+  string skin_tone = 5;
+}
+

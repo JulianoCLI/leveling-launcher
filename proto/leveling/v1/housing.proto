@@ -1,0 +1,663 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum ResidenceKind {
+  RESIDENCE_KIND_UNSPECIFIED = 0;
+  RESIDENCE_KIND_HOTEL = 1;
+  RESIDENCE_KIND_HOUSE = 2;
+  RESIDENCE_KIND_GUILD_HOUSE = 3;
+}
+
+enum HousingUnitKind {
+  HOUSING_UNIT_KIND_UNSPECIFIED = 0;
+  HOUSING_UNIT_KIND_HOUSE = 1;
+  HOUSING_UNIT_KIND_GUILD_HOUSE = 2;
+}
+
+enum HousingUnitStatus {
+  HOUSING_UNIT_STATUS_UNSPECIFIED = 0;
+  HOUSING_UNIT_STATUS_SCHEDULED = 1;
+  HOUSING_UNIT_STATUS_IN_AUCTION = 2;
+  HOUSING_UNIT_STATUS_LEASED = 3;
+  HOUSING_UNIT_STATUS_VACANT = 4;
+  HOUSING_UNIT_STATUS_DISABLED = 5;
+}
+
+enum HousingAuctionStatus {
+  HOUSING_AUCTION_STATUS_UNSPECIFIED = 0;
+  HOUSING_AUCTION_STATUS_SCHEDULED = 1;
+  HOUSING_AUCTION_STATUS_OPEN = 2;
+  HOUSING_AUCTION_STATUS_CLOSED = 3;
+  HOUSING_AUCTION_STATUS_SETTLED = 4;
+  HOUSING_AUCTION_STATUS_NO_BIDS = 5;
+  HOUSING_AUCTION_STATUS_CANCELED = 6;
+}
+
+enum HousingBidStatus {
+  HOUSING_BID_STATUS_UNSPECIFIED = 0;
+  HOUSING_BID_STATUS_LEADING = 1;
+  HOUSING_BID_STATUS_OUTBID = 2;
+  HOUSING_BID_STATUS_WON = 3;
+  HOUSING_BID_STATUS_CANCELED = 4;
+  HOUSING_BID_STATUS_RAISED = 5;
+}
+
+enum HousingLeaseStatus {
+  HOUSING_LEASE_STATUS_UNSPECIFIED = 0;
+  HOUSING_LEASE_STATUS_ACTIVE = 1;
+  HOUSING_LEASE_STATUS_OVERDUE = 2;
+  HOUSING_LEASE_STATUS_SEALED = 3;
+  HOUSING_LEASE_STATUS_ENDED = 4;
+}
+
+enum HousingLeaseEndReason {
+  HOUSING_LEASE_END_REASON_UNSPECIFIED = 0;
+  HOUSING_LEASE_END_REASON_RELEASED = 1;
+  HOUSING_LEASE_END_REASON_EVICTED = 2;
+  HOUSING_LEASE_END_REASON_GUILD_DISBANDED = 3;
+  HOUSING_LEASE_END_REASON_STAFF = 4;
+}
+
+enum RestCutReason {
+  REST_CUT_REASON_NONE = 0;
+  REST_CUT_REASON_RESIDENCE_CAP = 1;
+  REST_CUT_REASON_FATIGUE = 2;
+  REST_CUT_REASON_DAILY_CAP = 3;
+  REST_CUT_REASON_RIGHT_ENDED = 4;
+  REST_CUT_REASON_TOO_SHORT = 5;
+  REST_CUT_REASON_NO_RESIDENCE = 6;
+  REST_CUT_REASON_DISABLED = 7;
+  REST_CUT_REASON_MAX_HOURS = 8;
+}
+
+enum RentNoticeKind {
+  RENT_NOTICE_KIND_UNSPECIFIED = 0;
+  RENT_NOTICE_KIND_LOW_BALANCE = 1;
+  RENT_NOTICE_KIND_OVERDUE = 2;
+  RENT_NOTICE_KIND_SEALED = 3;
+  RENT_NOTICE_KIND_UNSEALED = 4;
+}
+
+message HousingMoney {
+  Currency currency = 1;
+  uint64 amount = 2;
+}
+
+message HotelPlan {
+  string id = 1;
+  uint32 days = 2;
+  HousingMoney price = 3;
+  uint32 hours = 4;
+  repeated HousingMoney prices = 5;
+}
+
+message HousingCategoryInfo {
+  string id = 1;
+  HousingUnitKind kind = 2;
+  string name = 3;
+  HousingMoney rent_per_day = 6;
+  HousingMoney min_bid = 7;
+  uint64 step_abs = 8;
+  double step_pct = 9;
+  uint32 units = 10;
+}
+
+message HousingConfig {
+  bool enabled = 1;
+  bool hotel_enabled = 2;
+  repeated HotelPlan hotel_plans = 3;
+  uint32 hotel_max_days_ahead = 6;
+  repeated HousingCategoryInfo categories = 7;
+  double offline_factor = 11;
+  uint32 auction_included_days = 12;
+  bool anti_sniping = 13;
+  int64 anti_sniping_window_ms = 14;
+  int64 anti_sniping_extension_ms = 15;
+  uint32 grace_days = 16;
+  uint32 evict_day = 17;
+  uint32 bid_ban_days = 18;
+  uint32 max_prepaid_days = 19;
+  HousingMoney fund_min_contribution = 20;
+  GuildRole guild_default_min_role = 21;
+  double offline_max_hours = 22;
+  double offline_rearm_minutes = 23;
+}
+
+message HotelStay {
+  int64 id = 1;
+  string room = 2;
+  int64 started_at_ms = 3;
+  int64 ends_at_ms = 4;
+  bool active = 5;
+}
+
+message HousingUnit {
+  string id = 1;
+  HousingUnitKind kind = 2;
+  string category = 3;
+  string scene_id = 4;
+  HousingUnitStatus status = 5;
+  string acquisition = 6;
+  string label = 7;
+  string holder_name = 8;
+  string holder_guild_tag = 9;
+  int64 auction_id = 10;
+}
+
+message HousingLease {
+  int64 id = 1;
+  string unit_id = 2;
+  string category = 3;
+  HousingUnitKind kind = 4;
+  HousingLeaseStatus status = 5;
+  Currency currency = 6;
+  uint64 rent_per_day = 7;
+  uint64 prepaid = 8;
+  uint64 debt = 9;
+  uint32 prepaid_days = 10;
+  int64 overdue_since_ms = 11;
+  int64 seals_at_ms = 12;
+  int64 evicts_at_ms = 13;
+  int64 started_at_ms = 14;
+  int64 ended_at_ms = 15;
+  HousingLeaseEndReason end_reason = 16;
+  uint64 holder_account_id = 17;
+  int64 holder_guild_id = 18;
+  string holder_name = 19;
+}
+
+message HousingAuction {
+  int64 id = 1;
+  string unit_id = 2;
+  string category = 3;
+  HousingUnitKind kind = 4;
+  uint32 round = 5;
+  HousingAuctionStatus status = 6;
+  int64 opens_at_ms = 7;
+  int64 ends_at_ms = 8;
+  Currency currency = 9;
+  uint64 min_bid = 10;
+  uint64 step_abs = 11;
+  double step_pct = 12;
+  uint64 leader_amount = 13;
+  string leader_name = 14;
+  string leader_guild_tag = 15;
+  uint32 bid_count = 16;
+  uint64 min_next = 17;
+  bool leader_is_me = 18;
+  uint64 my_amount = 19;
+  uint32 extensions = 20;
+  uint32 included_days = 21;
+  uint64 rent_per_day = 22;
+}
+
+message HousingBid {
+  int64 id = 1;
+  int64 auction_id = 2;
+  HousingMoney amount = 3;
+  string bidder_name = 4;
+  int64 guild_id = 5;
+  string guild_tag = 6;
+  int64 placed_at_ms = 7;
+  HousingBidStatus status = 8;
+  bool mine = 9;
+}
+
+message OfflineRate {
+  ResidenceKind source = 1;
+  double factor = 2;
+  double factor_vip = 3;
+  bool available = 4;
+}
+
+message OfflineEstimate {
+  ResidenceKind source = 1;
+  uint64 xp_per_hour = 4;
+  double factor = 6;
+  double kills_per_minute = 7;
+  repeated OfflineRate rates = 8;
+  double enchant_stones_per_hour = 9;
+  double dust_per_hour = 10;
+  bool offline_armed = 11;
+  int64 offline_rearm_left_ms = 12;
+  bool farm_proven = 13;
+  string proven_gate_id = 14;
+  uint32 proven_tier_min = 15;
+  string proven_difficulty = 16;
+  int64 proof_required_ms = 17;
+  int64 proven_sample_ms = 18;
+}
+
+message GuildHousingInfo {
+  int64 guild_id = 1;
+  repeated HousingMoney fund = 2;
+  repeated HousingMoney my_contribution = 3;
+  GuildRole min_role = 4;
+  HousingLease lease = 5;
+  bool can_manage = 6;
+  bool can_enter = 7;
+  repeated HousingAuction auctions = 8;
+}
+
+message ResidenceRight {
+  ResidenceKind kind = 1;
+  string ref = 2;
+  string scene_id = 3;
+  int64 until_ms = 4;
+  bool usable = 5;
+}
+
+message HousingOverview {
+  HousingConfig config = 1;
+  HotelStay stay = 3;
+  HousingLease lease = 4;
+  GuildHousingInfo guild = 5;
+  OfflineEstimate estimate = 6;
+  repeated ResidenceRight rights = 7;
+  ResidenceKind inside = 8;
+  int64 bid_ban_until_ms = 9;
+  RestReport last_report = 10;
+}
+
+message HousingOverviewGet {
+}
+
+message HotelBook {
+  string plan_id = 1;
+  HousingMoney expected = 2;
+  Currency currency = 3;
+}
+
+message HotelExtend {
+  string plan_id = 1;
+  HousingMoney expected = 2;
+}
+
+message HousingUnitsGet {
+  string category = 1;
+  HousingUnitKind kind = 2;
+}
+
+message HousingAuctionGet {
+  int64 auction_id = 1;
+}
+
+message HousingBidPlace {
+  int64 auction_id = 1;
+  uint64 amount = 2;
+  Currency currency = 3;
+  bool as_guild = 4;
+}
+
+message HousingMyBidsGet {
+}
+
+message HousingDepositRent {
+  uint32 days = 1;
+  bool as_guild = 2;
+  Currency currency = 3;
+}
+
+message HousingReleaseLease {
+  bool as_guild = 1;
+}
+
+message HousingGoHome {
+  ResidenceKind target = 1;
+}
+
+message HousingVisit {
+  string unit_id = 1;
+}
+
+message HousingRestAndQuit {
+}
+
+message HousingGuildFundDeposit {
+  HousingMoney amount = 1;
+}
+
+message HousingGuildSettings {
+  GuildRole min_role = 1;
+}
+
+message HousingRequest {
+
+  oneof op {
+    HousingOverviewGet overview = 1;
+    HotelBook hotel_book = 2;
+    HotelExtend hotel_extend = 3;
+    HousingUnitsGet units = 4;
+    HousingAuctionGet auction = 5;
+    HousingBidPlace bid = 6;
+    HousingMyBidsGet my_bids = 7;
+    HousingDepositRent deposit_rent = 8;
+    HousingReleaseLease release_lease = 9;
+    HousingGoHome go_home = 10;
+    HousingRestAndQuit rest_and_quit = 11;
+    HousingGuildFundDeposit guild_fund_deposit = 12;
+    HousingGuildSettings guild_settings = 13;
+    HousingVisit visit = 14;
+  }
+}
+
+message HousingUnitsResult {
+  repeated HousingUnit units = 1;
+  repeated HousingAuction auctions = 2;
+}
+
+message HousingAuctionDetail {
+  HousingAuction auction = 1;
+  HousingUnit unit = 2;
+  repeated HousingBid bids = 3;
+}
+
+message HousingBidResult {
+  HousingAuction auction = 1;
+  HousingBid bid = 2;
+  HousingMoney charged = 3;
+}
+
+message HousingMyBidsResult {
+  repeated HousingAuction auctions = 1;
+  repeated HousingBid bids = 2;
+}
+
+message HousingDepositResult {
+  HousingLease lease = 1;
+  HousingMoney charged = 2;
+  uint64 debt_paid = 3;
+}
+
+message HousingReleaseResult {
+  string unit_id = 1;
+  HousingMoney refund = 2;
+}
+
+message HousingGoHomeResult {
+  string scene_id = 1;
+}
+
+message HousingVisitResult {
+  string scene_id = 1;
+  int64 until_ms = 2;
+}
+
+message HousingRestAndQuitResult {
+  OfflineEstimate estimate = 1;
+}
+
+message HousingResponse {
+
+  oneof result {
+    HousingOverview overview = 1;
+    HousingOverview hotel_book = 2;
+    HousingOverview hotel_extend = 3;
+    HousingUnitsResult units = 4;
+    HousingAuctionDetail auction = 5;
+    HousingBidResult bid = 6;
+    HousingMyBidsResult my_bids = 7;
+    HousingDepositResult deposit_rent = 8;
+    HousingReleaseResult release_lease = 9;
+    HousingGoHomeResult go_home = 10;
+    HousingRestAndQuitResult rest_and_quit = 11;
+    GuildHousingInfo guild_fund_deposit = 12;
+    GuildHousingInfo guild_settings = 13;
+    HousingVisitResult visit = 14;
+  }
+}
+
+message HousingOutbid {
+  int64 auction_id = 1;
+  string unit_id = 2;
+  string category = 3;
+  HousingMoney refund = 4;
+  uint64 leader_amount = 5;
+  uint64 min_next = 6;
+  int64 ends_at_ms = 7;
+  bool as_guild = 8;
+}
+
+message HousingAuctionResult {
+  int64 auction_id = 1;
+  string unit_id = 2;
+  bool won = 3;
+  HousingMoney amount = 4;
+  HousingLease lease = 5;
+  bool canceled = 6;
+  bool as_guild = 7;
+}
+
+message HousingRentNotice {
+  RentNoticeKind kind = 1;
+  int64 lease_id = 2;
+  string unit_id = 3;
+  int32 day = 4;
+  HousingLease lease = 5;
+}
+
+message HousingEvicted {
+  int64 lease_id = 1;
+  string unit_id = 2;
+  HousingLeaseEndReason reason = 3;
+  int64 bid_ban_until_ms = 4;
+  HousingMoney debt = 5;
+  HousingMoney refund = 6;
+}
+
+message RestReport {
+  int64 session_id = 1;
+  ResidenceKind source = 2;
+  int64 opened_at_ms = 3;
+  int64 settled_at_ms = 4;
+  int64 away_ms = 5;
+  int64 farm_ms = 6;
+  uint64 xp = 8;
+  uint32 levels_gained = 10;
+  RestCutReason cut_reason = 13;
+  uint64 enchant_stones = 14;
+  uint64 dust = 15;
+  double factor = 16;
+  bool vip = 17;
+  bool mailed = 18;
+}
+
+message HousingAccessLost {
+  ResidenceKind kind = 1;
+  string reason = 2;
+}
+
+message HousingPush {
+
+  oneof event {
+    HousingOutbid outbid = 1;
+    HousingAuctionResult auction_result = 2;
+    HousingRentNotice rent_notice = 3;
+    HousingEvicted evicted = 4;
+    RestReport rest_report = 5;
+    HousingOverview overview = 6;
+    HousingAuction auction = 7;
+    HousingAccessLost access_lost = 8;
+  }
+}
+
+message AdminHousingUnits {
+  string category = 1;
+  HousingUnitStatus status = 2;
+}
+
+message AdminHousingUnitUpsert {
+  string id = 1;
+  HousingUnitKind kind = 2;
+  string category = 3;
+  string scene_id = 4;
+  string acquisition = 5;
+  string label = 6;
+  string reason = 7;
+}
+
+message AdminHousingUnitDisable {
+  string unit_id = 1;
+  bool disabled = 2;
+  string reason = 3;
+}
+
+message AdminHousingAuctionOpen {
+  string unit_id = 1;
+  double hours = 2;
+  uint64 min_bid = 3;
+  string reason = 4;
+}
+
+message AdminHousingAuctionSchedule {
+  string unit_id = 1;
+  int64 opens_at_ms = 2;
+  double hours = 3;
+  uint64 min_bid = 4;
+  string reason = 5;
+}
+
+message AdminHousingAuctionCancel {
+  int64 auction_id = 1;
+  string reason = 2;
+}
+
+message AdminHousingAuctions {
+  string unit_id = 1;
+  HousingAuctionStatus status = 2;
+  int64 before_id = 3;
+  uint32 limit = 4;
+}
+
+message AdminHousingLeases {
+  HousingLeaseStatus status = 1;
+  uint64 account_id = 2;
+  int64 guild_id = 3;
+  int64 before_id = 4;
+  uint32 limit = 5;
+}
+
+message AdminHousingLeaseEnd {
+  int64 lease_id = 1;
+  bool refund_prepaid = 2;
+  string reason = 3;
+}
+
+message AdminHousingLeaseAdjust {
+  int64 lease_id = 1;
+  int64 prepaid_delta = 2;
+  int64 debt_delta = 3;
+  string reason = 4;
+}
+
+message AdminHousingEvents {
+  uint64 account_id = 1;
+  int64 guild_id = 2;
+  string unit_id = 3;
+  int64 auction_id = 4;
+  int64 lease_id = 5;
+  string kind = 6;
+  int64 before_id = 7;
+  uint32 limit = 8;
+}
+
+message AdminHousingOfflineSessions {
+  uint64 account_id = 1;
+  bool open_only = 2;
+  int64 before_id = 3;
+  uint32 limit = 4;
+}
+
+message AdminHousing {
+
+  oneof op {
+    AdminHousingUnits units = 1;
+    AdminHousingUnitUpsert unit_upsert = 2;
+    AdminHousingUnitDisable unit_disable = 3;
+    AdminHousingAuctionOpen auction_open = 4;
+    AdminHousingAuctionSchedule auction_schedule = 5;
+    AdminHousingAuctionCancel auction_cancel = 6;
+    AdminHousingAuctions auctions = 7;
+    AdminHousingLeases leases = 8;
+    AdminHousingLeaseEnd lease_end = 9;
+    AdminHousingLeaseAdjust lease_adjust = 10;
+    AdminHousingEvents events = 11;
+    AdminHousingOfflineSessions offline_sessions = 12;
+  }
+}
+
+message AdminHousingUnitRow {
+  HousingUnit unit = 1;
+  HousingLease lease = 2;
+  HousingAuction auction = 3;
+  bool first_auction_done = 4;
+  int64 updated_at_ms = 5;
+}
+
+message AdminHousingUnitsResult {
+  repeated AdminHousingUnitRow units = 1;
+}
+
+message AdminHousingAuctionsResult {
+  repeated HousingAuction auctions = 1;
+  repeated HousingBid bids = 2;
+}
+
+message AdminHousingLeasesResult {
+  repeated HousingLease leases = 1;
+}
+
+message HousingEvent {
+  int64 id = 1;
+  int64 at_ms = 2;
+  string kind = 3;
+  uint64 account_id = 4;
+  int64 guild_id = 5;
+  string unit_id = 6;
+  int64 auction_id = 7;
+  int64 lease_id = 8;
+  HousingMoney amount = 9;
+  string actor = 10;
+  string detail = 11;
+  string account_name = 12;
+}
+
+message AdminHousingEventsResult {
+  repeated HousingEvent events = 1;
+}
+
+message AdminHousingOfflineSession {
+  int64 id = 1;
+  uint64 account_id = 2;
+  ResidenceKind source = 3;
+  string source_ref = 4;
+  int64 opened_at_ms = 5;
+  int64 right_until_ms = 6;
+  uint32 status = 8;
+  RestReport report = 9;
+}
+
+message AdminHousingOfflineSessionsResult {
+  repeated AdminHousingOfflineSession sessions = 1;
+}
+
+message AdminHousingResult {
+
+  oneof result {
+    AdminHousingUnitsResult units = 1;
+    AdminHousingUnitRow unit_upsert = 2;
+    AdminHousingUnitRow unit_disable = 3;
+    HousingAuction auction_open = 4;
+    HousingAuction auction_schedule = 5;
+    HousingAuction auction_cancel = 6;
+    AdminHousingAuctionsResult auctions = 7;
+    AdminHousingLeasesResult leases = 8;
+    HousingLease lease_end = 9;
+    HousingLease lease_adjust = 10;
+    AdminHousingEventsResult events = 11;
+    AdminHousingOfflineSessionsResult offline_sessions = 12;
+  }
+}
+

@@ -1,0 +1,308 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum DungeonBreakStatus {
+  DUNGEON_BREAK_STATUS_UNSPECIFIED = 0;
+  DUNGEON_BREAK_STATUS_ANNOUNCED = 1;
+  DUNGEON_BREAK_STATUS_RUNNING = 2;
+  DUNGEON_BREAK_STATUS_ENDED = 3;
+  DUNGEON_BREAK_STATUS_CANCELED = 4;
+}
+
+message DungeonBreakConfig {
+  uint32 signup_secs = 1;
+  uint32 min_level = 2;
+  uint32 max_players = 3;
+  string gate_id = 4;
+  string layout_id = 5;
+  uint32 waves = 6;
+  uint32 wave_monsters = 7;
+  uint32 wave_growth_pct = 8;
+  uint32 level_min = 9;
+  uint32 level_max = 10;
+  uint32 level_growth = 11;
+  uint32 elite_pct = 12;
+  uint32 elite_from_wave = 13;
+  uint32 boss_every = 14;
+  uint32 final_bosses = 15;
+  uint32 max_alive = 16;
+  uint32 clear_pct = 17;
+  uint32 wave_secs = 18;
+  uint32 time_limit_secs = 19;
+  bool late_join = 20;
+  uint32 hp_pct = 21;
+  uint32 dmg_pct = 22;
+  bool no_shadows = 23;
+  bool no_heal_skills = 24;
+  uint32 start_delay_secs = 25;
+  uint32 spawn_points = 26;
+  string mode = 27;
+}
+
+message DungeonBreakEvent {
+  int64 id = 1;
+  string name = 2;
+  DungeonBreakStatus status = 3;
+  int64 starts_at_ms = 4;
+  int64 started_at_ms = 5;
+  int64 ended_at_ms = 6;
+  string end_reason = 7;
+  uint32 signed = 8;
+  uint32 max_players = 9;
+  uint32 min_level = 10;
+  uint32 waves = 11;
+  uint32 time_limit_secs = 12;
+  bool late_join = 13;
+  uint32 inside = 14;
+  bool no_shadows = 15;
+  bool heal_skills = 16;
+  string gate_id = 17;
+  string mode = 18;
+}
+
+message DungeonBreakMe {
+  bool signed = 1;
+  bool inside = 2;
+  bool fallen = 3;
+  bool out = 4;
+  string blocked = 5;
+  bool can_enter = 6;
+}
+
+message DungeonBreakState {
+  DungeonBreakEvent event = 1;
+  DungeonBreakMe me = 2;
+  int64 server_now_ms = 3;
+  DungeonBreakResult last = 4;
+  repeated DungeonBreakRecord records = 5;
+}
+
+message DungeonBreakSigned {
+  uint64 account = 1;
+  string name = 2;
+  uint32 level = 3;
+  string class_id = 4;
+}
+
+message DungeonBreakList {
+  repeated DungeonBreakSigned hunters = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 pages = 4;
+}
+
+message DungeonBreakScore {
+  uint64 account = 1;
+  string name = 2;
+  uint32 level = 3;
+  string class_id = 4;
+  uint64 damage = 5;
+  uint32 kills = 6;
+  uint64 alive_ms = 7;
+  bool fell = 8;
+  uint32 position = 9;
+  uint64 objective = 10;
+  uint32 wave = 11;
+  bool afk = 12;
+}
+
+message DungeonBreakCore {
+  Vec2 pos = 1;
+  uint32 hp = 2;
+  uint32 max_hp = 3;
+  uint32 radius = 4;
+  uint32 guard = 5;
+}
+
+message DungeonBreakRift {
+  uint32 id = 1;
+  Vec2 pos = 2;
+  uint32 radius = 3;
+  uint32 progress = 4;
+  uint32 open_secs = 5;
+  bool escalated = 6;
+  bool contested = 7;
+  uint32 channeling = 8;
+}
+
+message DungeonBreakKing {
+  uint32 entity = 1;
+  Vec2 pos = 2;
+  uint32 hp = 3;
+  uint32 phase = 4;
+  uint32 phases = 5;
+  uint32 threshold_pct = 6;
+  uint32 phase_left_ms = 7;
+  uint32 escapes = 8;
+  uint32 max_escapes = 9;
+}
+
+message DungeonBreakRecord {
+  uint64 account = 1;
+  string name = 2;
+  uint32 level = 3;
+  string class_id = 4;
+  uint32 wave = 5;
+  int64 at_ms = 6;
+}
+
+message DungeonBreakFight {
+  uint32 wave = 1;
+  uint32 waves = 2;
+  uint32 monsters_left = 3;
+  uint32 next_wave_ms = 4;
+  uint64 elapsed_ms = 5;
+  uint32 starts_in_ms = 6;
+  uint64 time_limit_ms = 7;
+  uint32 players = 8;
+  uint32 players_alive = 9;
+  DungeonBreakScore me = 10;
+  string mode = 11;
+  uint32 afk_in_ms = 12;
+  DungeonBreakCore core = 13;
+  repeated DungeonBreakRift rifts = 14;
+  uint32 rifts_closed = 15;
+  uint32 rifts_needed = 16;
+  uint32 rifts_limit = 17;
+  repeated string affixes = 18;
+  uint32 intensity = 19;
+  DungeonBreakKing king = 20;
+  repeated uint32 marks = 21;
+}
+
+message DungeonBreakResult {
+  int64 event_id = 1;
+  string name = 2;
+  string reason = 3;
+  uint32 waves_cleared = 4;
+  uint32 waves = 5;
+  uint64 elapsed_ms = 6;
+  uint32 participants = 7;
+  uint32 survivors = 8;
+  repeated DungeonBreakScore top_damage = 9;
+  repeated DungeonBreakScore top_kills = 10;
+  repeated DungeonBreakScore top_survival = 11;
+  DungeonBreakScore me = 12;
+  int64 ended_at_ms = 13;
+  string mode = 14;
+  uint32 wave_reached = 15;
+  uint32 goal_done = 16;
+  uint32 goal_total = 17;
+  repeated DungeonBreakRecord records = 18;
+  uint32 afk = 19;
+  repeated DungeonBreakScore top_objective = 20;
+}
+
+message DungeonBreakLoad {
+  uint32 players = 1;
+  uint32 players_alive = 2;
+  uint32 monsters_alive = 3;
+  uint32 monsters_peak = 4;
+  uint32 shadows = 5;
+  uint32 tick_avg_us = 6;
+  uint32 tick_max_us = 7;
+  uint32 tick_run_max_us = 8;
+  uint32 tick_budget_us = 9;
+  uint32 ticks_over_budget = 10;
+  uint64 bytes_per_sec = 11;
+  uint64 bytes_total = 12;
+  uint32 drops_per_sec = 13;
+  uint64 drops_total = 14;
+  int64 at_ms = 15;
+  uint64 world_worst_tick_us = 16;
+  uint32 world_players = 17;
+  uint32 world_monsters = 18;
+  uint64 world_worst_tick_peak_us = 19;
+  uint32 players_peak = 20;
+}
+
+message DungeonBreakFailure {
+  string name = 1;
+  string reason = 2;
+}
+
+message DungeonBreakMonitor {
+  DungeonBreakEvent event = 1;
+  DungeonBreakConfig config = 2;
+  DungeonBreakLoad load = 3;
+  uint32 wave = 4;
+  uint32 monsters_left = 5;
+  uint64 elapsed_ms = 6;
+  uint32 sent = 7;
+  uint32 entered = 8;
+  uint32 fallen = 9;
+  uint32 left = 10;
+  uint32 disconnects = 11;
+  uint32 reconnects = 12;
+  repeated DungeonBreakFailure failed = 13;
+  bool ending = 14;
+}
+
+message DungeonBreakPast {
+  DungeonBreakEvent event = 1;
+  DungeonBreakResult result = 2;
+  DungeonBreakMonitor monitor = 3;
+}
+
+message DungeonBreakMap {
+  string gate_id = 1;
+  string layout_id = 2;
+  string name = 3;
+}
+
+message DungeonBreakAdminOpen {
+  string name = 1;
+  DungeonBreakConfig config = 2;
+}
+
+message DungeonBreakAdminState {
+  DungeonBreakMonitor live = 1;
+  DungeonBreakConfig defaults = 2;
+  repeated DungeonBreakPast past = 3;
+  repeated DungeonBreakMap maps = 4;
+  uint32 max_players_cap = 5;
+  uint32 max_alive_cap = 6;
+  int64 server_now_ms = 7;
+  repeated string modes = 8;
+  string next_rotation = 9;
+}
+
+message DungeonBreakRequest {
+
+  oneof op {
+    bool state = 1;
+    bool join = 2;
+    bool leave_list = 3;
+    uint32 list = 4;
+    bool enter = 5;
+    bool leave_fight = 6;
+    bool presence = 7;
+    bool admin_state = 20;
+    DungeonBreakAdminOpen admin_open = 21;
+    bool admin_start = 22;
+    bool admin_cancel = 23;
+    bool admin_end = 24;
+  }
+}
+
+message DungeonBreakResponse {
+
+  oneof result {
+    DungeonBreakState state = 1;
+    DungeonBreakList list = 2;
+    DungeonBreakAdminState admin = 3;
+  }
+}
+
+message DungeonBreakPush {
+
+  oneof event {
+    DungeonBreakEvent changed = 1;
+    DungeonBreakFight fight = 2;
+    DungeonBreakResult result = 3;
+    DungeonBreakMe me = 4;
+  }
+}
+

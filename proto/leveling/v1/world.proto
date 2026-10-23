@@ -1,0 +1,521 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum EmoteKind {
+  EMOTE_KIND_UNSPECIFIED = 0;
+  EMOTE_KIND_DANCE = 1;
+  EMOTE_KIND_WAVE = 2;
+  EMOTE_KIND_CHEER = 3;
+  EMOTE_KIND_LAUGH = 4;
+  EMOTE_KIND_SURPRISE = 5;
+  EMOTE_KIND_SAD = 6;
+  EMOTE_KIND_PASSINHO = 7;
+  EMOTE_KIND_SIT = 8;
+  EMOTE_KIND_MEDITATE = 9;
+}
+
+enum SceneKind {
+  SCENE_KIND_UNSPECIFIED = 0;
+  SCENE_KIND_CITY = 1;
+  SCENE_KIND_HUNT = 2;
+  SCENE_KIND_BOSS_DUNGEON = 3;
+  SCENE_KIND_ARENA = 4;
+  SCENE_KIND_RESIDENCE = 5;
+  SCENE_KIND_TRAINING = 6;
+}
+
+enum NpcService {
+  NPC_SERVICE_UNSPECIFIED = 0;
+  NPC_SERVICE_HEAL = 1;
+  NPC_SERVICE_SHOP = 2;
+  NPC_SERVICE_GUILD = 3;
+  NPC_SERVICE_PORTAL = 4;
+  NPC_SERVICE_WAREHOUSE = 5;
+  NPC_SERVICE_HOTEL = 6;
+  NPC_SERVICE_HOUSING = 7;
+  NPC_SERVICE_TRAINING = 8;
+}
+
+enum Facing {
+  FACING_DOWN = 0;
+  FACING_LEFT = 1;
+  FACING_RIGHT = 2;
+  FACING_UP = 3;
+}
+
+enum InteractionKind {
+  INTERACTION_KIND_UNSPECIFIED = 0;
+  INTERACTION_KIND_REST = 1;
+  INTERACTION_KIND_ELEVATOR = 2;
+  INTERACTION_KIND_PANEL = 3;
+  INTERACTION_KIND_DECOR = 4;
+}
+
+enum EntityKind {
+  ENTITY_KIND_UNSPECIFIED = 0;
+  ENTITY_KIND_PLAYER = 1;
+  ENTITY_KIND_MONSTER = 2;
+  ENTITY_KIND_SHADOW = 3;
+  ENTITY_KIND_NPC = 4;
+  ENTITY_KIND_CHEST = 5;
+  ENTITY_KIND_PORTAL = 6;
+  ENTITY_KIND_CORPSE = 7;
+}
+
+enum AnimState {
+  ANIM_STATE_IDLE = 0;
+  ANIM_STATE_WALK = 1;
+  ANIM_STATE_ATTACK = 2;
+  ANIM_STATE_CAST = 3;
+  ANIM_STATE_HURT = 4;
+  ANIM_STATE_DEATH = 5;
+  ANIM_STATE_DEAD = 6;
+  ANIM_STATE_COMBO = 7;
+  ANIM_STATE_HEAVY = 8;
+  ANIM_STATE_SPECIAL = 9;
+  ANIM_STATE_CHARGE = 10;
+  ANIM_STATE_ENTRANCE = 11;
+  ANIM_STATE_PHASE = 12;
+  ANIM_STATE_ROAR = 13;
+}
+
+enum EntityFlag {
+  ENTITY_FLAG_NONE = 0;
+  ENTITY_FLAG_ELITE = 1;
+  ENTITY_FLAG_BOSS = 2;
+  ENTITY_FLAG_AWAKENED = 4;
+  ENTITY_FLAG_DEAD = 8;
+  ENTITY_FLAG_STUNNED = 16;
+  ENTITY_FLAG_SLOWED = 32;
+  ENTITY_FLAG_BURNING = 64;
+  ENTITY_FLAG_SHIELDED = 128;
+  ENTITY_FLAG_IN_COMBAT = 256;
+  ENTITY_FLAG_OWNED = 512;
+  ENTITY_FLAG_RED_PORTAL = 1024;
+  ENTITY_FLAG_INTERACTABLE = 2048;
+  ENTITY_FLAG_ROLLING = 4096;
+  ENTITY_FLAG_STAGGERED = 8192;
+  ENTITY_FLAG_HIDDEN = 16384;
+  ENTITY_FLAG_TEAM_A = 32768;
+  ENTITY_FLAG_TEAM_B = 65536;
+  ENTITY_FLAG_SEATED = 131072;
+  ENTITY_FLAG_MEDITATING = 262144;
+  ENTITY_FLAG_SHADOW_ART = 524288;
+  ENTITY_FLAG_TEAM_C = 1048576;
+  ENTITY_FLAG_TEAM_D = 2097152;
+}
+
+enum DamageFlag {
+  DAMAGE_FLAG_NONE = 0;
+  DAMAGE_FLAG_CRIT = 1;
+  DAMAGE_FLAG_DODGE = 2;
+  DAMAGE_FLAG_DOT = 4;
+  DAMAGE_FLAG_MAGIC = 8;
+  DAMAGE_FLAG_SKILL = 16;
+  DAMAGE_FLAG_ABSORBED = 32;
+  DAMAGE_FLAG_REFLECT = 64;
+}
+
+enum HealSource {
+  HEAL_SOURCE_UNSPECIFIED = 0;
+  HEAL_SOURCE_POTION = 1;
+  HEAL_SOURCE_SKILL = 2;
+  HEAL_SOURCE_REGEN = 3;
+  HEAL_SOURCE_REVIVE = 4;
+  HEAL_SOURCE_NPC = 5;
+}
+
+enum SpawnKind {
+  SPAWN_KIND_NONE = 0;
+  SPAWN_KIND_PORTAL = 1;
+  SPAWN_KIND_GROUND = 2;
+}
+
+enum TelegraphShape {
+  TELEGRAPH_SHAPE_UNSPECIFIED = 0;
+  TELEGRAPH_SHAPE_CIRCLE = 1;
+  TELEGRAPH_SHAPE_CONE = 2;
+  TELEGRAPH_SHAPE_LINE = 3;
+}
+
+enum ChestOrigin {
+  CHEST_ORIGIN_UNSPECIFIED = 0;
+  CHEST_ORIGIN_COMMON = 1;
+  CHEST_ORIGIN_ELITE = 2;
+  CHEST_ORIGIN_BOSS = 3;
+}
+
+enum BossStage {
+  BOSS_STAGE_UNSPECIFIED = 0;
+  BOSS_STAGE_ENTRANCE = 1;
+  BOSS_STAGE_FIGHT = 2;
+  BOSS_STAGE_TRANSITION = 3;
+  BOSS_STAGE_VICTORY = 4;
+  BOSS_STAGE_INTRO = 5;
+}
+
+message MoveDir {
+  sint32 dir_x = 1;
+  sint32 dir_y = 2;
+  uint32 seq = 3;
+}
+
+message MoveAck {
+  uint32 seq = 1;
+  float x = 2;
+  float y = 3;
+  float speed = 4;
+}
+
+message MoveTo {
+  sint32 x = 1;
+  sint32 y = 2;
+}
+
+message SetTarget {
+  uint32 entity = 1;
+}
+
+message UseSkill {
+  string skill_id = 1;
+  uint32 target = 2;
+}
+
+message Interact {
+  uint32 entity = 1;
+}
+
+message Emote {
+  EmoteKind emote = 1;
+}
+
+message EmoteEvent {
+  uint32 entity = 1;
+  EmoteKind emote = 2;
+}
+
+message Roll {
+  sint32 dir_x = 1;
+  sint32 dir_y = 2;
+}
+
+message MapVisual {
+  float scale = 4;
+  uint32 tint = 5;
+
+  oneof source {
+    string atlas_map_id = 1;
+    string background_image = 3;
+  }
+}
+
+message WalkSpec {
+  repeated double polygon = 1;
+  float body_radius = 2;
+  CollisionGridSpec grid = 3;
+}
+
+message CollisionGridSpec {
+  double scale = 10;
+  double width = 2;
+  double height = 3;
+  uint32 cols = 4;
+  uint32 rows = 5;
+  bytes blocked = 6;
+}
+
+message SceneNpc {
+  uint32 entity = 1;
+  string npc_id = 2;
+  string name = 3;
+  string skin_id = 4;
+  Vec2 pos = 5;
+  Facing facing = 6;
+  NpcService service = 7;
+}
+
+message ScenePortal {
+  uint32 entity = 1;
+  string portal_id = 2;
+  string target_scene = 3;
+  Vec2 pos = 4;
+  uint32 radius = 5;
+  string label = 6;
+  bool sprite = 7;
+  string marker = 8;
+  uint32 label_height = 9;
+}
+
+message SceneInteraction {
+  uint32 entity = 1;
+  string interaction_id = 2;
+  Vec2 pos = 3;
+  uint32 radius = 4;
+  string label = 5;
+  InteractionKind kind = 6;
+  NpcService service = 7;
+  uint32 label_height = 8;
+}
+
+message HuntContext {
+  string gate_id = 1;
+  uint32 tier_min = 2;
+  string difficulty = 3;
+  string boss_id = 4;
+  uint64 attempt_id = 5;
+}
+
+message SceneEnter {
+  string scene_id = 1;
+  uint64 instance_id = 2;
+  uint32 your_entity = 3;
+  MapVisual map = 4;
+  uint32 world_width = 5;
+  uint32 world_height = 6;
+  Vec2 spawn = 7;
+  repeated ScenePortal portals = 8;
+  repeated SceneNpc npcs = 9;
+  uint32 channel = 10;
+  SceneKind kind = 11;
+  HuntContext hunt = 12;
+  uint32 snapshot_hz = 13;
+  uint32 tick_hz = 14;
+  ArenaContext arena = 15;
+  WalkSpec walk = 16;
+  float move_speed = 17;
+  repeated SceneInteraction interactions = 18;
+}
+
+message ArenaContext {
+  string mode = 1;
+  uint64 duel_id = 2;
+  uint32 side = 3;
+  uint32 respawn_secs = 4;
+  uint32 shield_secs = 5;
+  bool team_war = 6;
+  bool auto_control = 7;
+}
+
+message EntityState {
+  uint32 id = 1;
+  EntityKind kind = 2;
+  sint32 x = 3;
+  sint32 y = 4;
+  Facing facing = 5;
+  AnimState anim = 6;
+  uint32 hp = 7;
+  uint32 max_hp = 8;
+  optional uint32 mana = 9;
+  optional uint32 max_mana = 10;
+  uint32 flags = 11;
+  uint32 target = 12;
+  uint32 shield = 13;
+  uint32 hp_unit = 14;
+}
+
+message EntitySpawnInfo {
+  EntityState state = 1;
+  string def_id = 2;
+  string skin_id = 3;
+  string class_id = 4;
+  string aura_id = 5;
+  string name = 6;
+  uint32 level = 7;
+  uint32 owner = 8;
+  string rank = 9;
+  float scale = 10;
+  uint64 guild_id = 11;
+  string guild_tag = 12;
+  string guild_emblem = 13;
+  uint32 pvp_rank = 14;
+  repeated string gear = 15;
+  SpawnKind spawn_kind = 16;
+  uint32 emerge_ms = 17;
+  uint32 intro_ms = 21;
+  uint32 intro_total_ms = 22;
+  Vec2 home = 23;
+  uint32 hunter_rank = 18;
+  string title_id = 19;
+  string medal_id = 20;
+  uint64 shadow_uid = 25;
+  string shadow_tier = 26;
+  uint32 title_variant = 27;
+  HunterAppearance appearance = 28;
+  string fx_set = 29;
+}
+
+message EntitySpawn {
+  uint32 tick = 1;
+  repeated EntitySpawnInfo entities = 2;
+}
+
+message EntityDespawn {
+  uint32 tick = 1;
+  repeated uint32 ids = 2;
+}
+
+message WorldSnapshot {
+  uint32 tick = 1;
+  uint64 server_time_ms = 2;
+  repeated EntityState entities = 3;
+  bool full = 4;
+}
+
+message DamageEvent {
+  uint32 source = 1;
+  uint32 target = 2;
+  uint32 amount = 3;
+  uint32 flags = 4;
+  string skill_id = 5;
+}
+
+message HealEvent {
+  uint32 source = 1;
+  uint32 target = 2;
+  uint32 amount = 3;
+  HealSource kind = 4;
+  bool mana = 5;
+}
+
+message SkillCast {
+  uint32 caster = 1;
+  string skill_id = 2;
+  uint32 target = 3;
+  Vec2 origin = 4;
+  Vec2 dest = 5;
+  Facing facing = 6;
+}
+
+message ProjectileEvent {
+  uint32 source = 1;
+  uint32 target = 2;
+  Vec2 from = 3;
+  Vec2 to = 4;
+  uint32 speed = 5;
+  string fx = 6;
+}
+
+message SpawnWarning {
+  Vec2 pos = 1;
+  SpawnKind kind = 2;
+  uint32 delay_ms = 3;
+  uint32 count = 4;
+  uint32 radius = 5;
+}
+
+message Telegraph {
+  uint32 source = 1;
+  TelegraphShape shape = 2;
+  Vec2 origin = 3;
+  sint32 dir_x = 4;
+  sint32 dir_y = 5;
+  uint32 radius = 6;
+  uint32 length = 7;
+  uint32 width = 8;
+  uint32 angle_deg = 9;
+  uint32 duration_ms = 10;
+  string attack_id = 11;
+}
+
+message DeathEvent {
+  uint32 entity = 1;
+  uint32 killer = 2;
+}
+
+message LevelUpEvent {
+  uint32 entity = 1;
+  uint32 level = 2;
+}
+
+message LootDrop {
+  Vec2 pos = 1;
+  string def_id = 2;
+  string rarity = 3;
+  uint32 qty = 4;
+  uint64 gold = 5;
+  uint32 receiver = 6;
+}
+
+message ChestOpen {
+  uint32 entity = 1;
+  Vec2 pos = 2;
+  ChestOrigin origin = 3;
+  uint32 opener = 4;
+}
+
+message BuffEvent {
+  uint32 entity = 1;
+  string buff_id = 2;
+  uint32 duration_ms = 3;
+  bool removed = 4;
+}
+
+message BossPhase {
+  uint32 entity = 1;
+  BossStage stage = 2;
+  uint32 phase = 3;
+  uint32 phases = 4;
+  string phase_name = 5;
+}
+
+message BossMechanics {
+  uint32 entity = 1;
+  uint64 seal_hp = 2;
+  uint64 seal_max = 3;
+  uint32 seal_ms = 4;
+  uint32 enrage_ms = 5;
+  bool enraged = 6;
+  uint32 adds = 7;
+  double damage_reduction = 8;
+  double damage_bonus = 9;
+  double phys_resist = 10;
+  double magic_resist = 11;
+  double aura_pct = 12;
+  uint32 aura_ms = 13;
+}
+
+message SkillCooldown {
+  string skill_id = 1;
+  uint32 ready_in_ms = 2;
+  uint32 total_ms = 3;
+}
+
+message WorldEvents {
+  uint32 tick = 1;
+  repeated DamageEvent damage = 2;
+  repeated HealEvent heals = 3;
+  repeated SkillCast casts = 4;
+  repeated ProjectileEvent projectiles = 5;
+  repeated Telegraph telegraphs = 6;
+  repeated DeathEvent deaths = 7;
+  repeated LevelUpEvent level_ups = 8;
+  repeated LootDrop loot = 9;
+  repeated ChestOpen chests = 10;
+  repeated BuffEvent buffs = 11;
+  repeated BossPhase boss_phases = 12;
+  repeated SkillCooldown cooldowns = 13;
+  repeated CombatMove moves = 14;
+  repeated SpawnWarning spawn_warnings = 15;
+  repeated EmoteEvent emotes = 16;
+  repeated BossMechanics boss_mechanics = 17;
+}
+
+message CombatMove {
+  uint32 entity = 1;
+  string move = 2;
+  uint32 target = 3;
+  sint32 dir_x = 4;
+  sint32 dir_y = 5;
+  uint32 distance = 6;
+  bool heavy = 7;
+  uint32 duration_ms = 8;
+}
+
+message NpcInteraction {
+  uint32 entity = 1;
+  string npc_id = 2;
+  NpcService service = 3;
+}
+

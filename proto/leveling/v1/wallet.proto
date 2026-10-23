@@ -1,0 +1,660 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum CryptoListingStatus {
+  CRYPTO_LISTING_STATUS_UNSPECIFIED = 0;
+  CRYPTO_LISTING_STATUS_PENDING_FEE = 1;
+  CRYPTO_LISTING_STATUS_ACTIVE = 2;
+  CRYPTO_LISTING_STATUS_RESERVED = 3;
+  CRYPTO_LISTING_STATUS_SOLD = 4;
+  CRYPTO_LISTING_STATUS_EXPIRED = 5;
+  CRYPTO_LISTING_STATUS_CANCELED = 6;
+  CRYPTO_LISTING_STATUS_REVIEW = 7;
+}
+
+enum CryptoOrderStatus {
+  CRYPTO_ORDER_STATUS_UNSPECIFIED = 0;
+  CRYPTO_ORDER_STATUS_RESERVED = 1;
+  CRYPTO_ORDER_STATUS_DELIVERED = 2;
+  CRYPTO_ORDER_STATUS_EXPIRED = 3;
+  CRYPTO_ORDER_STATUS_REVIEW = 4;
+  CRYPTO_ORDER_STATUS_RESOLVED = 5;
+}
+
+enum PlayerPaymentKind {
+  PLAYER_PAYMENT_KIND_UNSPECIFIED = 0;
+  PLAYER_PAYMENT_KIND_PLAYER = 1;
+  PLAYER_PAYMENT_KIND_LISTING_FEE = 2;
+  PLAYER_PAYMENT_KIND_PURCHASE = 3;
+  PLAYER_PAYMENT_KIND_DIAMONDS = 4;
+  PLAYER_PAYMENT_KIND_BANK_DEPOSIT = 5;
+}
+
+enum BankWithdrawalStatus {
+  BANK_WITHDRAWAL_STATUS_UNSPECIFIED = 0;
+  BANK_WITHDRAWAL_STATUS_HELD = 1;
+  BANK_WITHDRAWAL_STATUS_APPROVED = 2;
+  BANK_WITHDRAWAL_STATUS_SENDING = 3;
+  BANK_WITHDRAWAL_STATUS_PAID = 4;
+  BANK_WITHDRAWAL_STATUS_REJECTED = 5;
+  BANK_WITHDRAWAL_STATUS_FAILED = 6;
+}
+
+enum PlayerPaymentStatus {
+  PLAYER_PAYMENT_STATUS_UNSPECIFIED = 0;
+  PLAYER_PAYMENT_STATUS_AWAITING_SIGNATURE = 1;
+  PLAYER_PAYMENT_STATUS_SUBMITTED = 2;
+  PLAYER_PAYMENT_STATUS_CONFIRMED = 3;
+  PLAYER_PAYMENT_STATUS_FAILED = 4;
+  PLAYER_PAYMENT_STATUS_EXPIRED = 5;
+  PLAYER_PAYMENT_STATUS_CANCELED = 6;
+}
+
+message WalletConfig {
+  bool enabled = 1;
+  uint64 chain_id = 2;
+  string chain_name = 3;
+  string chain_id_hex = 4;
+  string usdc_contract = 5;
+  uint32 usdc_decimals = 6;
+  string public_rpc_url = 7;
+  string explorer_url = 8;
+  string listing_fee_units = 9;
+  uint32 buy_fee_bps = 10;
+  uint32 grace_hours = 11;
+  uint32 fee_window_minutes = 12;
+  uint32 reserve_minutes = 13;
+  repeated uint32 durations_hours = 14;
+  bool testnet = 15;
+  bool pay_enabled = 16;
+  uint32 pay_fee_bps = 17;
+  string pay_min_fee_units = 18;
+  string pay_min_units = 19;
+  string pay_max_units = 20;
+  uint32 pay_sign_minutes = 21;
+  bool diamonds_enabled = 22;
+  uint64 diamond_brl_cents_per_usdc = 23;
+  uint32 diamond_fee_bps = 24;
+  string diamond_fee_min_units = 25;
+  bool market_enabled = 26;
+  bool bank_enabled = 27;
+  string bank_symbol = 28;
+  string bank_address = 29;
+  string bank_deposit_min_units = 30;
+  string bank_deposit_max_units = 31;
+  string bank_withdraw_min_units = 32;
+  string bank_withdraw_fee_units = 33;
+  uint32 bank_withdraw_delay_minutes = 34;
+  string bank_withdraw_auto_max_units = 35;
+  string bank_token_name = 36;
+  bool bank_diamonds_enabled = 37;
+  uint32 bank_diamond_fee_bps = 38;
+  bool link_enabled = 39;
+  bool bank_market_enabled = 40;
+  bool bank_deposit_enabled = 41;
+  bool bank_withdraw_enabled = 42;
+  string walletconnect_project_id = 43;
+}
+
+message LinkedWallet {
+  string address = 1;
+  uint64 chain_id = 2;
+  int64 linked_at_ms = 3;
+  int64 usable_from_ms = 4;
+}
+
+message WalletState {
+  WalletConfig config = 1;
+  LinkedWallet wallet = 2;
+}
+
+message WalletLinkNonce {
+  string address = 1;
+  uint64 chain_id = 2;
+}
+
+message WalletLinkChallenge {
+  string message = 1;
+  string nonce = 2;
+  int64 expires_at_ms = 3;
+}
+
+message WalletLinkVerify {
+  string nonce = 1;
+  string signature = 2;
+}
+
+message WalletUnlink {
+}
+
+message WalletGetState {
+}
+
+message WalletGetConfig {
+}
+
+message WalletBalance {
+}
+
+message WalletBalanceResult {
+  string address = 1;
+  string units = 2;
+}
+
+message CryptoTransfer {
+  string to = 1;
+  string units = 2;
+  string purpose = 3;
+}
+
+message CryptoPayment {
+  string usdc_contract = 1;
+  uint64 chain_id = 2;
+  repeated CryptoTransfer transfers = 3;
+  int64 deadline_ms = 4;
+}
+
+message CryptoListing {
+  uint64 id = 1;
+  CryptoListingStatus status = 2;
+  uint32 kind = 3;
+  string price_units = 4;
+  uint64 quantity = 5;
+  string name = 6;
+  string def_id = 7;
+  string rarity = 8;
+  uint32 level = 9;
+  uint32 enchant = 10;
+  string shadow_monster = 11;
+  string shadow_rank = 12;
+  string seller_name = 13;
+  bool mine = 14;
+  int64 created_at_ms = 15;
+  int64 expires_at_ms = 16;
+  CryptoPayment fee_payment = 17;
+  ItemInstance item = 18;
+  Shadow shadow = 19;
+}
+
+message CryptoListingCreate {
+  uint32 kind = 1;
+  uint64 item_uid = 2;
+  uint32 quantity = 3;
+  uint64 shadow_uid = 4;
+  string price_units = 5;
+  uint32 hours = 6;
+}
+
+message CryptoSubmitTx {
+  uint64 id = 1;
+  string tx_hash = 2;
+  string purpose = 3;
+}
+
+message CryptoListingCancel {
+  uint64 id = 1;
+}
+
+message CryptoSearch {
+  uint32 page = 1;
+  string name = 2;
+}
+
+message CryptoMine {
+}
+
+message CryptoReserve {
+  uint64 listing_id = 1;
+}
+
+message CryptoOrderGet {
+  uint64 id = 1;
+}
+
+message CryptoMyOrders {
+}
+
+message CryptoOrder {
+  uint64 id = 1;
+  uint64 listing_id = 2;
+  CryptoOrderStatus status = 3;
+  string name = 4;
+  string price_units = 5;
+  string fee_units = 6;
+  string buyer_address = 7;
+  string seller_address = 8;
+  string seller_tx = 9;
+  string fee_tx = 10;
+  bool seller_ok = 11;
+  bool fee_ok = 12;
+  int64 created_at_ms = 13;
+  int64 reserved_until_ms = 14;
+  CryptoPayment payment = 15;
+  string review_reason = 16;
+  string buyer_name = 17;
+  string seller_name = 18;
+  string resolved_by = 19;
+  string resolution_note = 20;
+}
+
+message CryptoListingPage {
+  repeated CryptoListing listings = 1;
+  uint32 page = 2;
+  uint32 total = 3;
+}
+
+message CryptoOrderList {
+  repeated CryptoOrder orders = 1;
+}
+
+message CryptoTxResult {
+  string state = 1;
+  CryptoListing listing = 2;
+  CryptoOrder order = 3;
+}
+
+message CryptoStaffOrders {
+  uint32 status = 1;
+  uint32 limit = 2;
+}
+
+message CryptoStaffResolve {
+  uint64 order_id = 1;
+  string note = 2;
+  string action = 3;
+}
+
+message PaymentAuthorization {
+  string token_name = 1;
+  string token_version = 2;
+  uint64 chain_id = 3;
+  string verifying_contract = 4;
+  string from = 5;
+  string to = 6;
+  string value = 7;
+  uint64 valid_after = 8;
+  uint64 valid_before = 9;
+  string nonce = 10;
+  bool transfer = 11;
+}
+
+message PlayerPayment {
+  uint64 id = 1;
+  PlayerPaymentStatus status = 2;
+  bool outgoing = 3;
+  string from_name = 4;
+  string to_name = 5;
+  string from_address = 6;
+  string to_address = 7;
+  string amount_units = 8;
+  string fee_units = 9;
+  string note = 10;
+  string tx_hash = 11;
+  string error = 12;
+  int64 created_at_ms = 13;
+  int64 closed_at_ms = 14;
+  int64 sign_until_ms = 15;
+  PaymentAuthorization authorization = 16;
+  PlayerPaymentKind kind = 17;
+  uint64 target_id = 18;
+  uint32 diamonds = 19;
+  int64 amount_cents = 20;
+}
+
+message PlayerPaySend {
+  string to_name = 1;
+  string amount_units = 2;
+  string note = 3;
+}
+
+message PlayerPaySubmit {
+  uint64 id = 1;
+  string signature = 2;
+}
+
+message PlayerPayCancel {
+  uint64 id = 1;
+}
+
+message PlayerPayListingFee {
+  uint64 listing_id = 1;
+}
+
+message PlayerPayOrder {
+  uint64 order_id = 1;
+}
+
+message PlayerPayDiamonds {
+  uint32 diamonds = 1;
+}
+
+message PlayerPayHistory {
+}
+
+message PlayerPaymentList {
+  repeated PlayerPayment payments = 1;
+}
+
+message BankEntry {
+  uint64 id = 1;
+  string delta = 2;
+  string balance_after = 3;
+  string held_after = 4;
+  string kind = 5;
+  string ref = 6;
+  int64 at_ms = 7;
+}
+
+message BankWithdrawal {
+  uint64 id = 1;
+  BankWithdrawalStatus status = 2;
+  string amount = 3;
+  string fee = 4;
+  string to_address = 5;
+  bool review = 6;
+  string review_reason = 7;
+  int64 created_at_ms = 8;
+  int64 due_at_ms = 9;
+  string tx_hash = 10;
+  int64 closed_at_ms = 11;
+  string note = 12;
+  string name = 13;
+  uint64 account_id = 14;
+  string decided_by = 15;
+}
+
+message BankState {
+  string balance = 1;
+  string held = 2;
+  repeated BankEntry entries = 3;
+  repeated BankWithdrawal withdrawals = 4;
+  bool paused = 5;
+}
+
+message BankGet {
+}
+
+message BankDeposit {
+  string amount = 1;
+}
+
+message BankWithdraw {
+  string amount = 1;
+}
+
+message BankWithdrawCancel {
+  uint64 id = 1;
+}
+
+message BankBuyDiamonds {
+  uint32 diamonds = 1;
+}
+
+message BankDiamondsResult {
+  uint32 diamonds = 1;
+  string cost = 2;
+  string balance = 3;
+}
+
+message BankStaffWithdrawals {
+  uint32 status = 1;
+  uint32 limit = 2;
+}
+
+message BankStaffDecide {
+  uint64 id = 1;
+  bool approve = 2;
+  string note = 3;
+}
+
+message BankStaffOverview {
+}
+
+message BankWithdrawalList {
+  repeated BankWithdrawal withdrawals = 1;
+}
+
+message BankUnmatchedDeposit {
+  uint64 id = 1;
+  string tx_hash = 2;
+  string from_address = 3;
+  string amount = 4;
+  int64 seen_at_ms = 5;
+}
+
+message BankOverview {
+  string owed = 1;
+  string house = 2;
+  string hot = 3;
+  string cold = 4;
+  string sending = 5;
+  bool solvent = 6;
+  bool paused = 7;
+  string bank_address = 8;
+  repeated BankUnmatchedDeposit unmatched = 9;
+}
+
+message BankStaffReport {
+  uint32 limit = 1;
+}
+
+message BankStaffSwitch {
+  string key = 1;
+  bool on = 2;
+}
+
+message BankSwitch {
+  string key = 1;
+  bool on = 2;
+}
+
+message BankStaffDeposit {
+  uint64 id = 1;
+  uint64 account_id = 2;
+  bool ignore = 3;
+}
+
+message BankStaffSetting {
+  string key = 1;
+  string value = 2;
+  bool reset = 3;
+}
+
+message BankSetting {
+  string key = 1;
+  string value = 2;
+  string base = 3;
+  bool overridden = 4;
+  string min = 5;
+  string max = 6;
+  string unit = 7;
+}
+
+message BankReportAccount {
+  uint64 account_id = 1;
+  string name = 2;
+  string address = 3;
+  string balance = 4;
+  string held = 5;
+  int64 updated_at_ms = 6;
+}
+
+message BankReportWallet {
+  uint64 account_id = 1;
+  string name = 2;
+  string address = 3;
+  int64 linked_at_ms = 4;
+  int64 usable_from_ms = 5;
+  string balance = 6;
+  string held = 7;
+  string deposited = 8;
+  string withdrawn = 9;
+}
+
+message BankReportDeposit {
+  uint64 id = 1;
+  string tx_hash = 2;
+  uint64 block = 3;
+  string from_address = 4;
+  uint64 account_id = 5;
+  string name = 6;
+  string amount = 7;
+  uint32 status = 8;
+  int64 seen_at_ms = 9;
+  int64 credited_at_ms = 10;
+  string resolved_by = 11;
+}
+
+message BankReportEntry {
+  uint64 id = 1;
+  uint64 account_id = 2;
+  string name = 3;
+  string delta = 4;
+  string balance_after = 5;
+  string held_after = 6;
+  string kind = 7;
+  string ref = 8;
+  string actor = 9;
+  int64 at_ms = 10;
+}
+
+message BankReportHouseKind {
+  string kind = 1;
+  string total = 2;
+  uint32 count = 3;
+}
+
+message BankReport {
+  uint64 chain_id = 1;
+  string chain_name = 2;
+  bool real_money = 3;
+  string usdc_contract = 4;
+  string explorer_url = 5;
+  string finality = 6;
+  uint64 head_block = 7;
+  uint64 cursor_block = 8;
+  string native_symbol = 9;
+  string bank_address = 10;
+  string cold_address = 11;
+  string native_wei = 12;
+  string hot = 13;
+  string cold = 14;
+  string owed_balance = 15;
+  string owed_held = 16;
+  string house = 17;
+  string sending = 18;
+  bool solvent = 19;
+  bool paused = 20;
+  string total_cap = 21;
+  uint32 accounts_count = 22;
+  string deposits_total = 23;
+  uint32 deposits_count = 24;
+  string withdrawn_total = 25;
+  uint32 withdrawn_count = 26;
+  uint32 withdrawals_open = 27;
+  repeated BankReportHouseKind house_kinds = 28;
+  string deposit_min = 30;
+  string deposit_max = 31;
+  string withdraw_min = 32;
+  string withdraw_fee = 33;
+  string withdraw_auto_max = 34;
+  string withdraw_daily_auto = 35;
+  string withdraw_daily = 36;
+  uint32 withdraw_delay_minutes = 37;
+  uint32 deposit_cooldown_hours = 38;
+  uint32 diamond_fee_bps = 39;
+  uint64 diamond_brl_cents_per_usdc = 40;
+  uint32 market_fee_percent = 41;
+  string gas_cap_wei = 42;
+  uint32 scan_blocks = 43;
+  bool pilot = 44;
+  repeated string pilot_accounts = 45;
+  uint32 grace_hours = 46;
+  uint32 wallets_count = 47;
+  uint32 wallets_new_24h = 48;
+  repeated BankReportAccount accounts = 50;
+  repeated BankReportDeposit deposits = 51;
+  repeated BankReportEntry ledger = 52;
+  repeated BankReportWallet wallets = 53;
+  repeated string warnings = 60;
+  repeated BankSwitch switches = 61;
+  repeated BankSetting settings = 62;
+}
+
+message WalletRequest {
+
+  oneof op {
+    WalletGetConfig config = 1;
+    WalletGetState state = 2;
+    WalletLinkNonce link_nonce = 3;
+    WalletLinkVerify link_verify = 4;
+    WalletUnlink unlink = 5;
+    WalletBalance balance = 6;
+    CryptoListingCreate listing_create = 10;
+    CryptoSubmitTx listing_fee_tx = 11;
+    CryptoListingCancel listing_cancel = 12;
+    CryptoSearch search = 13;
+    CryptoMine mine = 14;
+    CryptoReserve reserve = 20;
+    CryptoSubmitTx order_tx = 21;
+    CryptoOrderGet order_get = 22;
+    CryptoMyOrders my_orders = 23;
+    CryptoStaffOrders staff_orders = 30;
+    CryptoStaffResolve staff_resolve = 31;
+    PlayerPaySend pay_send = 40;
+    PlayerPaySubmit pay_submit = 41;
+    PlayerPayCancel pay_cancel = 42;
+    PlayerPayHistory pay_history = 43;
+    PlayerPayListingFee pay_listing_fee = 44;
+    PlayerPayOrder pay_order = 45;
+    PlayerPayDiamonds pay_diamonds = 46;
+    BankGet bank_get = 50;
+    BankDeposit bank_deposit = 51;
+    BankWithdraw bank_withdraw = 52;
+    BankWithdrawCancel bank_withdraw_cancel = 53;
+    BankBuyDiamonds bank_buy_diamonds = 54;
+    BankStaffWithdrawals bank_staff_withdrawals = 55;
+    BankStaffDecide bank_staff_decide = 56;
+    BankStaffOverview bank_staff_overview = 57;
+    BankStaffReport bank_staff_report = 58;
+    BankStaffSwitch bank_staff_switch = 59;
+    BankStaffDeposit bank_staff_deposit = 60;
+    BankStaffSetting bank_staff_setting = 61;
+  }
+}
+
+message WalletResponse {
+
+  oneof result {
+    WalletConfig config = 1;
+    WalletState state = 2;
+    WalletLinkChallenge challenge = 3;
+    WalletBalanceResult balance = 6;
+    CryptoListing listing = 10;
+    CryptoTxResult tx = 11;
+    CryptoListingPage page = 13;
+    CryptoOrder order = 20;
+    CryptoOrderList orders = 23;
+    PlayerPayment payment = 40;
+    PlayerPaymentList payments = 43;
+    BankState bank = 50;
+    BankWithdrawal bank_withdrawal = 52;
+    BankDiamondsResult bank_diamonds = 54;
+    BankWithdrawalList bank_withdrawals = 55;
+    BankOverview bank_overview = 57;
+    BankReport bank_report = 58;
+  }
+}
+
+message WalletPush {
+
+  oneof event {
+    CryptoListing listing_changed = 1;
+    CryptoOrder order_changed = 2;
+    PlayerPayment payment_changed = 3;
+    BankState bank_changed = 4;
+  }
+}
+

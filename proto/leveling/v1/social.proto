@@ -1,0 +1,740 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum ChatChannel {
+  CHAT_CHANNEL_UNSPECIFIED = 0;
+  CHAT_CHANNEL_GLOBAL = 1;
+  CHAT_CHANNEL_TRADE = 2;
+  CHAT_CHANNEL_LOCAL = 3;
+  CHAT_CHANNEL_GUILD = 4;
+  CHAT_CHANNEL_WHISPER = 5;
+  CHAT_CHANNEL_SYSTEM = 6;
+  CHAT_CHANNEL_PARTY = 7;
+  CHAT_CHANNEL_HELPER = 8;
+}
+
+enum FriendState {
+  FRIEND_STATE_UNSPECIFIED = 0;
+  FRIEND_STATE_FRIEND = 1;
+  FRIEND_STATE_INCOMING = 2;
+  FRIEND_STATE_OUTGOING = 3;
+  FRIEND_STATE_BLOCKED = 4;
+}
+
+enum RankingKind {
+  RANKING_KIND_UNSPECIFIED = 0;
+  RANKING_KIND_LEVEL = 1;
+  RANKING_KIND_POWER = 2;
+  RANKING_KIND_DUEL = 3;
+  RANKING_KIND_SHADOW = 4;
+  RANKING_KIND_PVP = 5;
+}
+
+enum CommunityPresence {
+  COMMUNITY_PRESENCE_UNSPECIFIED = 0;
+  COMMUNITY_PRESENCE_CITY = 1;
+  COMMUNITY_PRESENCE_HUNT = 2;
+  COMMUNITY_PRESENCE_DUNGEON = 3;
+  COMMUNITY_PRESENCE_ARENA = 4;
+  COMMUNITY_PRESENCE_DUEL = 5;
+  COMMUNITY_PRESENCE_TRAVEL = 6;
+  COMMUNITY_PRESENCE_OFFLINE_FARM = 7;
+}
+
+enum CommunityBlock {
+  COMMUNITY_BLOCK_NONE = 0;
+  COMMUNITY_BLOCK_SELF = 1;
+  COMMUNITY_BLOCK_OFFLINE = 2;
+  COMMUNITY_BLOCK_BLOCKED = 3;
+  COMMUNITY_BLOCK_ALREADY_FRIENDS = 4;
+  COMMUNITY_BLOCK_PENDING_SENT = 5;
+  COMMUNITY_BLOCK_PENDING_RECEIVED = 6;
+  COMMUNITY_BLOCK_COOLDOWN = 7;
+  COMMUNITY_BLOCK_LEVEL = 8;
+  COMMUNITY_BLOCK_IN_DUEL = 9;
+  COMMUNITY_BLOCK_RECIPIENT_FULL = 10;
+  COMMUNITY_BLOCK_BUSY = 11;
+}
+
+enum SuggestionStatus {
+  SUGGESTION_STATUS_UNSPECIFIED = 0;
+  SUGGESTION_STATUS_PENDING = 1;
+  SUGGESTION_STATUS_VOTING = 2;
+  SUGGESTION_STATUS_APPROVED = 3;
+  SUGGESTION_STATUS_IN_DEVELOPMENT = 4;
+  SUGGESTION_STATUS_DONE = 5;
+  SUGGESTION_STATUS_DECLINED = 6;
+}
+
+message ChatReply {
+  string from = 1;
+  string excerpt = 2;
+}
+
+message ChatAttachment {
+
+  oneof kind {
+    ItemInstance item = 1;
+    Shadow shadow = 2;
+    ChatTrophy trophy = 3;
+  }
+}
+
+message ChatTrophy {
+  string id = 1;
+  string owner = 2;
+  int64 at_ms = 3;
+  uint32 serial = 4;
+}
+
+message ChatMessage {
+  uint64 id = 1;
+  ChatChannel channel = 2;
+  string from = 3;
+  uint64 from_account = 4;
+  Role role = 5;
+  string text = 6;
+  string key = 7;
+  map<string, string> params = 8;
+  ChatAttachment attachment = 9;
+  ChatReply reply = 10;
+  int64 at_ms = 11;
+  int64 guild_id = 12;
+  string guild_tag = 13;
+  string guild_rank = 14;
+  string to = 15;
+  uint64 to_account = 16;
+  map<string, string> texts = 17;
+  bool announcement = 18;
+  bool streamer = 19;
+  uint32 hunter_rank = 20;
+}
+
+message ChatSend {
+  ChatChannel channel = 1;
+  string text = 2;
+  string to = 3;
+  uint64 attach_item = 4;
+  uint64 attach_shadow = 5;
+  ChatReply reply = 6;
+  string attach_trophy = 7;
+}
+
+message ChatSendResult {
+  ChatMessage message = 1;
+  repeated ChatMessage replies = 2;
+}
+
+message ChatHistory {
+  ChatChannel channel = 1;
+}
+
+message ChatDelete {
+  ChatChannel channel = 1;
+  uint64 id = 2;
+}
+
+message ChatDeleteResult {
+  ChatChannel channel = 1;
+  uint64 id = 2;
+}
+
+message ChatHistoryResult {
+  ChatChannel channel = 1;
+  repeated ChatMessage messages = 2;
+}
+
+message DmThread {
+  FriendEntry peer = 1;
+  ChatMessage last = 2;
+  uint32 unread = 3;
+}
+
+message DmThreads {
+}
+
+message DmThreadsResult {
+  repeated DmThread threads = 1;
+}
+
+message DmHistory {
+  uint64 peer = 1;
+  int64 before_ms = 2;
+  uint32 limit = 3;
+}
+
+message DmHistoryResult {
+  FriendEntry peer = 1;
+  repeated ChatMessage messages = 2;
+  bool more = 3;
+}
+
+message DmRead {
+  uint64 peer = 1;
+}
+
+message DmReadResult {
+  uint64 peer = 1;
+}
+
+message FriendEntry {
+  uint64 account = 1;
+  string username = 2;
+  string name = 3;
+  uint32 level = 4;
+  string class_id = 5;
+  string skin_id = 6;
+  bool online = 7;
+  FriendState state = 8;
+  int64 since_ms = 9;
+  HunterAppearance appearance = 10;
+}
+
+message FriendList {
+}
+
+message FriendListResult {
+  repeated FriendEntry friends = 1;
+  repeated FriendEntry incoming = 2;
+  repeated FriendEntry outgoing = 3;
+  repeated FriendEntry blocked = 4;
+}
+
+message PlayerRef {
+  uint64 account = 1;
+  string name = 2;
+}
+
+message FriendAction {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_REQUEST = 1;
+    KIND_ACCEPT = 2;
+    KIND_DECLINE = 3;
+    KIND_REMOVE = 4;
+    KIND_BLOCK = 5;
+    KIND_UNBLOCK = 6;
+  }
+
+  FriendAction.Kind kind = 1;
+  PlayerRef target = 2;
+}
+
+message FriendActionResult {
+  FriendAction.Kind kind = 1;
+  FriendEntry entry = 2;
+  bool became_friends = 3;
+}
+
+message RankingEntry {
+  uint32 position = 1;
+  uint64 account = 2;
+  string name = 3;
+  uint32 level = 4;
+  string class_id = 5;
+  string skin_id = 6;
+  uint64 power = 7;
+  uint64 value = 8;
+  uint64 duels_won = 9;
+  uint64 duels_lost = 10;
+  uint64 pvp_kills = 11;
+  uint64 pvp_deaths = 12;
+  uint32 pvp_best_streak = 13;
+  string shadow_name = 14;
+  string shadow_rank = 15;
+  uint32 shadow_level = 16;
+  uint32 shadow_power = 24;
+  int64 guild_id = 17;
+  uint32 medal = 18;
+  bool suspicious = 19;
+  uint32 hunter_rank = 21;
+  string guild_tag = 22;
+  HunterAppearance appearance = 23;
+}
+
+message RankingHighlight {
+  RankingKind kind = 1;
+  RankingEntry entry = 2;
+}
+
+message RankingQuery {
+  RankingKind kind = 1;
+  uint32 page = 2;
+  uint32 page_size = 3;
+  string class_id = 4;
+}
+
+message RankingPage {
+  RankingKind kind = 1;
+  uint32 page = 2;
+  uint32 page_size = 3;
+  uint64 total = 4;
+  repeated RankingEntry entries = 5;
+  RankingEntry me = 6;
+  repeated RankingHighlight highlights = 7;
+  string class_id = 8;
+  bool me_unlisted = 9;
+}
+
+message InspectPlayer {
+  PlayerRef target = 1;
+  bool brief = 2;
+}
+
+message PlayerProfile {
+  uint64 account = 1;
+  string username = 2;
+  string name = 3;
+  Role role = 4;
+  uint32 level = 5;
+  string class_id = 6;
+  string skin_id = 7;
+  string aura_id = 8;
+  Gender gender = 9;
+  uint64 power = 10;
+  bool online = 11;
+  int64 guild_id = 12;
+  repeated ItemInstance equipment = 13;
+  repeated Shadow team = 14;
+  uint64 pvp_kills = 15;
+  uint64 pvp_deaths = 16;
+  uint32 pvp_best_streak = 17;
+  uint64 duels_won = 18;
+  uint64 duels_lost = 19;
+  FriendState relation = 20;
+  uint32 medal = 21;
+  uint64 level_rank = 22;
+  uint64 power_rank = 23;
+  int64 created_at_ms = 24;
+  string guild_name = 25;
+  string guild_tag = 26;
+  bool gear_hidden = 27;
+  repeated EquipSlot hidden_visuals = 28;
+  string title_id = 29;
+  string frame_id = 30;
+  string background_id = 31;
+  uint64 played_ms = 32;
+  repeated string unlocked_cosmetics = 33;
+  string medal_id = 34;
+  repeated MedalEarned medals = 35;
+  map<string, uint64> cosmetic_progress = 36;
+  repeated string look_gear = 38;
+  repeated MedalEarned trophies = 37;
+  map<string, uint32> cosmetic_variants = 39;
+  HunterAppearance appearance = 40;
+}
+
+message CommunityList {
+  string query = 1;
+  string cursor = 2;
+  uint32 limit = 3;
+}
+
+message CommunityEntry {
+  uint64 account = 1;
+  string name = 2;
+  uint32 level = 3;
+  string class_id = 4;
+  string skin_id = 5;
+  CommunityPresence presence = 6;
+  FriendState relation = 7;
+  string guild_tag = 8;
+  bool me = 9;
+  HunterAppearance appearance = 10;
+  int64 offline_until_ms = 11;
+}
+
+message CommunityPage {
+  repeated CommunityEntry entries = 1;
+  string next_cursor = 2;
+  uint32 total_online = 3;
+  uint32 matched = 4;
+  string query = 5;
+  string cursor = 6;
+}
+
+message CommunityDetail {
+  uint64 account = 1;
+}
+
+message CommunityAction {
+  CommunityBlock block = 1;
+  int64 retry_after_ms = 2;
+}
+
+message CommunityDetailResult {
+  PlayerProfile profile = 1;
+  CommunityPresence presence = 2;
+  CommunityAction friend = 3;
+  CommunityAction duel = 4;
+  int64 offline_until_ms = 5;
+}
+
+message SuggestionOption {
+  string text = 1;
+  uint32 votes = 2;
+}
+
+message Suggestion {
+  uint64 id = 1;
+  string title = 2;
+  string body = 3;
+  string author = 4;
+  bool by_staff = 5;
+  SuggestionStatus status = 6;
+  int64 created_ms = 7;
+  uint32 yes = 8;
+  uint32 no = 9;
+  repeated SuggestionOption options = 10;
+  int32 my_vote = 11;
+  uint32 comments = 12;
+  bool mine = 13;
+  string lang = 14;
+  map<string, SuggestionTexts> i18n = 15;
+}
+
+message SuggestionTexts {
+  string title = 1;
+  string body = 2;
+  repeated string options = 3;
+}
+
+message SuggestionList {
+  string filter = 1;
+  uint32 page = 2;
+}
+
+message SuggestionPage {
+  repeated Suggestion items = 1;
+  uint32 page = 2;
+  bool more = 3;
+  bool staff = 4;
+  uint32 pending = 5;
+  uint64 latest_voting_id = 6;
+}
+
+message SuggestionCreate {
+  string title = 1;
+  string body = 2;
+  repeated string options = 3;
+  string lang = 4;
+}
+
+message SuggestionVote {
+  uint64 id = 1;
+  int32 choice = 2;
+}
+
+message SuggestionComment {
+  uint64 id = 1;
+  string author = 2;
+  bool staff = 3;
+  string text = 4;
+  int64 at_ms = 5;
+}
+
+message SuggestionComments {
+  uint64 id = 1;
+}
+
+message SuggestionCommentAdd {
+  uint64 id = 1;
+  string text = 2;
+}
+
+message SuggestionCommentList {
+  uint64 id = 1;
+  repeated SuggestionComment comments = 2;
+}
+
+message SuggestionModerate {
+  uint64 id = 1;
+  SuggestionStatus status = 2;
+  bool remove = 3;
+}
+
+message SuggestionRemoved {
+  uint64 id = 1;
+}
+
+message TopIdleStatus {
+}
+
+message TopIdleRewardItem {
+  string item_id = 1;
+  uint32 qty = 2;
+}
+
+message TopIdleReward {
+  uint32 vote = 1;
+  repeated string boosts = 2;
+  string bless = 3;
+  repeated TopIdleRewardItem items = 4;
+}
+
+message TopIdleStatusResult {
+  uint32 votes = 1;
+  uint32 cycle_vote = 2;
+  uint32 cycle_len = 3;
+  uint32 cycles = 4;
+  int64 last_vote_ms = 5;
+  uint32 boost_hours = 6;
+  repeated TopIdleReward rewards = 7;
+}
+
+message DailyRewardStatus {
+}
+
+message DailyRewardClaim {
+}
+
+message DailyRewardItem {
+  string item_id = 1;
+  uint32 qty = 2;
+}
+
+message DailyRewardDay {
+  uint32 day = 1;
+  repeated string boosts = 2;
+  string bless = 3;
+  repeated DailyRewardItem items = 4;
+  bool highlight = 5;
+}
+
+message DailyRewardState {
+  bool enabled = 1;
+  uint32 min_level = 2;
+  bool eligible = 3;
+  uint64 total_claims = 4;
+  bool claimed_today = 5;
+  uint32 today_day = 6;
+  uint32 cycle_done = 7;
+  uint32 cycle_len = 8;
+  uint32 cycles = 9;
+  int64 server_now_ms = 10;
+  int64 next_reset_ms = 11;
+  uint32 boost_hours = 12;
+  repeated DailyRewardDay days = 13;
+  uint32 streak = 14;
+  uint32 best_streak = 15;
+  uint32 migrated_votes = 16;
+}
+
+message DailyRewardClaimResult {
+  DailyRewardState state = 1;
+  uint32 day = 2;
+  bool already = 3;
+  uint64 mail_id = 4;
+}
+
+message SocialRequest {
+
+  oneof op {
+    ChatSend chat_send = 1;
+    ChatHistory chat_history = 2;
+    FriendList friend_list = 3;
+    FriendAction friend_action = 4;
+    RankingQuery ranking = 5;
+    InspectPlayer inspect = 6;
+    CommunityList community_list = 7;
+    CommunityDetail community_detail = 8;
+    SuggestionList suggestion_list = 9;
+    SuggestionCreate suggestion_create = 10;
+    SuggestionVote suggestion_vote = 11;
+    SuggestionComments suggestion_comments = 12;
+    SuggestionCommentAdd suggestion_comment = 13;
+    SuggestionModerate suggestion_moderate = 14;
+    TopIdleStatus topidle_status = 15;
+    ChatDelete chat_delete = 17;
+    DmThreads dm_threads = 18;
+    DmHistory dm_history = 19;
+    DmRead dm_read = 20;
+    DailyRewardStatus daily_status = 21;
+    DailyRewardClaim daily_claim = 22;
+    HalloweenStatus halloween_status = 23;
+    HalloweenClaim halloween_claim = 24;
+    HalloweenBuy halloween_buy = 25;
+    HalloweenRelease halloween_release = 26;
+    MessengerStatus messenger_status = 27;
+    HalloweenRanking halloween_ranking = 28;
+  }
+}
+
+message HalloweenBuy {
+  string package = 1;
+}
+
+message HalloweenPack {
+  string id = 1;
+  uint64 diamonds = 2;
+  repeated HalloweenReward goods = 3;
+  string art = 4;
+  bool owned = 5;
+}
+
+message HalloweenBuyResult {
+  HalloweenState state = 1;
+  string package = 2;
+  bool already = 3;
+  uint64 diamonds_spent = 4;
+}
+
+message HalloweenStatus {
+}
+
+message HalloweenClaim {
+  string milestone = 1;
+}
+
+message HalloweenReward {
+  string kind = 1;
+  string id = 2;
+}
+
+message HalloweenMilestone {
+  string id = 1;
+  uint32 candies = 2;
+  repeated HalloweenReward rewards = 3;
+  bool claimed = 4;
+}
+
+message HalloweenState {
+  bool enabled = 1;
+  string item = 2;
+  uint64 candies = 3;
+  repeated HalloweenMilestone milestones = 4;
+  uint32 chance_bp = 5;
+  repeated HalloweenPack packs = 6;
+  bool can_release = 7;
+  bool released = 8;
+  int64 ends_at_ms = 9;
+  int64 now_ms = 10;
+  bool ended = 11;
+}
+
+message HalloweenRanking {
+  uint32 page = 1;
+  uint32 page_size = 2;
+}
+
+message HalloweenRankingPage {
+  uint32 page = 1;
+  uint32 page_size = 2;
+  uint64 total = 3;
+  repeated RankingEntry entries = 4;
+  RankingEntry me = 5;
+  bool me_unlisted = 6;
+}
+
+message HalloweenRelease {
+  bool on = 1;
+}
+
+message MessengerStatus {
+}
+
+message MessengerPrize {
+  uint32 from = 1;
+  uint32 to = 2;
+  uint64 diamonds = 3;
+  string package = 4;
+  bool package_pending = 5;
+  string title = 6;
+}
+
+message MessengerLine {
+  uint32 place = 1;
+  string name = 2;
+  uint32 invites = 3;
+  bool me = 4;
+}
+
+message MessengerInvitee {
+  string name = 1;
+  uint32 level = 2;
+  bool purchase_ok = 3;
+  bool counted = 4;
+}
+
+message MessengerState {
+  bool enabled = 1;
+  int64 starts_at_ms = 2;
+  int64 ends_at_ms = 3;
+  int64 now_ms = 4;
+  uint32 min_level = 5;
+  uint64 purchase_above = 6;
+  repeated MessengerPrize prizes = 7;
+  repeated MessengerLine top = 8;
+  uint32 my_place = 9;
+  uint32 my_invites = 10;
+  repeated MessengerInvitee invitees = 11;
+  bool settled = 12;
+}
+
+message HalloweenClaimResult {
+  HalloweenState state = 1;
+  string milestone = 2;
+  bool already = 3;
+}
+
+message SocialResponse {
+
+  oneof result {
+    ChatSendResult chat_send = 1;
+    ChatHistoryResult chat_history = 2;
+    FriendListResult friend_list = 3;
+    FriendActionResult friend_action = 4;
+    RankingPage ranking = 5;
+    PlayerProfile inspect = 6;
+    CommunityPage community_list = 7;
+    CommunityDetailResult community_detail = 8;
+    SuggestionPage suggestion_list = 9;
+    Suggestion suggestion_create = 10;
+    Suggestion suggestion_vote = 11;
+    SuggestionCommentList suggestion_comments = 12;
+    SuggestionCommentList suggestion_comment = 13;
+    SuggestionRemoved suggestion_moderate = 14;
+    TopIdleStatusResult topidle_status = 15;
+    ChatDeleteResult chat_delete = 17;
+    DmThreadsResult dm_threads = 18;
+    DmHistoryResult dm_history = 19;
+    DmReadResult dm_read = 20;
+    DailyRewardState daily_status = 21;
+    DailyRewardClaimResult daily_claim = 22;
+    HalloweenState halloween_status = 23;
+    HalloweenClaimResult halloween_claim = 24;
+    HalloweenBuyResult halloween_buy = 25;
+    HalloweenState halloween_release = 26;
+    MessengerState messenger_status = 27;
+    HalloweenRankingPage halloween_ranking = 28;
+  }
+}
+
+message FriendPresence {
+  uint64 account = 1;
+  string name = 2;
+  bool online = 3;
+}
+
+message FriendUpdate {
+  FriendAction.Kind kind = 1;
+  FriendEntry entry = 2;
+}
+
+message ChatMuted {
+  int64 until_ms = 1;
+}
+
+message SocialPush {
+
+  oneof event {
+    ChatMessage chat = 1;
+    FriendPresence presence = 2;
+    FriendUpdate friend = 3;
+    ChatMuted muted = 4;
+    ChatDeleteResult deleted = 5;
+  }
+}
+

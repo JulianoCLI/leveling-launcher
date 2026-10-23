@@ -1,0 +1,333 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum InventoryScope {
+  INVENTORY_SCOPE_UNSPECIFIED = 0;
+  INVENTORY_SCOPE_BAG = 1;
+  INVENTORY_SCOPE_FORGE = 2;
+  INVENTORY_SCOPE_WAREHOUSE = 3;
+}
+
+enum InventorySort {
+  INVENTORY_SORT_UNSPECIFIED = 0;
+  INVENTORY_SORT_RECENT = 1;
+  INVENTORY_SORT_POWER = 2;
+  INVENTORY_SORT_LEVEL = 3;
+  INVENTORY_SORT_RARITY = 4;
+  INVENTORY_SORT_SUGGESTED = 5;
+  INVENTORY_SORT_ENCHANT = 6;
+  INVENTORY_SORT_SOCKETS = 7;
+}
+
+enum ForgeTab {
+  FORGE_TAB_UNSPECIFIED = 0;
+  FORGE_TAB_ENCHANT = 1;
+  FORGE_TAB_GEMS = 2;
+  FORGE_TAB_IMBUE = 3;
+  FORGE_TAB_REFORGE = 4;
+  FORGE_TAB_DISMANTLE = 5;
+  FORGE_TAB_FUSION = 6;
+  FORGE_TAB_TRANSFER = 7;
+}
+
+enum DeltaReason {
+  DELTA_REASON_UNSPECIFIED = 0;
+  DELTA_REASON_DROP = 1;
+  DELTA_REASON_CHEST = 2;
+  DELTA_REASON_SELL = 3;
+  DELTA_REASON_ENCHANT = 4;
+  DELTA_REASON_GEM = 5;
+  DELTA_REASON_EQUIP = 6;
+  DELTA_REASON_SHOP = 7;
+  DELTA_REASON_CONSUME = 8;
+  DELTA_REASON_WAREHOUSE = 9;
+  DELTA_REASON_LOCK = 10;
+  DELTA_REASON_SHADOW = 11;
+  DELTA_REASON_BOSS_KEY = 12;
+  DELTA_REASON_MAIL = 14;
+  DELTA_REASON_MARKET = 15;
+  DELTA_REASON_TRADE = 16;
+  DELTA_REASON_GUILD = 17;
+  DELTA_REASON_IMBUE = 18;
+  DELTA_REASON_REFORGE = 20;
+  DELTA_REASON_DISMANTLE = 21;
+  DELTA_REASON_FUSION = 22;
+  DELTA_REASON_ENCHANT_TRANSFER = 23;
+  DELTA_REASON_INSIGNIA_EXCHANGE = 24;
+  DELTA_REASON_COLLECTION = 25;
+  DELTA_REASON_MISSION_REWARD = 26;
+  DELTA_REASON_OFFLINE_REWARD = 27;
+  DELTA_REASON_EXPEDITION = 28;
+  DELTA_REASON_REPAIR = 29;
+  DELTA_REASON_WEAR = 30;
+}
+
+enum EquipCriterion {
+  EQUIP_CRITERION_UNSPECIFIED = 0;
+  EQUIP_CRITERION_SCORE = 1;
+  EQUIP_CRITERION_POWER = 2;
+  EQUIP_CRITERION_ATTACK = 3;
+  EQUIP_CRITERION_DEFENSE = 4;
+  EQUIP_CRITERION_HP = 5;
+  EQUIP_CRITERION_BASE_POWER = 6;
+}
+
+enum WarehouseDirection {
+  WAREHOUSE_DIRECTION_UNSPECIFIED = 0;
+  WAREHOUSE_DIRECTION_TO_WAREHOUSE = 1;
+  WAREHOUSE_DIRECTION_TO_BAG = 2;
+}
+
+message ItemStats {
+  sint32 atk = 1;
+  sint32 def = 2;
+  sint32 hp = 3;
+}
+
+message GemSocket {
+  string gem_id = 1;
+  uint32 level = 2;
+}
+
+message Imbuement {
+  uint32 slot = 1;
+  string type_id = 2;
+  uint32 tier = 3;
+  uint64 remaining_ms = 4;
+}
+
+message ItemAffix {
+  string id = 1;
+  double value = 2;
+}
+
+message ItemInstance {
+  uint64 uid = 1;
+  string def_id = 2;
+  string rarity = 3;
+  uint32 level = 4;
+  ItemStats stats = 5;
+  uint32 enchant = 6;
+  repeated GemSocket sockets = 16;
+  uint32 qty = 8;
+  bool locked = 9;
+  string origin = 10;
+  int64 created_at_ms = 11;
+  EquipSlot equipped_slot = 12;
+  uint64 equipped_on_shadow = 13;
+  uint64 sell_price = 14;
+  double power = 15;
+  repeated Imbuement imbuements = 17;
+  repeated ItemAffix affixes = 19;
+  map<uint32, uint32> enchant_pity = 20;
+  double reforge_count = 21;
+  int64 reforge_at_ms = 22;
+  bool forged = 23;
+  uint32 durability = 24;
+  ItemStats enchanted_stats = 25;
+}
+
+message Equipment {
+  message Entry {
+    EquipSlot slot = 1;
+    ItemInstance item = 2;
+  }
+
+  repeated Equipment.Entry slots = 1;
+}
+
+message InventoryFilter {
+  ItemCategory category = 1;
+  EquipSlot slot = 2;
+  string rarity = 3;
+  uint32 level_min = 4;
+  uint32 level_max = 5;
+  repeated string def_ids = 6;
+  ForgeTab forge_tab = 7;
+  BoolFilter equipped = 8;
+  bool eligible_only = 9;
+}
+
+message InventoryPageRequest {
+  InventoryScope scope = 1;
+  uint32 page = 2;
+  uint32 page_size = 3;
+  InventoryFilter filter = 4;
+  InventorySort sort = 5;
+  uint64 focus_uid = 6;
+  uint64 after_uid = 7;
+  uint64 before_uid = 8;
+}
+
+message InventoryCounts {
+  message Category {
+    ItemCategory category = 1;
+    uint32 count = 2;
+  }
+
+  message Slot {
+    EquipSlot slot = 1;
+    uint32 count = 2;
+  }
+
+  repeated InventoryCounts.Category categories = 1;
+  repeated InventoryCounts.Slot slots = 2;
+  uint32 all = 3;
+}
+
+message InventoryPage {
+  InventoryScope scope = 1;
+  repeated ItemInstance items = 2;
+  uint32 total = 3;
+  uint32 page = 4;
+  uint32 pages = 5;
+  uint32 page_size = 6;
+  bool has_prev = 7;
+  bool has_next = 8;
+  bool adjusted = 9;
+  bool focus_found = 10;
+  bool cursor_found = 11;
+  InventoryCounts counts = 12;
+  uint32 used_slots = 13;
+  uint32 capacity = 14;
+}
+
+message InventoryDelta {
+  InventoryScope scope = 1;
+  repeated ItemInstance added = 2;
+  repeated ItemInstance updated = 3;
+  repeated uint64 removed = 4;
+  uint32 used_slots = 5;
+  uint32 capacity = 6;
+  DeltaReason reason = 7;
+}
+
+message Equip {
+  uint64 uid = 1;
+}
+
+message EquipResult {
+  EquipSlot slot = 1;
+  uint64 equipped_uid = 2;
+  uint64 unequipped_uid = 3;
+}
+
+message Unequip {
+  EquipSlot slot = 1;
+}
+
+message UnequipResult {
+  EquipSlot slot = 1;
+  uint64 uid = 2;
+}
+
+message EquipChange {
+  EquipSlot slot = 1;
+  uint64 current_uid = 2;
+  uint64 new_uid = 3;
+  double delta = 4;
+}
+
+message EquipBestPreview {
+  EquipCriterion criterion = 1;
+}
+
+message EquipBestPreviewResult {
+  bool already_best = 1;
+  double current_power = 2;
+  double new_power = 3;
+  double delta_power = 4;
+  repeated EquipChange changes = 5;
+  repeated ItemInstance items = 6;
+}
+
+message EquipBestApply {
+  EquipCriterion criterion = 1;
+}
+
+message EquipBestApplyResult {
+  bool already_best = 1;
+  double current_power = 2;
+  double new_power = 3;
+  double delta_power = 4;
+  repeated EquipChange changes = 5;
+}
+
+message SellEntry {
+  uint64 uid = 1;
+  uint32 qty = 2;
+}
+
+message BulkSell {
+  repeated ItemCategory categories = 1;
+  repeated string rarities = 2;
+}
+
+message SellItems {
+  message Uids {
+    repeated SellEntry entries = 1;
+  }
+
+  bool confirm_rare = 3;
+
+  oneof selection {
+    SellItems.Uids uids = 1;
+    BulkSell bulk = 2;
+  }
+}
+
+message SellResult {
+  uint32 sold = 1;
+  uint64 units = 2;
+  uint64 gold = 3;
+  uint32 skipped = 4;
+  bool needs_rare_confirmation = 5;
+  repeated ItemCount rare_pending = 6;
+}
+
+message LockItem {
+  uint64 uid = 1;
+  bool locked = 2;
+}
+
+message LockItemResult {
+  uint64 uid = 1;
+  bool locked = 2;
+}
+
+message UseItem {
+  uint64 uid = 1;
+  uint32 qty = 2;
+}
+
+message UseItemResult {
+  string def_id = 1;
+  uint32 used = 2;
+  string boost = 3;
+  int64 until_ms = 4;
+}
+
+message WarehouseMove {
+  repeated uint64 uids = 1;
+  WarehouseDirection direction = 2;
+}
+
+message WarehouseMoveResult {
+  repeated uint64 moved = 1;
+  repeated uint64 refused = 2;
+  uint32 bag_used = 3;
+  uint32 bag_capacity = 4;
+  uint32 warehouse_used = 5;
+  uint32 warehouse_capacity = 6;
+}
+
+message InventorySummary {
+  uint32 bag_used = 1;
+  uint32 bag_capacity = 2;
+  uint32 warehouse_used = 3;
+  uint32 warehouse_capacity = 4;
+  repeated ItemCount materials = 5;
+}
+

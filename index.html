@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'">
+  <title>Leveling Idle 2D · Launcher</title>
+  <link rel="stylesheet" href="src/ui/shell.css">
+  <link rel="stylesheet" href="src/ui/leveling.css">
+</head>
+
+<body>
+  <div id="titlebar">
+    <span class="logo"><span class="mark" aria-hidden="true">⚔</span>LEVELING IDLE 2D<span class="ver"
+        id="appVer"></span></span>
+    <span class="spacer"></span>
+    <label for="panelCount" class="ver">Painéis</label>
+    <select id="panelCount" title="Quantos painéis mostrar nesta aba">
+      <option value="1">1</option>
+      <option value="2">2</option>
+      <option value="3">3</option>
+      <option value="4">4</option>
+    </select>
+    <button id="accountsBtn" title="Credenciais e monitor headless de cada conta">👤 Contas</button>
+    <button id="refillBtn" title="Reposição automática de poções, revives e essência em todas as contas">⚗️
+      Refill</button>
+    <button id="reloadAll" title="Recarrega a página do jogo em todos os painéis">⟳ Atualizar</button>
+    <button id="bootMonitorBtn"
+      title="Esta aba abre já em modo monitor, sem carregar o jogo nos painéis (consumo mínimo)">🔋 Monitor no
+      início</button>
+    <button id="awakeBtn" title="Impede o PC de dormir enquanto farma (a tela ainda pode desligar)">💤
+      Dormir</button>
+    <button id="errlogBtn" title="Abre o log de erros do launcher">🧾 Log</button>
+    <span class="wincontrols">
+      <button id="winMin" title="Minimizar" aria-label="Minimizar">—</button>
+      <button id="winMax" title="Maximizar" aria-label="Maximizar">▢</button>
+      <button id="winClose" title="Fechar" aria-label="Fechar">✕</button>
+    </span>
+  </div>
+
+  <!-- Uma aba por grupo de quatro contas. -->
+  <div id="tabbar" role="tablist" aria-label="Grupos de contas">
+    <div id="tabs"></div>
+    <button type="button" id="tabAdd" title="Adicionar uma aba com mais 4 contas">+ Aba</button>
+    <button type="button" id="tabRemove"
+      title="Remover a última aba. As credenciais ficam salvas; monitores dessas contas são desligados.">− Aba</button>
+  </div>
+
+  <div id="grid" data-panels="4"></div>
+
+  <!-- Modal de contas: credenciais e monitor headless somente leitura -->
+  <div id="levelingOverlay" style="display:none">
+    <div id="levelingModal" role="dialog" aria-labelledby="levelingTitle" aria-modal="true">
+      <div class="lv-head">
+        <h2><span class="lv-icon" aria-hidden="true">⚔</span><span id="levelingTitle">Contas</span></h2>
+        <button type="button" class="lv-close" id="levelingCloseBtn" aria-label="Fechar">&times;</button>
+      </div>
+      <p class="hint">Monitor da caçada que já está rodando: o launcher observa e mostra os números, e nunca troca de
+        caçada, usa itens nem revive — isso continua com a automação do servidor. Com a <b>reposição automática</b>
+        ligada, ele também compra os consumíveis que faltam, o que tira a conta da caçada por alguns segundos.</p>
+
+      <div class="lv-warn">
+        ⚠️ O jogo aceita <b>uma sessão por conta</b>. Ativar o monitor derruba o painel do jogo; para mexer em algo,
+        desligue o monitor e a conta volta para o painel normal.
+      </div>
+
+      <!-- Espelha as abas do grid: quatro contas por vez, mesma numeração. -->
+      <div class="lv-tabs" id="levelingTabs" role="tablist" aria-label="Grupos de contas"></div>
+
+      <div class="lv-accounts" id="levelingAccounts"></div>
+
+      <div class="lv-status-bar" id="levelingStatusBar" role="status" aria-live="polite"></div>
+
+      <div class="modal-actions">
+        <button type="button" id="levelingClose">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de refill: uma configuração para todas as contas -->
+  <div id="refillOverlay" style="display:none">
+    <div id="refillModal" role="dialog" aria-labelledby="refillTitle" aria-modal="true">
+      <div class="lv-head">
+        <h2><span class="lv-icon" aria-hidden="true">⚗️</span><span id="refillTitle">Reposição automática</span></h2>
+        <button type="button" class="lv-close" id="refillCloseBtn" aria-label="Fechar">&times;</button>
+      </div>
+      <p class="hint">Vale para <b>todas as contas</b>. Quando o estoque de um item cai <b>abaixo do mínimo</b>, o
+        monitor compra até o <b>alvo</b>. Mínimo em zero desliga aquele item.</p>
+
+      <div class="lv-warn">
+        ⚠️ Isto <b>gasta ouro</b> das contas, e a reserva nunca é tocada.
+      </div>
+
+      <div class="lv-warn">
+        ⚠️ O servidor <b>só vende na loja da cidade</b>. Para repor, a conta <b>sai da caçada</b>, vai até o
+        comerciante, compra e volta — cerca de <b>3 segundos</b> parada, e só quando falta estoque. Se o launcher
+        fechar no meio disso, a conta volta à caçada na próxima vez que o monitor ligar.
+      </div>
+
+      <label class="rf-master">
+        <input type="checkbox" id="refillEnabled">
+        <span>Ligar a reposição automática</span>
+      </label>
+
+      <label class="rf-reserve">
+        <span>Reserva de ouro (nunca gastar abaixo disto)</span>
+        <input type="number" id="refillReserve" min="0" step="1000" value="0">
+      </label>
+
+      <div class="rf-items" id="refillItems"></div>
+
+      <div class="lv-status-bar" id="refillStatusBar" role="status" aria-live="polite"></div>
+
+      <div class="modal-actions">
+        <button type="button" id="refillSave" class="primary">Salvar</button>
+        <button type="button" id="refillClose">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="src/ui/hud-metrics.js"></script>
+  <script src="src/ui/leveling-hud.js"></script>
+  <script src="src/ui/leveling-panel.js"></script>
+  <script src="src/ui/leveling-refill-ui.js"></script>
+  <script src="src/ui/shell.js"></script>
+</body>
+
+</html>

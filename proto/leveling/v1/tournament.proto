@@ -1,0 +1,237 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+message TournamentEntrant {
+  uint64 account = 1;
+  string name = 2;
+  uint32 level = 3;
+  string class_id = 4;
+  bool checked_in = 5;
+  uint32 seed = 6;
+  uint32 place = 7;
+  string guild = 8;
+  uint64 team = 9;
+}
+
+message TournamentTeam {
+  uint64 id = 1;
+  string name = 2;
+  repeated uint64 members = 3;
+}
+
+message TournamentLive {
+  uint32 part = 1;
+  uint32 round = 2;
+  uint32 slot = 3;
+  uint32 kills_a = 4;
+  uint32 kills_b = 5;
+  uint64 damage_a = 6;
+  uint64 damage_b = 7;
+  int64 fight_at_ms = 8;
+  int64 ends_at_ms = 9;
+  uint32 watchers = 10;
+  uint32 alive_a = 11;
+  uint32 alive_b = 12;
+  uint32 start_secs = 13;
+  uint32 ring = 14;
+  uint32 bout = 15;
+  bool started = 16;
+}
+
+message TournamentMatch {
+  uint32 round = 1;
+  uint32 slot = 2;
+  uint64 a = 3;
+  uint64 b = 4;
+  uint64 winner = 5;
+  bool walkover = 6;
+  bool live = 7;
+  uint32 part = 8;
+}
+
+message TournamentState {
+  uint64 id = 1;
+  string name = 2;
+  uint32 status = 3;
+  uint32 max_players = 4;
+  uint32 min_level = 5;
+  repeated TournamentEntrant entrants = 6;
+  repeated TournamentMatch matches = 7;
+  uint32 rounds = 8;
+  uint64 champion = 9;
+  bool staff = 10;
+  repeated TournamentPrize prizes = 11;
+  bool prizes_delivered = 12;
+  bool admin = 13;
+  TournamentScreen screen = 14;
+  string announce = 15;
+  int64 announce_at_ms = 16;
+  repeated TournamentPickCount picks = 17;
+  repeated TournamentScore scores = 18;
+  repeated TournamentResult my_picks = 19;
+  repeated TournamentChampion hall = 20;
+  string format = 21;
+  string team_mode = 22;
+  repeated TournamentTeam teams = 23;
+  TournamentLive live_match = 24;
+  bool watching = 25;
+  bool stage_open = 26;
+  repeated TournamentLive bouts = 27;
+  uint32 rings = 28;
+  repeated uint64 unlocked = 29;
+  bool idle = 30;
+}
+
+message TournamentAccounts {
+  repeated uint64 accounts = 1;
+}
+
+message TournamentLock {
+  repeated uint64 accounts = 1;
+  bool locked = 2;
+}
+
+message TournamentPlace {
+  uint64 account = 1;
+  float dx = 2;
+  float dy = 3;
+}
+
+message TournamentScreen {
+  string kind = 1;
+  uint32 round = 2;
+  uint32 slot = 3;
+  uint32 part = 4;
+}
+
+message TournamentCinematic {
+  string id = 1;
+  uint32 round = 2;
+  uint32 slot = 3;
+  string by = 4;
+  uint32 part = 5;
+}
+
+message TournamentPickCount {
+  uint32 round = 1;
+  uint32 slot = 2;
+  uint32 a = 3;
+  uint32 b = 4;
+  uint32 part = 5;
+}
+
+message TournamentScore {
+  string name = 1;
+  uint32 points = 2;
+}
+
+message TournamentChampion {
+  string tournament = 1;
+  string name = 2;
+  int64 ended_at_ms = 3;
+  uint32 players = 4;
+}
+
+message TournamentReaction {
+  string name = 1;
+  string emoji = 2;
+}
+
+message TournamentPrize {
+  uint32 place = 1;
+  uint64 gold = 2;
+  uint64 diamonds = 3;
+  repeated AdminGrantItem items = 4;
+  string trophy_id = 5;
+}
+
+message TournamentPrizes {
+  repeated TournamentPrize prizes = 1;
+}
+
+message TournamentCreate {
+  string name = 1;
+  uint32 max_players = 2;
+  uint32 min_level = 3;
+  string format = 4;
+  string team_mode = 5;
+  bool idle = 6;
+}
+
+message TournamentDraw {
+  bool by_level = 1;
+  bool force = 2;
+}
+
+message TournamentMatchRef {
+  uint32 round = 1;
+  uint32 slot = 2;
+  uint32 part = 3;
+}
+
+message TournamentResult {
+  uint32 round = 1;
+  uint32 slot = 2;
+  uint64 winner = 3;
+  uint32 part = 4;
+}
+
+message TournamentRequest {
+
+  oneof op {
+    bool state = 1;
+    bool join = 2;
+    bool leave = 3;
+    bool check_in = 4;
+    TournamentCreate create = 10;
+    bool open_checkin = 11;
+    TournamentDraw draw = 12;
+    TournamentMatchRef call_match = 13;
+    TournamentResult walkover = 14;
+    TournamentMatchRef undo = 15;
+    bool cancel = 16;
+    uint64 kick = 17;
+    TournamentPrizes set_prizes = 18;
+    bool deliver_prizes = 19;
+    TournamentScreen set_screen = 20;
+    string announce = 21;
+    TournamentCinematic play = 22;
+    TournamentResult pick = 23;
+    string react = 24;
+    bool hall = 25;
+    bool watch = 26;
+    bool advance = 27;
+    bool start_match = 28;
+    uint32 open_stage = 29;
+    bool close_stage = 30;
+    TournamentLock stage_lock = 31;
+    TournamentAccounts stage_home = 32;
+    TournamentPlace stage_place = 33;
+    uint32 set_rings = 34;
+    TournamentMatchRef start_bout = 35;
+    bool stage_master = 36;
+  }
+}
+
+message TournamentResponse {
+  TournamentState state = 1;
+}
+
+message TournamentCalled {
+  uint64 rival = 1;
+  string rival_name = 2;
+  uint32 round = 3;
+}
+
+message TournamentPush {
+
+  oneof event {
+    TournamentState changed = 1;
+    TournamentCalled called = 2;
+    TournamentCinematic cinematic = 3;
+    TournamentReaction reaction = 4;
+  }
+}
+

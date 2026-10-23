@@ -1,0 +1,118 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+message GlobalBonus {
+  string kind = 1;
+  double mult = 2;
+  int64 until_ms = 3;
+}
+
+message PoolStageBonus {
+  string kind = 1;
+  double mult = 2;
+  uint32 minutes = 3;
+}
+
+message PoolRankEntry {
+  string name = 1;
+  uint64 total = 2;
+}
+
+message PoolCurrencyState {
+  string currency = 1;
+  uint32 stage = 2;
+  uint32 max_stage = 3;
+  uint64 current = 4;
+  uint64 target = 5;
+  bool complete = 6;
+  repeated uint64 milestones = 7;
+  repeated PoolStageBonus bonuses = 8;
+  uint64 mine = 9;
+  repeated PoolRankEntry ranking = 10;
+  uint64 min_donation = 11;
+}
+
+message PoolState {
+  string cycle = 1;
+  int64 starts_at_ms = 2;
+  int64 ends_at_ms = 3;
+  repeated PoolCurrencyState pools = 4;
+  repeated GlobalBonus bonuses = 5;
+  PoolStageBonus reward = 6;
+  bool locked = 7;
+}
+
+message PoolGet {
+}
+
+message PoolDonate {
+  string currency = 1;
+  uint64 amount = 2;
+}
+
+message PoolDonateResult {
+  string currency = 1;
+  uint64 accepted = 2;
+  bool activated = 3;
+  PoolState state = 4;
+}
+
+message PoolRequest {
+
+  oneof op {
+    PoolGet get = 1;
+    PoolDonate donate = 2;
+  }
+}
+
+message PoolResponse {
+
+  oneof result {
+    PoolState state = 1;
+    PoolDonateResult donate = 2;
+  }
+}
+
+message GlobalBonuses {
+  repeated GlobalBonus bonuses = 1;
+}
+
+message PoolActivated {
+  GlobalBonus bonus = 1;
+  string by_name = 2;
+}
+
+message PoolPush {
+
+  oneof event {
+    GlobalBonuses bonuses = 1;
+    PoolActivated activated = 3;
+  }
+}
+
+message PoolCurrencyTelemetry {
+  string currency = 1;
+  uint64 current = 2;
+  uint64 target = 3;
+  uint32 stage = 4;
+  uint32 max_stage = 5;
+  bool complete = 6;
+  uint64 per_hour = 7;
+  double contributions_per_min = 8;
+  int64 eta_ms = 9;
+  repeated PoolRankEntry ranking = 10;
+}
+
+message PoolTelemetry {
+  string cycle = 1;
+  int64 starts_at_ms = 2;
+  int64 ends_at_ms = 3;
+  repeated PoolCurrencyTelemetry pools = 4;
+  uint32 pending_activations = 5;
+  uint32 failed_activations = 6;
+  uint32 stages_completed = 7;
+  repeated GlobalBonus bonuses = 8;
+}
+

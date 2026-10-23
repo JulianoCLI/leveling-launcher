@@ -1,0 +1,898 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum TalentPointKind {
+  TALENT_POINT_KIND_UNSPECIFIED = 0;
+  TALENT_POINT_KIND_GENERAL = 1;
+  TALENT_POINT_KIND_SHADOW = 2;
+  TALENT_POINT_KIND_AMBITION = 3;
+}
+
+enum ShopCategory {
+  SHOP_CATEGORY_UNSPECIFIED = 0;
+  SHOP_CATEGORY_CONSUMABLE = 1;
+  SHOP_CATEGORY_ESSENCE = 2;
+  SHOP_CATEGORY_MATERIAL = 3;
+  SHOP_CATEGORY_VIP = 4;
+  SHOP_CATEGORY_BOOST = 5;
+  SHOP_CATEGORY_BLESS = 6;
+  SHOP_CATEGORY_UTILITY = 7;
+  SHOP_CATEGORY_ESSENCE_PACK = 8;
+  SHOP_CATEGORY_SKIN = 9;
+  SHOP_CATEGORY_AURA = 10;
+  SHOP_CATEGORY_PROFILE_COSMETIC = 11;
+  SHOP_CATEGORY_LOOK = 12;
+  SHOP_CATEGORY_LOOK_PACK = 13;
+}
+
+enum ChangeKind {
+  CHANGE_KIND_UNSPECIFIED = 0;
+  CHANGE_KIND_NEW = 1;
+  CHANGE_KIND_IMPROVEMENT = 2;
+  CHANGE_KIND_FIX = 3;
+  CHANGE_KIND_BALANCE = 4;
+}
+
+message GameRules {
+  uint32 max_level = 1;
+  uint32 awaken_level = 2;
+  uint32 stat_points_per_level = 3;
+  uint32 bag_capacity = 4;
+  uint32 warehouse_capacity = 5;
+  uint32 shadow_team_max = 6;
+  uint32 shadow_army_max = 7;
+  uint32 default_stack_max = 8;
+  string city_scene_id = 9;
+  double consumable_price_per_level = 10;
+  double consumable_price_per_level_sq = 11;
+  repeated double gold_per_kill_poly = 12;
+  double essence_price_kills = 13;
+  repeated double gold_level_scale = 20;
+  double arise_fee_kills = 21;
+  double gold_per_kill_mean = 22;
+  MonsterStatCurves monster_curves = 25;
+}
+
+message ItemDef {
+  string id = 1;
+  string name = 2;
+  EquipSlot slot = 3;
+  ItemCategory category = 4;
+  string icon = 5;
+  bool stackable = 6;
+  uint32 max_stack = 7;
+  string base_rarity = 8;
+  repeated string classes = 9;
+  ItemStats base = 10;
+  string set_id = 11;
+  string variant = 12;
+  uint64 sell_base = 13;
+  string visual = 14;
+  bool codex_hidden = 16;
+  bool levelless = 17;
+  string aura = 18;
+  bool bound = 19;
+  repeated string fixed_affixes = 20;
+  ItemFixedImbue fixed_imbue = 21;
+  ItemUseDef use = 22;
+}
+
+message ItemUseDef {
+  string boost = 1;
+  double hours = 2;
+}
+
+message ItemFixedImbue {
+  string type_id = 1;
+  uint32 tier = 2;
+}
+
+message RarityDef {
+  string id = 1;
+  string name = 2;
+  string color = 3;
+  uint32 order = 4;
+  double stat_mult = 5;
+  uint64 sell_price = 6;
+}
+
+message SetDef {
+  string id = 1;
+  string name = 2;
+  string title = 3;
+  map<string, double> full_bonus = 4;
+  map<string, double> exalted_bonus = 5;
+}
+
+message MonsterDropDef {
+  string item_id = 1;
+  double chance = 2;
+  uint32 min = 3;
+  uint32 max = 4;
+}
+
+message MonsterDef {
+  string id = 1;
+  string name = 2;
+  string category = 3;
+  string role = 4;
+  string sprite_dir = 5;
+  float display_height = 6;
+  float art_height = 7;
+  bool boss = 8;
+  bool elite = 9;
+  string title = 10;
+  repeated MonsterDropDef drops = 11;
+  bool immovable = 14;
+  bool dev_only = 15;
+  string kit = 16;
+  uint32 tint = 17;
+  bool rare = 18;
+  TargetedEquipmentDrop targeted_equipment = 19;
+  MonsterStatInputs stats = 20;
+}
+
+message MonsterStatInputs {
+  string category = 1;
+  uint32 level = 2;
+  double hp_mult = 3;
+  double damage_mult = 4;
+  double defense_mult = 5;
+  double accuracy_mult = 6;
+  double fixed_hp = 7;
+  double fixed_damage = 8;
+  double fixed_defense = 9;
+  optional double fixed_accuracy = 10;
+  double speed = 11;
+  double attack_interval = 12;
+  double range = 13;
+}
+
+message MonsterStatCurves {
+  repeated double hp = 1;
+  repeated double damage = 2;
+  repeated double defense = 3;
+  repeated double accuracy = 4;
+  repeated MonsterStatMult categories = 5;
+  MonsterStatMult champion = 6;
+  repeated double party_pack_damage = 7;
+  double group_boss_per_extra_player = 8;
+}
+
+message MonsterStatMult {
+  string category = 1;
+  double hp = 2;
+  double damage = 3;
+  double defense = 4;
+}
+
+message TargetedEquipmentDrop {
+  string key_id = 1;
+  repeated EquipSlot slots = 2;
+  string rarity = 3;
+  double chance = 4;
+  uint32 guarantee_at = 5;
+  uint32 enchant_stones = 6;
+}
+
+message KitMoveDef {
+  string id = 1;
+  string name = 2;
+  string kind = 3;
+  string element = 4;
+}
+
+message KitDef {
+  string id = 1;
+  repeated KitMoveDef moves = 2;
+}
+
+message SkillFx {
+  string sheet = 1;
+  uint32 height = 2;
+  uint32 fps = 3;
+  float anchor = 4;
+}
+
+message SkillProjectileFx {
+  string sheet = 1;
+  uint32 frame_from = 2;
+  uint32 frame_to = 3;
+  uint32 size = 4;
+  uint32 speed = 5;
+  uint32 fps = 6;
+}
+
+message SkillDef {
+  string id = 1;
+  string name = 2;
+  string icon = 3;
+  string key = 4;
+  string class_id = 5;
+  string kind = 6;
+  string source = 7;
+  uint32 mana_cost = 8;
+  uint32 cooldown_ms = 9;
+  uint32 range = 10;
+  uint32 radius = 11;
+  uint32 duration_ms = 12;
+  string description = 13;
+  SkillFx fx = 14;
+  SkillProjectileFx projectile = 15;
+}
+
+message ClassDef {
+  string id = 1;
+  string name = 2;
+  string icon = 3;
+  string description = 4;
+  uint32 range = 6;
+  bool uses_magic = 7;
+  string projectile = 8;
+  repeated StatAmount initial_stats = 9;
+  repeated ClassBuild builds = 10;
+  double hp_base = 11;
+  double hp_per_level = 12;
+  double hp_per_vit = 13;
+  double mana_base = 14;
+  double mana_per_level = 15;
+  double mana_per_int = 16;
+  double attack_mult = 17;
+  bool attack_magic = 18;
+  double attacks_per_second = 19;
+}
+
+message ClassBuild {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  repeated StatAmount weights = 4;
+}
+
+message ProfileCosmeticDef {
+  string id = 1;
+  string kind = 2;
+  map<string, string> name = 3;
+  string rarity = 4;
+  string art = 5;
+  string requirement = 6;
+  uint64 requirement_value = 7;
+  map<string, string> description = 8;
+  string category = 9;
+  string icon = 10;
+  string animation = 11;
+  uint32 variants = 12;
+  string package_id = 13;
+  uint32 min_level = 14;
+}
+
+message SkinDef {
+  string id = 1;
+  string name = 2;
+  string rarity = 3;
+  Gender gender = 4;
+  string class_id = 5;
+  bool for_sale = 9;
+  repeated string kit = 10;
+}
+
+message AuraDef {
+  string id = 1;
+  string name = 2;
+  string color = 3;
+  string rarity = 4;
+  uint64 price = 5;
+}
+
+message LookDef {
+  string id = 1;
+  map<string, string> name = 2;
+  EquipSlot slot = 3;
+  string visual = 4;
+  string aura = 5;
+  string icon = 6;
+  uint64 price = 7;
+  bool available = 8;
+  repeated string classes = 9;
+  string set_id = 10;
+  repeated string aura_modes = 11;
+  uint64 seals = 12;
+  string chroma_of = 13;
+  bool dev_only = 14;
+}
+
+message GateDef {
+  string id = 1;
+  string scene_id = 2;
+  string name = 3;
+  string icon = 4;
+  uint32 min_level = 5;
+}
+
+message DifficultyDef {
+  string id = 1;
+  string name = 2;
+  uint32 req_level = 3;
+  double status_mult = 4;
+  double reward_mult = 5;
+  double drop_mult = 6;
+  string rarity_cap = 7;
+  double chest_chance = 8;
+  uint32 level_offset = 9;
+}
+
+message TierDef {
+  message Layer {
+    message Species {
+      string monster_id = 1;
+      double weight = 2;
+    }
+
+    string difficulty = 1;
+    string monster_id = 2;
+    string boss_id = 3;
+    repeated TierDef.Layer.Species species = 4;
+    string rare_id = 5;
+    repeated TierDef.Layer.Species rare_species = 6;
+  }
+
+  message Area {
+    string difficulty = 1;
+    uint32 level = 2;
+    uint32 required_level = 3;
+    double monster_accuracy = 4;
+    double boss_accuracy = 5;
+  }
+
+  uint32 min = 1;
+  uint32 max = 2;
+  string gate_id = 3;
+  string monster_id = 4;
+  string boss_id = 5;
+  repeated TierDef.Layer layers = 6;
+  bool coming_soon = 7;
+  repeated TierDef.Area areas = 8;
+  string rare_id = 9;
+}
+
+message BossKeyDef {
+  string id = 1;
+  string item_id = 2;
+  string name = 3;
+  string boss_id = 4;
+  string gate_id = 5;
+  uint32 tier_min = 6;
+  uint32 tier_max = 7;
+  uint32 min_level = 8;
+  uint32 guarantee_at = 9;
+  string difficulty = 10;
+}
+
+message TalentTreeDef {
+  string id = 1;
+  TalentPointKind points = 2;
+  string class_id = 3;
+  string name = 4;
+  string title = 5;
+  string icon = 6;
+  string summary_effect = 7;
+  string summary_name = 8;
+  uint32 order = 9;
+  repeated TalentBranchDef branches = 10;
+  uint32 max_branches = 11;
+}
+
+message TalentBranchDef {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string emblem = 4;
+  repeated string node_ids = 5;
+}
+
+message TalentBridgeDef {
+  string from = 1;
+  string to = 2;
+  string note = 3;
+}
+
+message TalentNodeDef {
+  message Requirement {
+    string node_id = 1;
+    uint32 level = 2;
+    string choice_group = 3;
+  }
+
+  message Effect {
+    string effect = 1;
+    double per_level = 2;
+  }
+
+  string id = 1;
+  string tree = 2;
+  string name = 3;
+  string description = 4;
+  string icon = 5;
+  string sprite = 6;
+  uint32 max_level = 7;
+  uint32 cost_per_level = 8;
+  repeated TalentNodeDef.Requirement requirements = 9;
+  repeated string connections = 10;
+  float x = 11;
+  float y = 12;
+  string node_type = 13;
+  uint32 tier = 14;
+  repeated TalentNodeDef.Effect effects = 15;
+  string especial = 16;
+  uint32 requires_in_tree = 17;
+  string choice_group = 18;
+}
+
+message ShadowRankDef {
+  string id = 1;
+  string name = 2;
+  double mult = 4;
+  uint32 color = 5;
+  string css = 6;
+  uint32 order = 7;
+  uint32 gear_slots = 20;
+  uint32 skills = 19;
+  double leadership = 25;
+  uint32 hunter_rank = 21;
+  ShadowRankVisual visual = 18;
+  double birth_chance = 26;
+  uint32 fuse_copies = 27;
+  uint64 fuse_gold = 28;
+  double fuse_gold_kills = 29;
+  double fuse_pick_mult = 30;
+  bool born_by_capture = 31;
+}
+
+message ShadowRankVisual {
+  double scale = 1;
+  uint32 aura = 2;
+  double intensity = 3;
+}
+
+message ShadowSpeciesOrigin {
+  double power = 1;
+  double capture_chance = 2;
+}
+
+message ShadowProfileDef {
+  string id = 1;
+  string name = 2;
+  double attack = 3;
+  double hp = 4;
+  double defense = 5;
+}
+
+message ShadowSpeciesLooks {
+  map<string, string> by_rank = 1;
+}
+
+message ShadowSpeciesRules {
+  repeated ShadowProfileDef profiles = 2;
+  map<string, string> species_profile = 4;
+  uint32 owner_margin = 21;
+  uint32 potential_min = 24;
+  uint32 potential_max = 25;
+  double potential_impact = 26;
+  bool potential_centered = 27;
+  repeated EquipSlot gear_item_slots = 28;
+  uint32 attempts = 15;
+  repeated string unextractable = 18;
+  map<string, ShadowSpeciesLooks> species_looks = 19;
+  map<string, ShadowSpeciesOrigin> species_origin = 22;
+}
+
+message ShadowQualityDef {
+  string id = 1;
+  uint32 from = 2;
+  uint32 to = 3;
+  string css = 4;
+  double chance = 5;
+}
+
+message ShadowSpecializationDef {
+  string id = 1;
+  map<string, double> bonus = 4;
+  map<string, double> penalty = 5;
+  bool rare = 6;
+}
+
+message ConsumableDef {
+  ConsumableKind kind = 1;
+  PotionTier tier = 2;
+  string name = 3;
+  string icon = 4;
+  double pct = 5;
+  uint64 price = 6;
+  uint32 min_level = 7;
+  double base_price = 8;
+}
+
+message ShopOffer {
+  string id = 1;
+  ShopCategory category = 2;
+  string name = 3;
+  Currency currency = 4;
+  uint64 price = 5;
+  string item_def_id = 6;
+  uint32 qty = 7;
+  uint32 min_level = 8;
+  ConsumableKind consumable = 9;
+  PotionTier tier = 10;
+  uint32 duration_hours = 11;
+  string boost_kind = 12;
+  double bonus = 13;
+  double xp_loss = 14;
+}
+
+message DiamondPriceBand {
+  uint64 min = 1;
+  optional uint64 max = 2;
+  double price = 3;
+}
+
+message PremiumRules {
+  double vip_exp_bonus = 1;
+  double base_xp_loss = 2;
+  repeated DiamondPriceBand diamond_prices = 3;
+  bool auras_available = 4;
+  uint64 aura_unlock_price = 5;
+  uint64 skin_price = 6;
+  double referral_pct = 7;
+  double essence_premium_mult = 8;
+}
+
+message CodexRules {
+  message Reward {
+    uint32 pct = 1;
+    string kind = 2;
+    double value = 3;
+    string text = 4;
+  }
+
+  message Collection {
+    string id = 1;
+    string name = 2;
+    repeated string items = 3;
+    string reward_kind = 4;
+    double reward_value = 5;
+    string reward_text = 6;
+  }
+
+  message Ladder {
+    string kind = 1;
+    repeated uint64 milestones = 2;
+    repeated uint32 points = 3;
+    bool echo = 4;
+  }
+
+  message Entry {
+    string monster_id = 1;
+    string kind = 2;
+    uint32 area_level = 3;
+  }
+
+  repeated uint64 item_milestones = 2;
+  repeated uint32 enchant_milestones = 3;
+  repeated string counted_rarities = 4;
+  repeated CodexRules.Reward rewards = 5;
+  repeated CodexRules.Collection collections = 6;
+  repeated CodexRules.Ladder ladders = 9;
+  repeated CodexRules.Entry entries = 10;
+  double echo_min_xp_mult = 11;
+}
+
+message LineageDef {
+  message TierRange {
+    uint32 min = 1;
+    uint32 max = 2;
+  }
+
+  string id = 1;
+  string name = 2;
+  string title = 3;
+  string set_id = 4;
+  string icon = 5;
+  string color = 6;
+  string identity = 8;
+  string description = 9;
+  repeated LineageDef.TierRange tiers = 10;
+  bool coming_soon = 11;
+}
+
+message LocalizedText {
+  string text = 1;
+  map<string, string> by_locale = 2;
+}
+
+message ChangelogEntry {
+  message Change {
+    ChangeKind kind = 1;
+    LocalizedText text = 2;
+  }
+
+  LocalizedText title = 1;
+  string date = 2;
+  bool highlight = 3;
+  LocalizedText summary = 4;
+  repeated ChangelogEntry.Change changes = 5;
+}
+
+message SceneDef {
+  string id = 1;
+  SceneKind kind = 2;
+  string name = 3;
+  MapVisual map = 4;
+  string gate_id = 5;
+  map<uint32, MapVisual> tier_maps = 6;
+  map<string, MapVisual> layer_maps = 7;
+  map<string, MapVisual> difficulty_maps = 8;
+}
+
+message EnchantRules {
+  uint32 max_level = 1;
+  uint32 safe_up_to = 2;
+  uint32 downgrade_from = 3;
+  double bonus_per_level = 4;
+  repeated double gold_kills_per_level = 11;
+  repeated double chance_per_level = 6;
+  string stone_item_id = 7;
+  double pity_per_fail = 9;
+  uint32 pity_up_to = 10;
+}
+
+message FusionRules {
+  string dust_item_id = 1;
+  string core_item_id = 2;
+  map<string, double> dust_per_rarity = 3;
+  uint32 fusion_inputs = 4;
+  map<string, double> fusion_dust_cost = 5;
+  map<string, double> fusion_gold_kills = 6;
+  uint32 monarch_cores = 7;
+  uint32 monarch_min_level = 8;
+  uint32 swap_inputs = 9;
+  map<string, double> swap_dust_cost = 10;
+  map<string, double> swap_gold_kills = 11;
+  double transfer_fraction = 12;
+  double transfer_dust_cost = 13;
+  double transfer_gold_kills = 14;
+  uint32 commander_per_marshal = 15;
+  uint32 marshal_per_core = 16;
+  string commander_item_id = 17;
+  string marshal_item_id = 18;
+  repeated EquipSlot output_slots = 19;
+  map<string, double> dismantle_stones = 20;
+}
+
+message GemTypeDef {
+  string id = 1;
+  string name = 2;
+  string stat = 3;
+  string suffix = 4;
+  repeated double values = 5;
+  repeated EquipSlot slots = 6;
+  string color = 7;
+  string item_id = 8;
+}
+
+message GemRules {
+  map<string, uint32> sockets_per_rarity = 1;
+  uint32 extra_socket_max = 2;
+  map<string, uint32> extra_socket_diamonds = 3;
+  uint32 max_level = 4;
+  uint32 combine_count = 5;
+  repeated double combine_cost_kills = 6;
+  double unsocket_cost_kills_per_level = 7;
+  repeated GemTypeDef types = 8;
+}
+
+message ImbueTierDef {
+  uint32 tier = 1;
+  string name = 2;
+  uint64 gold = 3;
+  double chance = 4;
+  repeated uint32 material_qty = 5;
+}
+
+message ImbueTypeDef {
+  string id = 1;
+  string name = 2;
+  string effect = 3;
+  repeated double values = 4;
+  repeated string materials = 5;
+}
+
+message ImbueRules {
+  uint64 duration_ms = 1;
+  map<string, uint32> slots_per_rarity = 2;
+  repeated ImbueTierDef tiers = 3;
+  repeated ImbueTypeDef types = 4;
+  string crystal_item_id = 5;
+  map<string, double> caps = 6;
+}
+
+message AffixDef {
+  string id = 1;
+  string stat = 2;
+  repeated EquipSlot slots = 3;
+  double min = 4;
+  double max = 5;
+  double level_scaling = 6;
+  bool flat = 7;
+}
+
+message AffixRules {
+  repeated AffixDef affixes = 1;
+  map<string, uint32> lines_per_rarity = 2;
+  map<string, double> caps = 3;
+  map<string, double> reforge_gold_kills = 4;
+  double reforge_markup = 6;
+  double reforge_half_life_days = 7;
+}
+
+message DungeonDef {
+  message WaveMonster {
+    string monster_id = 1;
+    uint32 qty = 2;
+  }
+
+  message Wave {
+    repeated DungeonDef.WaveMonster monsters = 1;
+  }
+
+  message Reward {
+    string item_id = 1;
+    uint32 qty = 2;
+    double chance = 3;
+  }
+
+  string id = 1;
+  string name = 2;
+  string difficulty = 3;
+  uint32 min_level = 5;
+  string boss_id = 6;
+  string gate_id = 7;
+  uint32 tier_min = 8;
+  uint32 area_level = 9;
+  repeated DungeonDef.Wave waves = 10;
+  string unique_item_id = 11;
+  double unique_chance = 12;
+  uint32 unique_guarantee = 13;
+  repeated DungeonDef.Reward insignias = 14;
+  uint32 max_party = 15;
+  string scene_id = 16;
+  MapVisual map = 17;
+  string key_item_id = 18;
+  double key_common_chance = 19;
+  double key_elite_chance = 20;
+  double key_boss_chance = 21;
+  uint32 key_level_margin = 22;
+}
+
+message StarRules {
+  uint32 levels_per_star = 1;
+  uint32 max_stars = 2;
+  repeated uint32 rank_levels = 3;
+  repeated StarUnlock unlocks = 4;
+}
+
+message StarUnlock {
+  string id = 1;
+  uint32 level = 2;
+}
+
+message ContentCatalog {
+  string version = 1;
+  GameRules rules = 2;
+  repeated ItemDef items = 3;
+  repeated RarityDef rarities = 4;
+  repeated SetDef sets = 5;
+  repeated MonsterDef monsters = 6;
+  repeated SkillDef skills = 7;
+  repeated ClassDef classes = 8;
+  repeated SkinDef skins = 9;
+  repeated AuraDef auras = 10;
+  repeated GateDef gates = 11;
+  repeated DifficultyDef difficulties = 12;
+  repeated TierDef tiers = 13;
+  repeated BossKeyDef boss_keys = 14;
+  repeated TalentTreeDef talent_trees = 15;
+  repeated TalentNodeDef talents = 16;
+  repeated ShadowRankDef shadow_ranks = 17;
+  repeated ShadowQualityDef shadow_qualities = 18;
+  repeated ShadowSpecializationDef shadow_specializations = 19;
+  repeated ConsumableDef consumables = 20;
+  repeated ShopOffer shop = 21;
+  repeated SceneDef scenes = 22;
+  EnchantRules enchant = 23;
+  repeated TalentBridgeDef talent_bridges = 25;
+  PremiumRules premium = 26;
+  CodexRules codex = 27;
+  repeated LineageDef lineages = 29;
+  repeated ChangelogEntry changelog = 30;
+  GemRules gems = 31;
+  ImbueRules imbue = 32;
+  repeated ProfileCosmeticDef profile_cosmetics = 33;
+  repeated DungeonDef dungeons = 34;
+  ShadowSpeciesRules shadow_species = 35;
+  AffixRules affixes = 38;
+  repeated KitDef kits = 39;
+  repeated LookDef looks = 40;
+  AppearanceRules appearance = 41;
+  StarRules stars = 44;
+  FusionRules fusion = 46;
+  MissionRules missions = 43;
+  CollectionRules collections = 42;
+  EconomyRules economy = 45;
+  repeated ChromaDef chromas = 47;
+  LookShop look_shop = 48;
+}
+
+message LookShop {
+  repeated LookRotation rotations = 1;
+  repeated string weapon_sets = 2;
+  uint64 weapon_diamonds = 3;
+}
+
+message LookRotation {
+  string id = 1;
+  int64 start_ms = 2;
+  int64 end_ms = 3;
+  repeated LookShopPack packs = 4;
+}
+
+message LookShopPack {
+  string set_id = 1;
+  uint64 diamonds = 2;
+  string class_id = 3;
+}
+
+message ChromaDef {
+  string id = 1;
+  map<string, string> name = 2;
+  int32 hue = 3;
+  uint32 saturation = 4;
+  uint32 brightness = 5;
+  string swatch = 6;
+  uint64 price = 7;
+  bool available = 8;
+}
+
+message AppearanceRules {
+  repeated HairPrice hairs = 1;
+  repeated string skin_tones = 2;
+  uint64 save_gold = 3;
+}
+
+message HairPrice {
+  string id = 1;
+  uint64 diamonds = 2;
+  uint64 gold = 3;
+}
+
+message EconomyRules {
+  uint32 durability_points = 1;
+  uint32 wear_per_kill = 2;
+  double rest_wear = 3;
+  uint32 fold_kills = 4;
+  double full_power_from = 5;
+  double min_power = 6;
+  double repair_gold_kills = 7;
+  double repair_stones = 8;
+  double repair_stones_per_enchant = 9;
+  map<string, double> rarity_weight = 10;
+  double auto_repair_below = 11;
+  double stone_index_min = 14;
+  double stone_index_max = 15;
+  double gold_index_min = 16;
+  double gold_index_max = 17;
+  double dust_index_min = 18;
+  double dust_index_max = 19;
+}
+

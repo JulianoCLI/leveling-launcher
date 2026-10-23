@@ -1,0 +1,504 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum TeamWarStatus {
+  TEAM_WAR_STATUS_UNSPECIFIED = 0;
+  TEAM_WAR_STATUS_ANNOUNCED = 1;
+  TEAM_WAR_STATUS_RUNNING = 2;
+  TEAM_WAR_STATUS_ENDED = 3;
+  TEAM_WAR_STATUS_CANCELED = 4;
+}
+
+enum TeamWarFocus {
+  TEAM_WAR_FOCUS_NEAREST = 0;
+  TEAM_WAR_FOCUS_WEAKEST = 1;
+  TEAM_WAR_FOCUS_HEALERS = 2;
+  TEAM_WAR_FOCUS_DAMAGE = 3;
+}
+
+enum TeamWarFormation {
+  TEAM_WAR_FORMATION_SPREAD = 0;
+  TEAM_WAR_FORMATION_TOGETHER = 1;
+}
+
+message TeamWarConfig {
+  uint32 signup_secs = 1;
+  uint32 min_level = 2;
+  uint32 max_players = 3;
+  uint32 time_limit_secs = 4;
+  uint32 start_delay_secs = 5;
+  bool late_join = 6;
+  uint32 respawn_secs = 7;
+  uint32 teams = 8;
+  uint32 team_cap = 9;
+  bool allow_switch = 10;
+  uint32 max_team_diff = 11;
+  bool manual = 12;
+  bool auto_skills = 13;
+  uint32 respawns = 14;
+  bool respawns_unlimited = 15;
+  uint32 dodge_pct = 16;
+  uint32 squad_size = 17;
+  bool front_line = 18;
+  bool duel_end = 19;
+  uint32 duel_ratio = 20;
+  uint32 zone_boost_pct = 21;
+  uint32 zone_first_secs = 22;
+  uint32 zone_every_secs = 23;
+  uint32 zone_secs = 24;
+  uint32 arise_cd_secs = 25;
+  bool arise_revive = 26;
+  uint32 arise_revive_cd_secs = 27;
+  bool cat_enabled = 28;
+  uint32 cat_at_secs = 29;
+  double cat_hp = 30;
+  double cat_damage = 31;
+  double cat_defense = 32;
+  uint32 cat_push = 33;
+  uint32 cat_limit_secs = 34;
+  string mode = 35;
+  uint32 afk_secs = 36;
+  uint32 afk_auto_secs = 37;
+  bool squads = 38;
+}
+
+message TeamWarEvent {
+  int64 id = 1;
+  string name = 2;
+  TeamWarStatus status = 3;
+  int64 starts_at_ms = 4;
+  int64 started_at_ms = 5;
+  int64 ended_at_ms = 6;
+  string end_reason = 7;
+  uint32 signed = 8;
+  uint32 max_players = 9;
+  uint32 min_level = 10;
+  uint32 time_limit_secs = 11;
+  bool late_join = 12;
+  uint32 inside = 13;
+  uint32 respawn_secs = 14;
+  uint32 start_delay_secs = 15;
+  repeated uint32 team_size = 16;
+  uint32 teams = 17;
+  uint32 team_cap = 18;
+  bool allow_switch = 19;
+  uint32 max_team_diff = 20;
+  bool manual = 21;
+  bool auto_skills = 22;
+  uint32 respawns = 23;
+  bool respawns_unlimited = 24;
+  bool duel_end = 25;
+  uint32 duel_ratio = 26;
+  repeated TeamWarTeamStyle styles = 27;
+  uint32 spectators = 28;
+  uint32 spectator_cap = 29;
+  string mode = 30;
+  uint32 target_score = 31;
+  uint32 afk_secs = 32;
+  bool squads = 33;
+}
+
+message TeamWarTeamStyle {
+  uint32 team = 1;
+  uint32 color = 2;
+  string name = 3;
+  uint32 flag = 4;
+  uint64 leader = 5;
+  string leader_name = 6;
+}
+
+message TeamWarStyle {
+  uint32 stance = 1;
+  uint32 target = 2;
+  uint32 role = 3;
+  uint32 dodge = 4;
+  uint32 retreat_pct = 5;
+  repeated string skills_off = 6;
+}
+
+message TeamWarTactics {
+  uint32 team = 1;
+  TeamWarFocus priority = 2;
+  TeamWarFormation formation = 3;
+  uint32 retreat_pct = 4;
+  uint64 mark = 5;
+  string mark_name = 6;
+  string order = 7;
+  uint32 preset = 8;
+  uint64 by = 9;
+  string by_name = 10;
+}
+
+message TeamWarMe {
+  bool signed = 1;
+  bool inside = 2;
+  bool fallen = 3;
+  bool out = 4;
+  string blocked = 5;
+  bool can_enter = 6;
+  uint32 team = 7;
+  uint32 position = 8;
+  bool can_switch = 9;
+  bool can_customize = 10;
+  bool leader = 11;
+  TeamWarTactics tactics = 12;
+  bool spectator = 13;
+  bool can_spectate = 14;
+  TeamWarStyle style = 15;
+  bool left = 16;
+}
+
+message TeamWarState {
+  TeamWarEvent event = 1;
+  TeamWarMe me = 2;
+  int64 server_now_ms = 3;
+  TeamWarResult last = 4;
+}
+
+message TeamWarSigned {
+  uint64 account = 1;
+  string name = 2;
+  uint32 level = 3;
+  string class_id = 4;
+  uint32 team = 5;
+  bool leader = 6;
+  uint64 power = 7;
+}
+
+message TeamWarList {
+  repeated TeamWarSigned hunters = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 pages = 4;
+  repeated uint32 team_size = 5;
+  uint32 teams = 6;
+  uint32 team_cap = 7;
+  repeated uint64 team_power = 8;
+}
+
+message TeamWarScore {
+  uint64 account = 1;
+  string name = 2;
+  uint32 level = 3;
+  string class_id = 4;
+  uint32 team = 5;
+  uint64 damage = 6;
+  uint32 kills = 7;
+  uint32 deaths = 8;
+  uint64 alive_ms = 9;
+  bool fell = 10;
+  uint32 position = 11;
+  uint64 healing = 12;
+  uint64 taken = 13;
+  uint32 objective = 14;
+  bool afk = 15;
+}
+
+message TeamWarTeam {
+  uint32 players = 1;
+  uint32 alive = 2;
+  uint32 kills = 3;
+  uint64 damage = 4;
+  uint32 rank = 5;
+  uint32 score = 6;
+}
+
+message TeamWarFight {
+  uint64 elapsed_ms = 1;
+  uint32 starts_in_ms = 2;
+  uint64 time_limit_ms = 3;
+  repeated TeamWarTeam teams = 4;
+  TeamWarScore me = 5;
+  uint32 respawns_left = 6;
+  bool respawns_unlimited = 7;
+  uint32 respawn_in_ms = 8;
+  bool auto_skills = 9;
+  bool auto_skills_allowed = 10;
+  bool manual = 11;
+  TeamWarDuel duel = 12;
+  repeated TeamWarScore team_board = 13;
+  TeamWarTactics tactics = 14;
+  bool spectator = 15;
+  TeamWarObjective objective = 16;
+}
+
+message TeamWarObjective {
+  string mode = 1;
+  uint32 target = 2;
+  repeated TeamWarStandard standards = 3;
+  repeated TeamWarGate gates = 4;
+  repeated TeamWarMonarch monarchs = 5;
+  repeated TeamWarSoul souls = 6;
+  uint32 surge_next_ms = 7;
+  float soul_radius = 8;
+}
+
+message TeamWarStandard {
+  uint32 team = 1;
+  uint32 state = 2;
+  float x = 3;
+  float y = 4;
+  float home_x = 5;
+  float home_y = 6;
+  uint32 carrier = 7;
+  string carrier_name = 8;
+  uint32 carrier_team = 9;
+  uint32 return_ms = 10;
+  float pickup_radius = 11;
+  float capture_radius = 12;
+}
+
+message TeamWarGate {
+  string id = 1;
+  float x = 2;
+  float y = 3;
+  float radius = 4;
+  uint32 owner = 5;
+  uint32 capturing = 6;
+  uint32 progress = 7;
+  bool contested = 8;
+  bool surge = 9;
+  uint32 surge_ms = 10;
+  float surge_mult = 11;
+  repeated uint32 inside = 12;
+}
+
+message TeamWarMonarch {
+  uint32 team = 1;
+  uint32 entity = 2;
+  string name = 3;
+  uint32 hp_pct = 4;
+  bool down = 5;
+  uint64 account = 6;
+}
+
+message TeamWarSoul {
+  uint32 id = 1;
+  float x = 2;
+  float y = 3;
+  uint32 team = 4;
+  uint32 ms_left = 5;
+  uint32 channeler = 6;
+  uint32 channeler_team = 7;
+  uint32 channel_pct = 8;
+}
+
+message TeamWarObjEvent {
+  string kind = 1;
+  uint32 team = 2;
+  uint32 other = 3;
+  string who = 4;
+  string whom = 5;
+  string gate = 6;
+  uint32 points = 7;
+  uint32 score = 8;
+}
+
+message TeamWarAfk {
+  uint32 state = 1;
+  uint32 secs = 2;
+}
+
+message TeamWarDuel {
+  uint32 lone_team = 1;
+  uint32 big_team = 2;
+  string champion = 3;
+  string challenger = 4;
+  uint32 champion_hp_pct = 5;
+  uint32 challenger_hp_pct = 6;
+  repeated string next = 7;
+  uint32 waiting = 8;
+  uint32 bout = 9;
+  bool me = 10;
+}
+
+message TeamWarResult {
+  int64 event_id = 1;
+  string name = 2;
+  string reason = 3;
+  uint32 winner = 4;
+  uint64 elapsed_ms = 5;
+  uint32 participants = 6;
+  uint32 survivors = 7;
+  repeated TeamWarTeam teams = 8;
+  repeated TeamWarScore top_damage = 9;
+  repeated TeamWarScore top_kills = 10;
+  repeated TeamWarScore top_survival = 11;
+  TeamWarScore me = 12;
+  int64 ended_at_ms = 13;
+  string mode = 14;
+  uint32 target_score = 15;
+  repeated TeamWarScore top_objective = 16;
+  uint32 afk = 17;
+}
+
+message TeamWarLoad {
+  uint32 players = 1;
+  uint32 players_alive = 2;
+  uint32 players_peak = 3;
+  uint32 tick_avg_us = 4;
+  uint32 tick_max_us = 5;
+  uint32 tick_run_max_us = 6;
+  uint32 tick_budget_us = 7;
+  uint32 ticks_over_budget = 8;
+  uint64 bytes_per_sec = 9;
+  uint64 bytes_per_sec_peak = 10;
+  uint64 bytes_total = 11;
+  uint32 drops_per_sec = 12;
+  uint64 drops_total = 13;
+  int64 at_ms = 14;
+  uint64 world_worst_tick_us = 15;
+  uint32 world_players = 16;
+  uint32 world_monsters = 17;
+  uint64 world_worst_tick_peak_us = 18;
+}
+
+message TeamWarFailure {
+  string name = 1;
+  string reason = 2;
+}
+
+message TeamWarMonitor {
+  TeamWarEvent event = 1;
+  TeamWarConfig config = 2;
+  TeamWarLoad load = 3;
+  uint64 elapsed_ms = 4;
+  repeated TeamWarTeam teams = 5;
+  uint32 sent = 6;
+  uint32 entered = 7;
+  uint32 fallen = 8;
+  uint32 left = 9;
+  uint32 disconnects = 10;
+  uint32 reconnects = 11;
+  repeated TeamWarFailure failed = 12;
+  bool ending = 13;
+  uint32 afk = 14;
+  uint32 kicked = 15;
+}
+
+message TeamWarPast {
+  TeamWarEvent event = 1;
+  TeamWarResult result = 2;
+  TeamWarMonitor monitor = 3;
+}
+
+message TeamWarAdminOpen {
+  string name = 1;
+  TeamWarConfig config = 2;
+  string mode = 3;
+  uint32 target_score = 4;
+}
+
+message TeamWarAdminMove {
+  uint64 account = 1;
+  uint32 team = 2;
+}
+
+message TeamWarAdminState {
+  TeamWarMonitor live = 1;
+  TeamWarConfig defaults = 2;
+  repeated TeamWarPast past = 3;
+  uint32 max_players_cap = 4;
+  int64 server_now_ms = 5;
+  uint32 team_cap_max = 6;
+  uint32 teams_max = 7;
+  TeamWarList roster = 8;
+  repeated string modes = 9;
+  string last_mode = 10;
+  uint32 squad_teams_max = 11;
+  uint32 squad_size_min = 12;
+  uint32 squad_size_max = 13;
+  map<string, uint32> mode_targets = 14;
+}
+
+message TeamWarRequest {
+
+  oneof op {
+    bool state = 1;
+    bool join = 2;
+    bool leave_list = 3;
+    uint32 list = 4;
+    bool enter = 5;
+    bool leave_fight = 6;
+    uint32 switch_team = 7;
+    bool auto_skills = 8;
+    TeamWarTeamStyle customize = 9;
+    TeamWarTactics tactics = 10;
+    uint64 pass_lead = 11;
+    bool spectate = 12;
+    bool leave_spectate = 13;
+    bool arise = 14;
+    TeamWarStyle my_style = 15;
+    bool here = 16;
+    bool admin_state = 20;
+    TeamWarAdminOpen admin_open = 21;
+    bool admin_start = 22;
+    bool admin_cancel = 23;
+    bool admin_end = 24;
+    TeamWarAdminMove admin_move = 25;
+    TeamWarAdminMove admin_lead = 26;
+    TeamWarCatastrophe admin_catastrophe = 27;
+    bool admin_balance = 28;
+    uint64 admin_kick = 29;
+  }
+}
+
+message TeamWarCatastrophe {
+  bool on = 1;
+  double hp = 2;
+  double damage = 3;
+  double defense = 4;
+  float push = 5;
+  uint32 limit_secs = 6;
+}
+
+message TeamWarPresence {
+  bool ok = 1;
+}
+
+message TeamWarArise {
+  bool out = 1;
+  uint32 ready_ms = 2;
+}
+
+message TeamWarZone {
+  float x = 1;
+  float y = 2;
+  float radius = 3;
+  float secs = 4;
+  uint32 boost_pct = 5;
+}
+
+message TeamWarCatastropheEvent {
+  bool on = 1;
+  bool killed = 2;
+  bool fight = 3;
+}
+
+message TeamWarResponse {
+
+  oneof result {
+    TeamWarState state = 1;
+    TeamWarList list = 2;
+    TeamWarAdminState admin = 3;
+  }
+}
+
+message TeamWarPush {
+
+  oneof event {
+    TeamWarEvent changed = 1;
+    TeamWarFight fight = 2;
+    TeamWarResult result = 3;
+    TeamWarMe me = 4;
+    TeamWarCatastropheEvent catastrophe = 5;
+    TeamWarZone zone = 6;
+    TeamWarArise arise = 7;
+    TeamWarPresence presence = 8;
+    TeamWarAfk afk = 9;
+    TeamWarObjEvent objective = 10;
+  }
+}
+

@@ -1,0 +1,185 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum ArenaMode {
+  ARENA_MODE_UNSPECIFIED = 0;
+  ARENA_MODE_OPEN = 1;
+  ARENA_MODE_DUEL = 2;
+}
+
+enum FeedKind {
+  FEED_KIND_UNSPECIFIED = 0;
+  FEED_KIND_JOINED = 1;
+  FEED_KIND_TAKEDOWN = 2;
+  FEED_KIND_FELL = 3;
+}
+
+enum DuelEndReason {
+  DUEL_END_REASON_UNSPECIFIED = 0;
+  DUEL_END_REASON_KNOCKOUT = 1;
+  DUEL_END_REASON_FORFEIT = 2;
+  DUEL_END_REASON_NO_SHOW = 3;
+  DUEL_END_REASON_TIMEOUT = 4;
+}
+
+message PvpRecord {
+  uint64 kills = 1;
+  uint64 deaths = 2;
+  uint32 best_streak = 3;
+  uint64 duels_won = 4;
+  uint64 duels_lost = 5;
+}
+
+message ArenaHunter {
+  uint64 account = 1;
+  string name = 2;
+  uint32 level = 3;
+}
+
+message PvpStatusRequest {
+}
+
+message PvpEnter {
+}
+
+message PvpLeave {
+}
+
+message DuelInvite {
+  uint64 account = 1;
+}
+
+message DuelAnswer {
+  uint64 from = 1;
+  bool accept = 2;
+}
+
+message PvpRequest {
+
+  oneof op {
+    PvpStatusRequest status = 1;
+    PvpEnter enter = 2;
+    PvpLeave leave = 3;
+    DuelInvite duel_invite = 4;
+    DuelAnswer duel_answer = 5;
+  }
+}
+
+message PvpStatus {
+  PvpRecord record = 1;
+  repeated ArenaHunter in_arena = 2;
+  uint32 in_arena_total = 3;
+  uint32 min_level = 4;
+  string scene_id = 5;
+  string name = 6;
+  string icon = 7;
+  uint32 respawn_secs = 8;
+  uint32 shield_secs = 9;
+  string duel_rival = 10;
+}
+
+message PvpEntered {
+  string scene_id = 1;
+}
+
+message PvpLeft {
+  string scene_id = 1;
+}
+
+message DuelInviteSent {
+  string name = 1;
+  int64 expires_at_ms = 2;
+}
+
+message DuelAnswered {
+  bool accepted = 1;
+}
+
+message PvpResponse {
+
+  oneof result {
+    PvpStatus status = 1;
+    PvpEntered entered = 2;
+    PvpLeft left = 3;
+    DuelInviteSent invite_sent = 4;
+    DuelAnswered answered = 5;
+  }
+}
+
+message ScoreLine {
+  uint32 entity = 1;
+  string name = 2;
+  uint32 kills = 3;
+  uint32 deaths = 4;
+}
+
+message ArenaScoreboard {
+  repeated ScoreLine lines = 1;
+  uint32 total = 2;
+}
+
+message ArenaFeed {
+  FeedKind kind = 1;
+  string actor = 2;
+  string target = 3;
+}
+
+message ArenaSelf {
+  ArenaMode mode = 1;
+  uint32 kills = 2;
+  uint32 deaths = 3;
+  uint32 streak = 4;
+  bool dead = 5;
+  int64 respawn_at_ms = 6;
+  int64 shield_until_ms = 7;
+  string rival_name = 8;
+  uint32 rival_entity = 9;
+}
+
+message DuelInvited {
+  uint64 from = 1;
+  string name = 2;
+  int64 expires_at_ms = 3;
+}
+
+message DuelDeclined {
+  string name = 1;
+}
+
+message DuelStarted {
+  uint64 duel_id = 1;
+  uint32 side = 2;
+  uint64 rival = 3;
+  string rival_name = 4;
+}
+
+message DuelEnded {
+  bool won = 1;
+  bool draw = 2;
+  DuelEndReason reason = 3;
+  string rival_name = 4;
+  PvpRecord record = 5;
+}
+
+message DuelInviteGone {
+  uint64 from = 1;
+  string name = 2;
+}
+
+message PvpPush {
+
+  oneof event {
+    ArenaScoreboard scoreboard = 1;
+    ArenaFeed feed = 2;
+    ArenaSelf me = 3;
+    DuelInvited duel_invited = 4;
+    DuelDeclined duel_declined = 5;
+    DuelStarted duel_started = 6;
+    DuelEnded duel_ended = 7;
+    PvpRecord record = 8;
+    DuelInviteGone duel_invite_gone = 9;
+  }
+}
+

@@ -1,0 +1,214 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum EnchantBatchStop {
+  ENCHANT_BATCH_STOP_UNSPECIFIED = 0;
+  ENCHANT_BATCH_STOP_TARGET = 1;
+  ENCHANT_BATCH_STOP_MAX = 2;
+  ENCHANT_BATCH_STOP_ATTEMPTS = 3;
+  ENCHANT_BATCH_STOP_STONES = 4;
+  ENCHANT_BATCH_STOP_GOLD = 5;
+}
+
+enum InsigniaExchange {
+  INSIGNIA_EXCHANGE_UNSPECIFIED = 0;
+  INSIGNIA_EXCHANGE_MARSHAL = 1;
+  INSIGNIA_EXCHANGE_CORE = 2;
+}
+
+message Enchant {
+  uint64 uid = 1;
+  uint32 expected_level = 2;
+}
+
+message EnchantResult {
+  uint64 uid = 1;
+  bool success = 2;
+  uint32 from_level = 3;
+  uint32 to_level = 4;
+  uint32 target_level = 5;
+  uint64 gold_cost = 6;
+  bool downgraded = 7;
+  ItemInstance item = 8;
+}
+
+message EnchantBatch {
+  uint64 uid = 1;
+  uint32 expected_level = 2;
+  uint32 target_level = 3;
+  uint32 attempts = 4;
+  bool repeat_until_target = 5;
+}
+
+message EnchantBatchResult {
+  uint64 uid = 1;
+  uint32 from_level = 2;
+  uint32 to_level = 3;
+  uint32 target_level = 4;
+  uint32 attempts = 5;
+  uint32 successes = 6;
+  uint32 failures = 7;
+  uint64 stones_spent = 8;
+  uint64 gold_spent = 9;
+  EnchantBatchStop stop_reason = 10;
+  ItemInstance item = 11;
+}
+
+message SocketGem {
+  uint64 item_uid = 1;
+  uint32 socket = 2;
+  uint64 gem_uid = 3;
+}
+
+message SocketGemResult {
+  ItemInstance item = 1;
+  uint64 gold_spent = 2;
+}
+
+message UnsocketGem {
+  uint64 item_uid = 1;
+  uint32 socket = 2;
+}
+
+message UnsocketGemResult {
+  ItemInstance item = 1;
+  uint64 gold_spent = 2;
+}
+
+message CombineGems {
+  string gem_id = 1;
+  uint32 level = 2;
+  uint32 times = 3;
+}
+
+message CombineGemsResult {
+  string gem_id = 1;
+  uint32 level = 2;
+  uint32 made = 3;
+  uint64 gold_spent = 4;
+}
+
+message AddSocket {
+  uint64 item_uid = 1;
+}
+
+message AddSocketResult {
+  ItemInstance item = 1;
+  uint64 diamond_cost = 2;
+}
+
+message Imbue {
+  uint64 uid = 1;
+  uint32 slot = 2;
+  string type_id = 3;
+  uint32 tier = 4;
+  bool use_crystal = 5;
+  string expected_type_id = 6;
+}
+
+message ImbueResult {
+  uint64 uid = 1;
+  uint32 slot = 2;
+  string type_id = 3;
+  uint32 tier = 4;
+  bool success = 5;
+  uint64 gold_cost = 6;
+  bool used_crystal = 7;
+  double chance = 8;
+  ItemInstance item = 9;
+}
+
+message Reforge {
+  uint64 uid = 1;
+  uint32 line = 2;
+  string expected_affix_id = 3;
+}
+
+message ReforgeResult {
+  uint64 uid = 1;
+  uint32 line = 2;
+  ItemAffix old_affix = 3;
+  ItemAffix new_affix = 4;
+  uint64 gold_cost = 5;
+  ItemInstance item = 7;
+}
+
+message RemoveImbuement {
+  uint64 uid = 1;
+  uint32 slot = 2;
+  string expected_type_id = 3;
+}
+
+message RemoveImbuementResult {
+  uint64 uid = 1;
+  uint32 slot = 2;
+  ItemInstance item = 3;
+}
+
+message Dismantle {
+  repeated uint64 uids = 1;
+}
+
+message DismantleResult {
+  uint32 pieces = 1;
+  uint64 dust = 2;
+  uint32 gems_returned = 3;
+  uint64 stones = 4;
+}
+
+message Fuse {
+  repeated uint64 uids = 1;
+  EquipSlot slot = 2;
+  bool slot_swap = 3;
+}
+
+message FuseResult {
+  ItemInstance item = 1;
+  uint64 dust_spent = 2;
+  uint64 gold_spent = 3;
+  uint32 cores_spent = 4;
+  bool slot_swap = 5;
+  uint32 gems_returned = 6;
+}
+
+message TransferEnchant {
+  uint64 source_uid = 1;
+  uint64 target_uid = 2;
+  uint32 expected_source_level = 3;
+  uint32 expected_target_level = 4;
+}
+
+message TransferEnchantResult {
+  ItemInstance item = 1;
+  uint32 from_level = 2;
+  uint32 to_level = 3;
+  uint64 dust_spent = 4;
+  uint64 gold_spent = 5;
+  uint32 gems_returned = 6;
+}
+
+message ExchangeInsignias {
+  InsigniaExchange kind = 1;
+  uint32 count = 2;
+}
+
+message ExchangeInsigniasResult {
+  InsigniaExchange kind = 1;
+  uint32 made = 2;
+  uint32 spent = 3;
+}
+
+message Repair {
+  repeated uint64 uids = 1;
+  bool partial = 2;
+}
+
+message RepairResult {
+  repeated ItemInstance items = 1;
+  uint64 gold_spent = 2;
+  uint32 stones_spent = 3;
+  uint64 points = 4;
+}
+

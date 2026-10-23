@@ -1,0 +1,261 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum GuildBossStatus {
+  GUILD_BOSS_STATUS_UNSPECIFIED = 0;
+  GUILD_BOSS_STATUS_SCHEDULED = 1;
+  GUILD_BOSS_STATUS_ACTIVE = 2;
+  GUILD_BOSS_STATUS_ENDED = 3;
+  GUILD_BOSS_STATUS_CANCELED = 4;
+}
+
+message GuildBossConfig {
+  uint32 runs_per_player = 1;
+  uint32 normal_secs = 2;
+  uint32 frenzy_secs = 3;
+  uint32 summon_every_secs = 4;
+  uint32 summon_count = 5;
+  uint32 summon_max_alive = 6;
+  string summon_monster_id = 7;
+  uint32 boss_level = 8;
+  uint32 boss_damage = 9;
+  uint32 boss_defense = 10;
+  uint32 boss_accuracy = 11;
+  double frenzy_damage_mult = 12;
+  uint32 room_size = 13;
+  uint32 min_level = 14;
+  string summon_alt_monster_id = 15;
+  uint32 statue_buff_pct = 16;
+  uint32 statue_buff_secs = 17;
+  uint32 statue_buff_stacks = 18;
+  uint32 roll_chance_pct = 19;
+  uint32 holder_share_pct = 20;
+  bool open_to_players = 21;
+}
+
+message GuildBossEvent {
+  int64 id = 1;
+  string boss_id = 2;
+  string name = 3;
+  GuildBossStatus status = 4;
+  int64 starts_at_ms = 5;
+  int64 ends_at_ms = 6;
+  uint64 hp_max = 7;
+  uint64 hp_left = 8;
+  GuildBossConfig config = 9;
+  string end_reason = 10;
+  int64 ended_at_ms = 11;
+  int64 updated_at_ms = 12;
+  bool banner = 13;
+  uint32 banner_ver = 14;
+}
+
+message GuildBossMe {
+  uint32 runs_used = 1;
+  uint32 runs_max = 2;
+  bool fighting = 3;
+  uint64 damage = 4;
+  uint32 position = 5;
+  int64 guild_id = 6;
+  string guild_name = 7;
+  string guild_tag = 8;
+  uint64 guild_damage = 9;
+  uint32 guild_position = 10;
+  bool can_manage = 11;
+  string blocked = 12;
+  int64 rejoin_until_ms = 13;
+  uint64 rejoin_damage = 14;
+  int64 call_ready_at_ms = 15;
+  bool can_call = 16;
+}
+
+message GuildBossRoomMember {
+  uint64 account = 1;
+  string name = 2;
+  uint32 level = 3;
+  string class_id = 4;
+  bool ready = 5;
+  uint32 runs_left = 6;
+  bool leader = 7;
+}
+
+message GuildBossRoom {
+  uint64 id = 1;
+  repeated GuildBossRoomMember members = 2;
+  uint32 size = 3;
+}
+
+message GuildBossState {
+  GuildBossEvent event = 1;
+  GuildBossMe me = 2;
+  repeated GuildBossRoom rooms = 3;
+  int64 server_now_ms = 4;
+}
+
+message GuildBossPlayerRank {
+  uint32 position = 1;
+  uint64 account = 2;
+  string name = 3;
+  string guild_name = 4;
+  string guild_tag = 5;
+  uint64 damage = 6;
+  uint32 runs = 7;
+}
+
+message GuildBossGuildRank {
+  uint32 position = 1;
+  int64 guild_id = 2;
+  string name = 3;
+  string tag = 4;
+  uint64 damage = 5;
+  uint32 members = 6;
+}
+
+message GuildBossRankings {
+  int64 event_id = 1;
+  repeated GuildBossGuildRank guilds = 2;
+  repeated GuildBossPlayerRank players = 3;
+  repeated GuildBossPlayerRank mates = 4;
+  int64 updated_at_ms = 5;
+  uint64 hp_max = 6;
+  uint64 hp_left = 7;
+}
+
+message EventBanner {
+  string id = 1;
+  uint32 ver = 2;
+  string kind = 3;
+  string boss_id = 4;
+  string name = 5;
+  GuildBossStatus status = 6;
+  int64 starts_at_ms = 7;
+  int64 ends_at_ms = 8;
+  uint64 hp_max = 9;
+  uint32 runs = 10;
+  uint32 fight_secs = 11;
+  bool show = 12;
+}
+
+message GuildBossBanners {
+  repeated EventBanner banners = 1;
+}
+
+message GuildBossAdminSave {
+  int64 id = 1;
+  string name = 2;
+  int64 starts_at_ms = 3;
+  int64 ends_at_ms = 4;
+  uint64 hp_max = 5;
+  GuildBossConfig config = 6;
+  bool banner = 7;
+  bool bump_banner = 8;
+}
+
+message GuildBossAdminList {
+  repeated GuildBossEvent events = 1;
+  GuildBossConfig defaults = 2;
+  uint64 default_hp = 3;
+  GuildBossHpEstimate estimate = 4;
+}
+
+message GuildBossHpEstimate {
+  uint32 players = 1;
+  uint64 total_power = 2;
+  double damage_per_power_run = 3;
+  uint32 sample_runs = 4;
+  uint32 sample_fight_secs = 5;
+  bool measured = 6;
+  uint32 active_days = 7;
+  uint32 min_level = 8;
+  uint64 top_power = 9;
+}
+
+message GuildBossRequest {
+
+  oneof op {
+    bool state = 1;
+    bool start_solo = 2;
+    bool room_open = 3;
+    uint64 room_join = 4;
+    bool room_leave = 5;
+    bool room_ready = 6;
+    uint64 room_kick = 7;
+    bool room_start = 8;
+    bool rankings = 9;
+    bool banners = 10;
+    string banner_hide = 11;
+    bool leave_fight = 12;
+    bool rejoin = 13;
+    bool call_guild = 14;
+    uint64 answer_call = 15;
+    bool admin_list = 20;
+    GuildBossAdminSave admin_save = 21;
+    int64 admin_close = 22;
+  }
+}
+
+message GuildBossResponse {
+
+  oneof result {
+    GuildBossState state = 1;
+    GuildBossRankings rankings = 2;
+    GuildBossBanners banners = 3;
+    GuildBossAdminList admin_list = 4;
+  }
+}
+
+message GuildBossFight {
+  uint64 elapsed_ms = 1;
+  uint64 normal_ms = 2;
+  uint64 total_ms = 3;
+  bool frenzy = 4;
+  uint64 damage = 5;
+  uint32 summon_in_ms = 6;
+  uint64 hp_left = 7;
+  uint64 hp_max = 8;
+  uint32 team_buff_stacks = 9;
+  uint32 team_buff_pct = 10;
+  uint32 team_buff_ms = 11;
+  bool holding = 12;
+}
+
+message GuildBossResult {
+  uint64 damage = 1;
+  uint64 applied = 2;
+  uint64 elapsed_ms = 3;
+  bool complete = 4;
+  uint32 runs_left = 5;
+  uint64 hp_left = 6;
+  uint64 hp_max = 7;
+  bool defeated = 8;
+  uint32 statues = 9;
+  bool fell = 10;
+}
+
+message GuildBossRooms {
+  int64 guild_id = 1;
+  repeated GuildBossRoom rooms = 2;
+}
+
+message GuildBossCall {
+  string caller = 1;
+  uint64 room_id = 2;
+  uint32 members = 3;
+  uint32 size = 4;
+  int64 at_ms = 5;
+  string boss_name = 6;
+}
+
+message GuildBossPush {
+
+  oneof event {
+    GuildBossEvent changed = 1;
+    GuildBossFight fight = 2;
+    GuildBossResult result = 3;
+    GuildBossRooms rooms = 4;
+    GuildBossCall called = 5;
+  }
+}
+

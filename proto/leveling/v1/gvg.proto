@@ -1,0 +1,395 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum GvgRole {
+  GVG_ROLE_DAMAGE = 0;
+  GVG_ROLE_TANK = 1;
+  GVG_ROLE_SUPPORT = 2;
+}
+
+enum GvgRoomPhase {
+  GVG_ROOM_PHASE_FORMING = 0;
+  GVG_ROOM_PHASE_CONFIRMING = 1;
+  GVG_ROOM_PHASE_QUEUED = 2;
+  GVG_ROOM_PHASE_IN_MATCH = 3;
+}
+
+enum GvgMatchPhase {
+  GVG_MATCH_PHASE_LOADING = 0;
+  GVG_MATCH_PHASE_PREPARING = 1;
+  GVG_MATCH_PHASE_COMBAT = 2;
+  GVG_MATCH_PHASE_RESULT = 3;
+  GVG_MATCH_PHASE_VOID = 4;
+}
+
+enum GvgConnection {
+  GVG_CONNECTION_ONLINE = 0;
+  GVG_CONNECTION_DROPPED = 1;
+  GVG_CONNECTION_LEFT = 2;
+}
+
+enum GvgOutcome {
+  GVG_OUTCOME_WIN = 0;
+  GVG_OUTCOME_LOSS = 1;
+  GVG_OUTCOME_DRAW = 2;
+  GVG_OUTCOME_VOID = 3;
+}
+
+message GvgGuild {
+  int64 id = 1;
+  string name = 2;
+  string tag = 3;
+  string emblem = 4;
+}
+
+message GvgRules {
+  uint32 team_size = 1;
+  uint32 min_level = 2;
+  uint32 tenure_hours = 3;
+  uint32 max_per_role = 4;
+  uint32 duration_s = 5;
+  uint32 tolerance_s = 6;
+  uint32 rematches_scored = 7;
+  uint32 daily_rewards = 8;
+  uint32 daily_prestige = 9;
+  uint32 hp_mult = 10;
+  uint32 leveled_hp = 11;
+}
+
+message GvgSeason {
+  uint32 index = 1;
+  int64 start_ms = 2;
+  int64 end_ms = 3;
+  bool active = 4;
+}
+
+message GvgStanding {
+  GvgGuild guild = 1;
+  int32 rating = 2;
+  uint32 wins = 3;
+  uint32 losses = 4;
+  uint32 draws = 5;
+  uint64 prestige = 6;
+  uint32 position = 7;
+}
+
+message GvgSlot {
+  uint64 account = 1;
+  string name = 2;
+  string skin = 3;
+  string gender = 4;
+  string class_id = 5;
+  GvgRole role = 6;
+  GuildRole guild_role = 7;
+  uint32 level = 8;
+  bool confirmed = 9;
+  bool online = 10;
+  bool captain = 11;
+}
+
+message GvgSentInvite {
+  uint64 account = 1;
+  string name = 2;
+  int64 expires_ms = 3;
+}
+
+message GvgRoom {
+  string id = 1;
+  GvgRoomPhase phase = 2;
+  uint64 captain = 3;
+  int64 deadline_ms = 4;
+  int64 queued_since_ms = 5;
+  repeated GvgSlot slots = 6;
+  repeated GvgSentInvite invites = 7;
+  uint32 team_size = 8;
+  bool leveled = 9;
+}
+
+message GvgReceivedInvite {
+  string room = 1;
+  string captain_name = 2;
+  int64 expires_ms = 3;
+}
+
+message GvgMember {
+  uint64 account = 1;
+  string name = 2;
+  GuildRole guild_role = 3;
+  string class_id = 4;
+  GvgRole role = 5;
+  uint32 level = 6;
+  bool online = 7;
+  bool eligible = 8;
+  string reason = 9;
+}
+
+message GvgHistoryEntry {
+  string id = 1;
+  int64 at_ms = 2;
+  GvgGuild opponent = 3;
+  GvgOutcome result = 4;
+  uint32 score_own = 5;
+  uint32 score_opponent = 6;
+  int32 rating = 7;
+  uint32 xp = 8;
+  uint32 prestige = 9;
+  string reason = 10;
+}
+
+message GvgPanel {
+  int64 now_ms = 1;
+  bool available = 2;
+  string unavailable_reason = 3;
+  int64 blocked_until_ms = 4;
+  string match_id = 5;
+  GvgRules rules = 6;
+  GvgSeason season = 7;
+  GvgStanding guild = 8;
+  GuildRole my_guild_role = 9;
+  bool can_captain = 10;
+  GvgRoom room = 11;
+  repeated GvgReceivedInvite invites = 12;
+  repeated GvgMember members = 13;
+  repeated GvgHistoryEntry history = 14;
+  repeated GvgStanding ranking = 15;
+  uint64 my_account = 16;
+}
+
+message GvgFighter {
+  uint64 account = 1;
+  string name = 2;
+  string skin = 3;
+  string gender = 4;
+  string class_id = 5;
+  GvgRole role = 6;
+  uint32 team = 7;
+  sint32 x = 8;
+  sint32 y = 9;
+  sint32 facing = 10;
+  uint32 hp = 11;
+  uint32 hp_max = 12;
+  uint32 mana = 13;
+  uint32 mana_max = 14;
+  uint32 shield = 15;
+  string action = 16;
+  uint32 action_serial = 17;
+  uint64 target = 18;
+  bool alive = 19;
+  bool forfeited = 20;
+  bool stunned = 21;
+  bool slowed = 22;
+  bool burning = 23;
+  repeated string buffs = 24;
+  GvgConnection connection = 25;
+  bool ready = 26;
+  uint32 hit_serial = 27;
+  uint32 heal_serial = 28;
+  uint32 dodge_serial = 29;
+  uint32 shield_serial = 30;
+  uint64 damage = 31;
+  uint64 healing = 32;
+  uint32 kills = 33;
+  uint32 deaths = 34;
+}
+
+message GvgTeam {
+  GvgGuild guild = 1;
+  uint32 score = 2;
+  uint32 kills = 3;
+  uint32 alive = 4;
+}
+
+message GvgGuildReward {
+  int32 rating = 1;
+  uint32 xp = 2;
+  uint32 prestige = 3;
+  GvgOutcome result = 4;
+}
+
+message GvgOwnReward {
+  uint64 gold = 1;
+  uint32 contribution = 2;
+  string reason = 3;
+}
+
+message GvgRewards {
+  bool confirmed = 1;
+  uint32 retry_attempt = 2;
+  repeated GvgGuildReward guilds = 3;
+  GvgOwnReward mine = 4;
+  repeated string notices = 5;
+}
+
+message GvgMatch {
+  string id = 1;
+  GvgMatchPhase phase = 2;
+  int64 now_ms = 3;
+  int64 deadline_ms = 4;
+  int64 clock_ms = 5;
+  repeated GvgTeam teams = 6;
+  repeated GvgFighter fighters = 7;
+  int32 winner = 8;
+  string reason = 9;
+  GvgRewards rewards = 10;
+  bool manual = 11;
+  bool leveled = 12;
+  uint32 team_size = 13;
+}
+
+message GvgLiveMatch {
+  string id = 1;
+  GvgMatchPhase phase = 2;
+  repeated GvgTeam teams = 3;
+  int64 clock_ms = 4;
+  uint32 spectators = 5;
+  bool leveled = 6;
+  uint32 team_size = 7;
+}
+
+message GvgLiveList {
+  repeated GvgLiveMatch matches = 1;
+}
+
+message GvgReprocessResult {
+  string match = 1;
+  bool repeated = 2;
+  GvgRewards rewards = 3;
+}
+
+message GvgGet {
+}
+
+message GvgCreate {
+  uint32 team_size = 1;
+  bool leveled = 2;
+}
+
+message GvgInvite {
+  uint64 account = 1;
+}
+
+message GvgAccept {
+  string room = 1;
+}
+
+message GvgDecline {
+  string room = 1;
+}
+
+message GvgLeave {
+}
+
+message GvgKick {
+  uint64 account = 1;
+}
+
+message GvgConfirmTeam {
+}
+
+message GvgConfirm {
+}
+
+message GvgRefuseConfirm {
+}
+
+message GvgCancelSearch {
+}
+
+message GvgReady {
+  string match = 1;
+}
+
+message GvgTarget {
+  string match = 1;
+  uint64 account = 2;
+}
+
+message GvgForfeit {
+  string match = 1;
+}
+
+message GvgCloseResult {
+  string match = 1;
+}
+
+message GvgGetMatch {
+}
+
+message GvgListLive {
+}
+
+message GvgSpectate {
+  string match = 1;
+  bool on = 2;
+}
+
+message GvgReprocess {
+  string match = 1;
+}
+
+message GvgRequest {
+
+  oneof op {
+    GvgGet get = 1;
+    GvgCreate create = 2;
+    GvgInvite invite = 3;
+    GvgAccept accept = 4;
+    GvgDecline decline = 5;
+    GvgLeave leave = 6;
+    GvgKick kick = 7;
+    GvgConfirmTeam confirm_team = 8;
+    GvgConfirm confirm = 9;
+    GvgRefuseConfirm refuse_confirm = 10;
+    GvgCancelSearch cancel_search = 11;
+    GvgReady ready = 12;
+    GvgTarget target = 13;
+    GvgForfeit forfeit = 14;
+    GvgCloseResult close_result = 15;
+    GvgGetMatch get_match = 16;
+    GvgListLive list_live = 17;
+    GvgSpectate spectate = 18;
+    GvgReprocess reprocess = 19;
+  }
+}
+
+message GvgResponse {
+
+  oneof result {
+    GvgPanel panel = 1;
+    GvgMatch match = 2;
+    bool no_match = 3;
+    GvgLiveList live = 4;
+    GvgReprocessResult reprocess = 5;
+  }
+}
+
+message GvgInviteNotice {
+  string room = 1;
+  string captain_name = 2;
+  string guild_name = 3;
+}
+
+message GvgConfirmNotice {
+  string room = 1;
+}
+
+message GvgMatchFound {
+  string match = 1;
+}
+
+message GvgPanelChanged {
+}
+
+message GvgPush {
+
+  oneof event {
+    GvgMatch match = 1;
+    GvgPanelChanged panel_changed = 2;
+    GvgInviteNotice invite = 3;
+    GvgConfirmNotice confirm = 4;
+    GvgMatchFound found = 5;
+  }
+}
+

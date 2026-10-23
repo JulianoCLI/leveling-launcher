@@ -1,0 +1,1995 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum AccountLogSection {
+  ACCOUNT_LOG_SECTION_UNSPECIFIED = 0;
+  ACCOUNT_LOG_SECTION_SHOP = 1;
+  ACCOUNT_LOG_SECTION_MARKET = 2;
+  ACCOUNT_LOG_SECTION_TRADE = 3;
+  ACCOUNT_LOG_SECTION_DROPS = 4;
+  ACCOUNT_LOG_SECTION_NPC_SALES = 5;
+  ACCOUNT_LOG_SECTION_GOLD = 6;
+  ACCOUNT_LOG_SECTION_SAME_IP = 7;
+  ACCOUNT_LOG_SECTION_CHAT = 8;
+}
+
+message AdminAccountSummary {
+  int64 account_id = 1;
+  string username = 2;
+  string name = 3;
+  Role role = 4;
+  uint32 level = 5;
+  uint64 power = 6;
+  int64 banned_until = 7;
+  string ban_reason = 8;
+  int64 created_at_ms = 9;
+  int64 last_login_at_ms = 10;
+  bool online = 11;
+  bool banned = 12;
+  bool active = 13;
+}
+
+message AdminOverview {
+}
+
+message AdminOverviewResult {
+  Role my_role = 1;
+  uint64 accounts_total = 2;
+  uint64 new_24h = 3;
+  uint64 logged_24h = 4;
+  uint64 active_7d = 5;
+  uint64 active_30d = 6;
+  uint64 new_month = 7;
+  uint64 online = 8;
+  uint64 staff = 9;
+  uint64 banned = 10;
+  AdminAccountSummary last_registered = 11;
+  AdminMaintenanceState maintenance = 12;
+  bool balance_restart_pending = 13;
+}
+
+message AdminSearch {
+  string query = 1;
+  string filter = 2;
+  string order = 3;
+  bool ascending = 4;
+  uint32 page = 5;
+  uint32 page_size = 6;
+}
+
+message AdminSearchResult {
+  repeated AdminAccountSummary accounts = 1;
+  uint64 total = 2;
+  uint32 page = 3;
+  uint32 page_size = 4;
+  uint32 pages = 5;
+}
+
+message AdminTarget {
+  int64 account_id = 1;
+  string name = 2;
+}
+
+message AdminInspect {
+  AdminTarget target = 1;
+}
+
+message AdminLedgerRow {
+  int64 id = 1;
+  string currency = 2;
+  int64 delta = 3;
+  int64 balance_after = 4;
+  string reason = 5;
+  string reference = 6;
+  int64 created_at_ms = 7;
+}
+
+message AdminInspectResult {
+  AdminAccountSummary account = 1;
+  bool has_character = 2;
+  string class_id = 3;
+  uint64 xp = 4;
+  uint64 gold = 5;
+  uint64 diamonds = 6;
+  uint32 stat_points = 7;
+  uint32 talent_points = 8;
+  string skin_id = 9;
+  int64 vip_until_ms = 10;
+  int64 exp_boost_until_ms = 11;
+  int64 drop_boost_until_ms = 12;
+  string scene = 13;
+  uint32 shadows = 14;
+  uint64 total_kills = 15;
+  uint32 bosses_cleared = 16;
+  repeated ItemInstance bag = 17;
+  repeated ItemInstance warehouse = 18;
+  uint32 unclaimed_mail = 19;
+  repeated AdminLedgerRow ledger = 20;
+  int64 updated_at_ms = 21;
+  int64 created_at_ms = 22;
+  bool class_change_available = 23;
+  bool aura_unlocked = 24;
+  repeated string owned_skins = 25;
+}
+
+message AdminBan {
+  AdminTarget target = 1;
+  double hours = 2;
+  string reason = 3;
+}
+
+message AdminBanResult {
+  AdminAccountSummary account = 1;
+}
+
+message AdminUnban {
+  AdminTarget target = 1;
+}
+
+message AdminBanned {
+}
+
+message AdminBanEntry {
+  int64 account_id = 1;
+  string username = 2;
+  string name = 3;
+  int64 banned_until = 4;
+  string reason = 5;
+}
+
+message AdminBannedResult {
+  repeated AdminBanEntry entries = 1;
+}
+
+message AdminKick {
+  AdminTarget target = 1;
+  string reason = 2;
+}
+
+message AdminKickResult {
+  string username = 1;
+}
+
+message AdminSetRole {
+  AdminTarget target = 1;
+  Role role = 2;
+}
+
+message AdminSetRoleResult {
+  AdminAccountSummary account = 1;
+  Role previous = 2;
+}
+
+message AdminGrantItem {
+  string item_id = 1;
+  uint32 qty = 2;
+  string rarity = 3;
+  uint32 level = 4;
+  uint32 enchant = 5;
+}
+
+message AdminGrant {
+  AdminTarget target = 1;
+  repeated AdminGrantItem items = 2;
+  uint64 gold = 3;
+  uint64 diamonds = 4;
+  string note = 5;
+}
+
+message AdminGrantResult {
+  uint64 mail_id = 1;
+  string username = 2;
+}
+
+message AdminTrophy {
+  AdminTarget target = 1;
+  string trophy_id = 2;
+  bool revoke = 3;
+  string note = 4;
+}
+
+message AdminTrophyResult {
+  string username = 1;
+  bool has = 2;
+  bool online = 3;
+}
+
+message AdminSetValues {
+  AdminTarget target = 1;
+  optional uint32 level = 2;
+  optional uint64 gold = 3;
+  optional uint64 diamonds = 4;
+}
+
+message AdminValues {
+  uint32 level = 1;
+  uint64 gold = 2;
+  uint64 diamonds = 3;
+}
+
+message AdminSetValuesResult {
+  string username = 1;
+  AdminValues before = 2;
+  AdminValues after = 3;
+  bool online = 4;
+}
+
+message AdminRemoveItems {
+  AdminTarget target = 1;
+  repeated uint64 uids = 2;
+  string reason = 3;
+}
+
+message AdminRemoveItemsResult {
+  string username = 1;
+  uint32 removed = 2;
+}
+
+message AdminLedger {
+  AdminTarget target = 1;
+  string currency = 2;
+  int64 before_id = 3;
+  uint32 limit = 4;
+}
+
+message AdminLedgerResult {
+  string username = 1;
+  repeated AdminLedgerRow rows = 2;
+}
+
+message AdminAudit {
+  string account = 1;
+  string action = 2;
+  int64 before_id = 3;
+  uint32 limit = 4;
+}
+
+message AdminAuditRow {
+  int64 id = 1;
+  string actor = 2;
+  Role actor_role = 3;
+  string action = 4;
+  string target = 5;
+  string details = 6;
+  string ip = 7;
+  int64 at_ms = 8;
+}
+
+message AdminAuditResult {
+  repeated AdminAuditRow rows = 1;
+}
+
+message AdminMultiAccounts {
+  string query = 1;
+  int64 before_id = 2;
+  uint32 limit = 3;
+  string reason = 4;
+}
+
+message AdminMultiAccountMember {
+  int64 account_id = 1;
+  string username = 2;
+  string character = 3;
+  bool triggered = 4;
+}
+
+message AdminMultiAccountRow {
+  int64 id = 1;
+  string ip = 2;
+  int64 at_ms = 3;
+  repeated AdminMultiAccountMember members = 4;
+  string reason = 5;
+  string detail = 6;
+}
+
+message AdminMultiAccountsResult {
+  repeated AdminMultiAccountRow rows = 1;
+}
+
+message AdminAuditTrail {
+  string section = 1;
+  string query = 2;
+  string kind = 3;
+  int64 before_id = 4;
+  uint32 limit = 5;
+  bool flagged_only = 6;
+}
+
+message AdminIpIntel {
+  bool known = 1;
+  string country = 2;
+  uint32 asn = 3;
+  string as_name = 4;
+  bool vpn = 5;
+  bool hosting = 6;
+  bool tor = 7;
+  bool relay = 8;
+  bool private_range = 9;
+  string source = 10;
+}
+
+message AdminAuditAccount {
+  int64 account_id = 1;
+  string username = 2;
+  string character = 3;
+}
+
+message AdminAuditSessionRow {
+  int64 id = 1;
+  AdminAuditAccount account = 2;
+  string ip = 3;
+  string ip_key = 4;
+  string user_agent = 5;
+  string device_id = 6;
+  int64 started_ms = 7;
+  int64 ended_ms = 8;
+  string end_reason = 9;
+  AdminIpIntel intel = 10;
+  string auth = 11;
+  string accept_language = 12;
+  string headers = 13;
+}
+
+message AdminAuditSecurityRow {
+  int64 id = 1;
+  int64 at_ms = 2;
+  string kind = 3;
+  AdminAuditAccount account = 4;
+  string username = 5;
+  string ip = 6;
+  string detail = 7;
+  AdminIpIntel intel = 8;
+}
+
+message AdminAuditAssetRow {
+  int64 id = 1;
+  int64 at_ms = 2;
+  AdminAuditAccount account = 3;
+  string action = 4;
+  uint32 kind = 5;
+  string uid = 6;
+  string def_id = 7;
+  string name = 8;
+  string grade = 9;
+  int32 enchant = 10;
+  int64 qty = 11;
+  AdminAuditAccount counterparty = 12;
+  string reference = 13;
+  string detail = 14;
+  string ip = 15;
+}
+
+message AdminAsnFlag {
+  uint32 asn = 1;
+  string flag = 2;
+  string note = 3;
+  string added_by = 4;
+  int64 added_at_ms = 5;
+  string as_name = 6;
+}
+
+message AdminIntelState {
+  int64 lists_updated_ms = 1;
+  uint32 vpn_ranges = 2;
+  uint32 datacenter_ranges = 3;
+  uint32 tor_exits = 4;
+  uint32 relay_ranges = 5;
+  uint32 as_names = 6;
+  bool asn_header_seen = 7;
+}
+
+message AdminAuditTrailResult {
+  repeated AdminAuditSessionRow sessions = 1;
+  repeated AdminAuditSecurityRow security = 2;
+  repeated AdminAuditAssetRow assets = 3;
+  repeated AdminAsnFlag asn_flags = 4;
+  AdminIntelState intel = 5;
+}
+
+message AdminAsnFlagSet {
+  uint32 asn = 1;
+  string flag = 2;
+  string note = 3;
+}
+
+message AdminAsnFlagRemove {
+  uint32 asn = 1;
+}
+
+message AdminSuspectLinks {
+  string query = 1;
+  uint32 min_score = 2;
+  uint32 limit = 3;
+  uint32 min_accounts = 4;
+}
+
+message AdminSuspectLinksRun {
+}
+
+message AdminSuspectSignal {
+  string kind = 1;
+  uint32 count = 2;
+  uint32 points = 3;
+  int64 gold = 4;
+  uint32 items = 5;
+  string detail = 6;
+  int64 last_at_ms = 7;
+}
+
+message AdminSuspectPair {
+  int64 a = 1;
+  int64 b = 2;
+  uint32 score = 3;
+  repeated AdminSuspectSignal signals = 4;
+  int64 gold_a_to_b = 5;
+  int64 gold_b_to_a = 6;
+  uint32 items_a_to_b = 7;
+  uint32 items_b_to_a = 8;
+}
+
+message AdminSuspectMember {
+  AdminAccountRef account = 1;
+  uint32 level = 2;
+  int64 created_at_ms = 3;
+  int64 last_login_ms = 4;
+  bool banned = 5;
+  bool ip_exempt = 6;
+  int64 net_gold = 7;
+  int32 net_items = 8;
+}
+
+message AdminSuspectGroup {
+  repeated AdminSuspectMember members = 1;
+  repeated AdminSuspectPair pairs = 2;
+  uint32 max_score = 3;
+  uint32 total_score = 4;
+}
+
+message AdminSuspectLinksResult {
+  repeated AdminSuspectGroup groups = 1;
+  int64 computed_at_ms = 2;
+  uint32 duration_ms = 3;
+  uint32 pairs_total = 4;
+  uint32 window_days = 5;
+  uint32 min_score = 6;
+  uint32 min_accounts = 7;
+}
+
+message AdminTransferHolds {
+  string query = 1;
+  bool active_only = 2;
+  int64 before_id = 3;
+  uint32 limit = 4;
+}
+
+message AdminTransferHoldAct {
+  uint64 mail_id = 1;
+  string action = 2;
+  string note = 3;
+}
+
+message AdminTransferHold {
+  uint64 mail_id = 1;
+  AdminAccountRef receiver = 2;
+  AdminAccountRef giver = 3;
+  string kind = 4;
+  string subject_key = 5;
+  map<string, string> params = 6;
+  uint64 gold = 7;
+  uint64 diamonds = 8;
+  uint32 items = 9;
+  uint32 shadows = 10;
+  int64 created_at_ms = 11;
+  int64 held_until_ms = 12;
+  uint64 value = 13;
+  string currency = 14;
+  string reason = 15;
+  string state = 16;
+}
+
+message AdminTransferHoldsResult {
+  repeated AdminTransferHold rows = 1;
+}
+
+message AdminTransferTrust {
+  AdminAccountRef account = 1;
+  string note = 2;
+  string added_by = 3;
+  int64 added_at_ms = 4;
+}
+
+message AdminTransferTrusted {
+}
+
+message AdminTransferTrustAdd {
+  AdminTarget target = 1;
+  string note = 2;
+  bool release_holds = 3;
+}
+
+message AdminTransferTrustRemove {
+  int64 account_id = 1;
+}
+
+message AdminTransferTrustedResult {
+  repeated AdminTransferTrust rows = 1;
+  uint32 released = 2;
+}
+
+message AdminIpException {
+  AdminAccountRef account = 1;
+  string note = 2;
+  string added_by = 3;
+  int64 added_at_ms = 4;
+  string last_ip = 5;
+  int64 last_seen_ms = 6;
+}
+
+message AdminIpExceptions {
+}
+
+message AdminIpExceptionAdd {
+  AdminTarget target = 1;
+  string note = 2;
+}
+
+message AdminIpExceptionRemove {
+  int64 account_id = 1;
+}
+
+message AdminIpExceptionsResult {
+  repeated AdminIpException rows = 1;
+}
+
+message AdminIpExceptionActivity {
+  AdminTarget target = 1;
+  int64 before_ms = 2;
+  uint32 limit = 3;
+  string filter = 4;
+}
+
+message AdminIpExceptionActivityResult {
+  repeated AdminAccountLogEntry entries = 1;
+  int64 next_before_ms = 2;
+  repeated int64 exempt_ids = 3;
+}
+
+message AdminAccountRef {
+  int64 account_id = 1;
+  string username = 2;
+  string character = 3;
+}
+
+message AdminAccountLogItem {
+  string def_id = 1;
+  string name = 2;
+  string rarity = 3;
+  int64 qty = 4;
+  uint32 enchant = 5;
+}
+
+message AdminAccountLogEntry {
+  int64 at_ms = 1;
+  int64 from_ms = 2;
+  string kind = 3;
+  string source = 4;
+  AdminAccountLogItem item = 5;
+  int64 gold = 6;
+  int64 diamonds = 7;
+  int64 cents = 8;
+  AdminAccountRef counterparty = 9;
+  bool same_ip = 10;
+  repeated AdminAccountLogItem gave = 11;
+  repeated AdminAccountLogItem received = 12;
+  string ip = 13;
+  string detail = 14;
+  AdminAccountRef actor = 15;
+}
+
+message AdminAccountLog {
+  AdminTarget target = 1;
+  AccountLogSection section = 2;
+  int64 before_ms = 3;
+  uint32 limit = 4;
+  string filter = 5;
+}
+
+message AdminAccountLogResult {
+  AccountLogSection section = 1;
+  repeated AdminAccountLogEntry entries = 2;
+  int64 next_before_ms = 3;
+}
+
+message AdminAccountIp {
+  string ip = 1;
+  int64 first_seen_ms = 2;
+  int64 last_seen_ms = 3;
+  uint32 logins = 4;
+  repeated AdminAccountRef shared_with = 5;
+}
+
+message AdminAccountLogTotal {
+  string source = 1;
+  int64 amount = 2;
+}
+
+message AdminAccountLogSummary {
+  AdminTarget target = 1;
+  uint32 days = 2;
+}
+
+message AdminAccountLogSummaryResult {
+  AdminAccountRef account = 1;
+  Role role = 2;
+  bool online = 3;
+  bool banned = 4;
+  int64 created_ms = 5;
+  int64 last_login_ms = 6;
+  int64 gold = 7;
+  int64 diamonds = 8;
+  uint32 days = 9;
+  repeated AdminAccountIp ips = 10;
+  repeated AdminAccountLogTotal gold_by_source = 11;
+  int64 gold_earned = 12;
+  int64 gold_spent = 13;
+  int64 diamonds_bought = 14;
+  int64 recharge_cents = 15;
+  int64 diamonds_spent = 16;
+  int64 items_dropped = 17;
+  int64 items_sold_npc = 18;
+  uint32 market_bought = 19;
+  uint32 market_sold = 20;
+  uint32 trades = 21;
+  uint32 same_ip_interactions = 22;
+  uint32 multi_account_events = 23;
+}
+
+message AdminAnnounce {
+  map<string, string> texts = 1;
+  string key = 2;
+  map<string, string> params = 3;
+  AdminTarget target = 4;
+  bool also_chat = 5;
+}
+
+message AdminAnnounceResult {
+  string destination = 1;
+}
+
+message AdminTranslate {
+  string text = 1;
+}
+
+message AdminTranslateResult {
+  string provider = 1;
+  map<string, string> texts = 2;
+  map<string, string> failures = 3;
+}
+
+message AdminMaintenanceState {
+  bool active = 1;
+  int64 since_ms = 2;
+  string by = 3;
+  string reason = 4;
+  string operation = 5;
+}
+
+message AdminMaintenance {
+}
+
+message AdminSetMaintenance {
+  bool active = 1;
+  string reason = 2;
+}
+
+message AdminSetMaintenanceResult {
+  AdminMaintenanceState state = 1;
+  uint32 kicked = 2;
+  uint32 saved = 3;
+  uint32 pending = 4;
+}
+
+message AdminShutdown {
+}
+
+message AdminShutdownResult {
+  uint32 pending_saves = 1;
+}
+
+message AdminReloadClients {
+}
+
+message AdminReloadClientsResult {
+  uint32 sent = 1;
+}
+
+message AdminReload {
+}
+
+message AdminOpenPanel {
+  string panel_id = 1;
+  string payload_json = 2;
+}
+
+message AdminBalanceList {
+}
+
+message AdminBalanceFile {
+  string file = 1;
+  bool overridden = 2;
+  int64 updated_at_ms = 3;
+  string updated_by = 4;
+  bool pending = 5;
+}
+
+message AdminBalanceListResult {
+  repeated AdminBalanceFile files = 1;
+  uint64 version = 2;
+  uint64 applied_version = 3;
+  bool overrides_enabled = 4;
+}
+
+message AdminBalanceGet {
+  string file = 1;
+}
+
+message AdminBalanceGetResult {
+  string file = 1;
+  string effective_json = 2;
+  string default_json = 3;
+  string override_json = 4;
+}
+
+message AdminBalanceSave {
+  string file = 1;
+  string json = 2;
+}
+
+message AdminBalanceSaveResult {
+  uint64 version = 1;
+  bool restart_required = 2;
+  string restart_reason = 3;
+}
+
+message AdminBalanceReset {
+  string file = 1;
+}
+
+message AdminBalanceSetEnabled {
+  bool enabled = 1;
+}
+
+message AdminBackup {
+  int64 id = 1;
+  string kind = 2;
+  string created_by = 3;
+  int64 created_at_ms = 4;
+  uint64 accounts = 5;
+  uint64 characters = 6;
+  uint64 rows = 7;
+  uint64 bytes = 8;
+  string checksum = 9;
+  string status = 10;
+  string detail = 11;
+}
+
+message AdminBackups {
+}
+
+message AdminBackupsResult {
+  repeated AdminBackup backups = 1;
+  string reset_phrase = 2;
+  string restore_phrase = 3;
+  bool password_configured = 4;
+  string busy = 5;
+}
+
+message AdminBackupCreate {
+}
+
+message AdminBackupVerify {
+  int64 id = 1;
+}
+
+message AdminBackupVerifyResult {
+  AdminBackup backup = 1;
+  bool ok = 2;
+  string error = 3;
+}
+
+message AdminStep {
+  string text = 1;
+  bool ok = 2;
+}
+
+message AdminRestore {
+  int64 backup_id = 1;
+  string phrase = 2;
+  string password = 3;
+}
+
+message AdminRestoreResult {
+  bool ok = 1;
+  string error = 2;
+  repeated AdminStep steps = 3;
+  int64 undo_backup_id = 4;
+  repeated string tables = 5;
+}
+
+message AdminResetPreview {
+}
+
+message AdminResetPreviewRow {
+  string username = 1;
+  uint32 level = 2;
+  uint64 gold = 3;
+  uint64 diamonds = 4;
+  uint64 items = 5;
+  uint32 shadows = 6;
+  uint64 keep_diamonds = 7;
+  uint32 keep_skins = 8;
+  bool keep_aura = 9;
+  int64 keep_vip_until_ms = 10;
+  bool keep_class_change = 11;
+}
+
+message AdminResetPreviewResult {
+  string reset_id = 1;
+  string phrase = 2;
+  bool password_configured = 3;
+  uint64 accounts = 4;
+  uint64 characters = 5;
+  uint64 shadows = 6;
+  uint64 items = 7;
+  uint64 gold = 8;
+  uint64 diamonds = 9;
+  uint64 staff = 10;
+  uint64 diamonds_kept = 11;
+  uint32 average_level = 12;
+  uint32 highest_level = 13;
+  repeated AdminResetPreviewRow sample = 14;
+  uint64 more = 15;
+  map<string, uint64> cleared_tables = 16;
+  string busy = 17;
+}
+
+message AdminResetExecute {
+  string reset_id = 1;
+  string phrase = 2;
+  string password = 3;
+}
+
+message AdminResetExecuteResult {
+  bool ok = 1;
+  string error = 2;
+  repeated AdminStep steps = 3;
+  int64 backup_id = 4;
+  uint64 characters = 5;
+  uint64 diamonds_kept = 6;
+}
+
+message AdminResetHistory {
+}
+
+message AdminResetLog {
+  string reset_id = 1;
+  string by = 2;
+  int64 started_at_ms = 3;
+  int64 finished_at_ms = 4;
+  string status = 5;
+  int64 backup_id = 6;
+  uint64 characters = 7;
+  uint64 diamonds_kept = 8;
+  string detail = 9;
+}
+
+message AdminResetHistoryResult {
+  repeated AdminResetLog resets = 1;
+}
+
+message AdminPerfSample {
+  int64 at_ms = 1;
+  uint32 online = 2;
+  uint32 sessions = 3;
+  uint32 instances = 4;
+  uint32 sim_players = 5;
+  uint32 monsters = 6;
+  uint64 worst_tick_us = 7;
+  uint64 tick_budget_us = 8;
+  uint64 db_latency_us = 9;
+  uint64 redis_latency_us = 10;
+  uint32 db_pool_size = 11;
+  uint32 db_pool_idle = 12;
+  uint32 save_queue = 13;
+  double rss_mb = 14;
+  double cpu_pct = 15;
+  uint32 pg_connections = 16;
+  uint32 pg_active = 17;
+  uint32 pg_idle_in_tx = 18;
+  uint32 pg_waiting_locks = 19;
+  double pg_cache_hit_pct = 20;
+  double pg_size_mb = 21;
+  double pg_longest_tx_s = 22;
+  uint64 uptime_s = 23;
+}
+
+message AdminShardStat {
+  uint32 shard = 1;
+  uint32 instances = 2;
+  uint32 players = 3;
+  uint32 monsters = 4;
+  uint64 worst_tick_us = 5;
+}
+
+message AdminPerfAlert {
+  string rule = 1;
+  string severity = 2;
+  double threshold = 3;
+  double value = 4;
+  int64 since_ms = 5;
+  int64 closed_at_ms = 6;
+}
+
+message AdminPerfRule {
+  string metric = 1;
+  string op = 2;
+  double threshold = 3;
+  uint32 duration_s = 4;
+  string severity = 5;
+  bool enabled = 6;
+}
+
+message AdminPerf {
+  uint32 minutes = 1;
+}
+
+message AdminPerfResult {
+  repeated AdminPerfSample samples = 1;
+  uint32 resolution_s = 2;
+  repeated AdminShardStat shards = 3;
+  repeated AdminPerfAlert alerts = 4;
+  repeated AdminPerfRule rules = 5;
+  int64 started_at_ms = 6;
+  string version = 7;
+}
+
+message AdminPerfRules {
+  repeated AdminPerfRule rules = 1;
+}
+
+message AdminBlackBox {
+}
+
+message AdminEvent {
+  int64 at_ms = 1;
+  string kind = 2;
+  string detail = 3;
+}
+
+message AdminCrashReport {
+  int64 at_ms = 1;
+  string kind = 2;
+  string message = 3;
+  string location = 4;
+  uint64 uptime_s = 5;
+  uint32 online = 6;
+}
+
+message AdminBlackBoxResult {
+  repeated AdminEvent events = 1;
+  repeated AdminCrashReport crashes = 2;
+  int64 booted_at_ms = 3;
+  string version = 4;
+}
+
+message AdminGuilds {
+  string term = 1;
+}
+
+message AdminGuildsResult {
+  repeated GuildSummary guilds = 1;
+}
+
+message AdminGuild {
+  int64 id = 1;
+}
+
+message AdminGuildEmblem {
+  int64 id = 1;
+  string action = 2;
+}
+
+message AdminDone {
+}
+
+message LeagueSeason {
+  int64 id = 1;
+  string slug = 2;
+  uint32 number = 3;
+  string name = 4;
+  string subtitle = 5;
+  string description = 6;
+  string i18n_json = 7;
+  string banner = 8;
+  GuildLeagueSeasonStatus status = 9;
+  int64 starts_at_ms = 10;
+  int64 ends_at_ms = 11;
+  string display_tz = 12;
+  string config_json = 13;
+  string rules_hash = 14;
+  string visibility = 15;
+  uint32 announce_ver = 16;
+  uint32 revision = 17;
+  string created_by = 18;
+  int64 created_at_ms = 19;
+  int64 updated_at_ms = 20;
+  int64 started_at_ms = 21;
+  int64 settled_at_ms = 22;
+  int64 cancelled_at_ms = 23;
+  string cancel_reason = 24;
+  string rules_frozen_json = 25;
+}
+
+message AdminLeagueList {
+  uint32 page = 1;
+}
+
+message AdminLeagueListResult {
+  repeated LeagueSeason seasons = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 page_size = 4;
+}
+
+message AdminLeagueGet {
+  int64 id = 1;
+}
+
+message AdminLeagueResult {
+  LeagueSeason season = 1;
+}
+
+message AdminLeagueSaveDraft {
+  LeagueSeason season = 1;
+}
+
+message AdminLeaguePreview {
+  int64 id = 1;
+  LeagueSeason season = 2;
+  string lang = 3;
+}
+
+message AdminLeaguePreviewResult {
+  GuildLeagueSeasonInfo player_view = 1;
+  GuildLeagueCurrent current = 2;
+  repeated string warnings = 3;
+}
+
+message AdminLeagueSchedule {
+  int64 id = 1;
+  uint32 revision = 2;
+  int64 starts_at_ms = 3;
+  int64 ends_at_ms = 4;
+  string display_tz = 5;
+}
+
+message AdminLeagueUnschedule {
+  int64 id = 1;
+  uint32 revision = 2;
+}
+
+message AdminLeagueStartNow {
+  int64 id = 1;
+  uint32 revision = 2;
+  string confirm_slug = 3;
+}
+
+message AdminLeagueEndNow {
+  int64 id = 1;
+  uint32 revision = 2;
+  string confirm_slug = 3;
+}
+
+message AdminLeagueCancel {
+  int64 id = 1;
+  uint32 revision = 2;
+  string confirm_phrase = 3;
+  string reason = 4;
+}
+
+message AdminLeagueParticipants {
+  int64 id = 1;
+  uint32 page = 2;
+}
+
+message AdminLeagueParticipant {
+  int64 guild_id = 1;
+  string name = 2;
+  string tag = 3;
+  uint32 members = 4;
+  uint32 level = 5;
+  GuildLeague league = 6;
+  bool eligible = 7;
+  string reason = 8;
+}
+
+message AdminLeagueParticipantsResult {
+  repeated AdminLeagueParticipant rows = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 page_size = 4;
+}
+
+message AdminLeagueStandings {
+  int64 id = 1;
+  uint32 page = 2;
+}
+
+message AdminLeagueStandingsResult {
+  int64 season_id = 1;
+  repeated GuildLeagueBoardEntry rows = 2;
+  uint32 total = 3;
+  uint32 page = 4;
+  uint32 page_size = 5;
+  bool settled = 6;
+}
+
+message AdminLeagueRewards {
+  int64 id = 1;
+  uint32 page = 2;
+  string status = 3;
+}
+
+message AdminLeagueRewardTier {
+  uint32 tier = 1;
+  GuildLeague league = 2;
+  uint32 count = 3;
+  repeated GuildLeagueRewardItem totals = 4;
+}
+
+message AdminLeagueGrant {
+  int64 account_id = 1;
+  string name = 2;
+  int64 guild_id = 3;
+  string guild_name = 4;
+  uint32 tier = 5;
+  GuildLeague league = 6;
+  string status = 7;
+  int64 created_at_ms = 8;
+  int64 claimed_at_ms = 9;
+  string mail_key = 10;
+}
+
+message AdminLeagueRewardsResult {
+  repeated AdminLeagueRewardTier tiers = 1;
+  repeated AdminLeagueGrant grants = 2;
+  uint32 total = 3;
+  uint32 page = 4;
+  uint32 page_size = 5;
+}
+
+message AdminLeagueAudit {
+  int64 id = 1;
+  uint32 page = 2;
+}
+
+message AdminLeagueLogRow {
+  int64 id = 1;
+  int64 at_ms = 2;
+  string actor = 3;
+  string action = 4;
+  string before_json = 5;
+  string after_json = 6;
+  string detail = 7;
+}
+
+message AdminLeagueAuditResult {
+  repeated AdminLeagueLogRow rows = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 page_size = 4;
+}
+
+message AdminGuildProgressAdjust {
+  int64 guild_id = 1;
+  int64 points_delta = 2;
+  string reason = 3;
+}
+
+message AdminGuildsLock {
+  int64 until_ms = 1;
+  string reason = 2;
+}
+
+message AdminGuildsLockResult {
+  int64 until_ms = 1;
+  string reason = 2;
+}
+
+message AdminMarket {
+  string term = 1;
+}
+
+message AdminBonuses {
+}
+
+message AdminBonusesResult {
+  repeated GlobalBonus bonuses = 1;
+}
+
+message AdminSetBonus {
+  string kind = 1;
+  double mult = 2;
+  int64 minutes = 3;
+}
+
+message AdminDropAward {
+  int64 release_at_ms = 1;
+  int64 account_id = 2;
+  string character_name = 3;
+  int64 claimed_at_ms = 4;
+  string detail = 5;
+}
+
+message AdminDropCampaign {
+  int64 id = 1;
+  string kind = 2;
+  string item_id = 3;
+  uint32 qty = 4;
+  string rarity = 5;
+  uint32 item_level = 6;
+  string shadow_rank = 7;
+  uint32 min_level = 8;
+  uint32 awards = 9;
+  int64 window_from_ms = 10;
+  int64 window_to_ms = 11;
+  bool staff_eligible = 12;
+  string note = 13;
+  string created_by = 14;
+  int64 created_at_ms = 15;
+  int64 closed_at_ms = 16;
+  bool cancelled = 17;
+  repeated AdminDropAward award_list = 18;
+  string source = 19;
+  string shadow_quality = 20;
+  string shadow_specialization = 21;
+}
+
+message AdminDropCampaigns {
+}
+
+message AdminDropCategory {
+  string id = 1;
+  repeated string item_ids = 2;
+}
+
+message AdminDropCampaignsResult {
+  repeated AdminDropCampaign campaigns = 1;
+  repeated AdminDropCategory categories = 2;
+  uint32 gem_max_level = 3;
+}
+
+message AdminDropCampaignCreate {
+  string kind = 1;
+  string item_id = 2;
+  uint32 qty = 3;
+  string rarity = 4;
+  uint32 item_level = 5;
+  string shadow_rank = 6;
+  uint32 min_level = 7;
+  uint32 awards = 8;
+  double from_days = 9;
+  double to_days = 10;
+  bool staff_eligible = 11;
+  string note = 12;
+  string source = 13;
+  string shadow_quality = 14;
+  string shadow_specialization = 15;
+}
+
+message AdminDropCampaignCancel {
+  int64 id = 1;
+}
+
+message AdminDropCampaignUpdate {
+  int64 id = 1;
+  AdminDropCampaignCreate campaign = 2;
+  bool reschedule = 3;
+}
+
+message AdminPool {
+}
+
+message AdminPoolReset {
+}
+
+message AdminPoolResetResult {
+  string cycle = 1;
+}
+
+message AdminFinance {
+  string period = 1;
+}
+
+message AdminFinanceResult {
+  FinanceSummary today = 1;
+  FinanceSummary month = 2;
+  FinanceSummary all = 3;
+  FinanceSummary period = 4;
+  string period_key = 5;
+  repeated TopBuyer top = 6;
+  repeated CommerceOrder recent = 7;
+}
+
+message AdminFinancePlayer {
+  AdminTarget target = 1;
+}
+
+message AdminFinancePlayerResult {
+  AdminAccountSummary account = 1;
+  repeated CommerceOrder orders = 2;
+  AdminValues values = 3;
+  uint64 gold = 4;
+}
+
+message AdminFinanceOrder {
+  int64 id = 1;
+}
+
+message AdminFinanceNote {
+  AdminTarget target = 1;
+  string detail = 2;
+}
+
+message AdminSale {
+  AdminTarget target = 1;
+  uint64 diamonds = 2;
+  int64 amount_cents = 3;
+  string method = 4;
+  string note = 5;
+}
+
+message AdminPremiumShop {
+  uint32 days = 1;
+}
+
+message PremiumShopSales {
+  string reason = 1;
+  string item = 2;
+  uint64 purchases = 3;
+  uint64 diamonds = 4;
+  uint32 buyers = 5;
+}
+
+message PremiumShopDay {
+  int32 day = 1;
+  uint64 purchases = 2;
+  uint64 diamonds = 3;
+  uint32 buyers = 4;
+  uint32 new_buyers = 5;
+  uint32 vip_purchases = 6;
+  uint32 boost_purchases = 7;
+  uint64 vip_diamonds = 8;
+  uint64 boost_diamonds = 9;
+}
+
+message PremiumShopVip {
+  uint64 account_id = 1;
+  string name = 2;
+  uint32 level = 3;
+  int64 until_ms = 4;
+  uint32 purchases = 5;
+}
+
+message PremiumShopBuyer {
+  uint64 account_id = 1;
+  string name = 2;
+  uint64 purchases = 3;
+  uint64 diamonds = 4;
+}
+
+message AdminPremiumShopResult {
+  uint32 days = 1;
+  int32 today = 2;
+  uint32 vip_active = 3;
+  uint32 vip_expiring_7d = 4;
+  uint32 vip_buyers_ever = 5;
+  uint32 boost_exp = 6;
+  uint32 boost_drop = 7;
+  uint32 boost_capture = 8;
+  uint64 purchases = 9;
+  uint64 diamonds = 10;
+  uint32 buyers = 11;
+  repeated PremiumShopSales by_reason = 12;
+  repeated PremiumShopSales by_item = 13;
+  repeated PremiumShopDay daily = 14;
+  repeated PremiumShopVip vips = 15;
+  repeated PremiumShopBuyer top_buyers = 16;
+}
+
+message AdminTopIdle {
+  int32 status = 1;
+}
+
+message TopIdleVoteRow {
+  string event_id = 1;
+  string identifier = 2;
+  string email = 3;
+  int64 account_id = 4;
+  string name = 5;
+  int32 status = 6;
+  int64 created_at_ms = 7;
+  uint64 mail_id = 8;
+  uint32 vote_n = 9;
+  bool claimed = 10;
+}
+
+message TopIdlePlayerRow {
+  int64 account_id = 1;
+  string name = 2;
+  uint32 counted = 3;
+  uint32 rewarded = 4;
+  uint32 claimed = 5;
+  int64 last_vote_ms = 6;
+  string email = 7;
+}
+
+message AdminTopIdleMilestone {
+  uint32 vote = 1;
+  repeated string boosts = 2;
+  string bless = 3;
+  repeated string items = 4;
+}
+
+message TopIdleLinkRow {
+  int64 account_id = 1;
+  string name = 2;
+  string email = 3;
+  int64 linked_at_ms = 4;
+}
+
+message AdminTopIdleResult {
+  uint32 today = 1;
+  uint32 last_7d = 2;
+  uint32 total = 3;
+  uint32 voters_7d = 4;
+  uint32 not_found_7d = 5;
+  uint32 rewarded_7d = 6;
+  uint32 too_soon_7d = 7;
+  uint32 links = 8;
+  repeated TopIdleVoteRow votes = 9;
+  repeated TopIdleLinkRow link_rows = 10;
+  repeated TopIdlePlayerRow players = 11;
+  uint32 cycle_len = 12;
+  repeated AdminTopIdleMilestone milestones = 13;
+}
+
+message AdminTopIdleUnlink {
+  int64 account_id = 1;
+}
+
+message AdminDailyRewards {
+}
+
+message AdminDailyClaimRow {
+  int64 account_id = 1;
+  string name = 2;
+  int64 day = 3;
+  uint64 step = 4;
+  uint64 mail_id = 5;
+  bool mail_claimed = 6;
+  int64 created_at_ms = 7;
+}
+
+message AdminDailyPlayerRow {
+  int64 account_id = 1;
+  string name = 2;
+  uint64 claims = 3;
+  uint64 migrated_votes = 4;
+  int64 last_day = 5;
+  uint32 streak = 6;
+  uint32 best_streak = 7;
+  int64 updated_at_ms = 8;
+}
+
+message AdminDailyRewardsResult {
+  bool enabled = 1;
+  uint32 min_level = 2;
+  uint32 boost_hours = 3;
+  uint32 cycle_len = 4;
+  int64 today = 5;
+  uint32 claims_today = 6;
+  uint32 claims_7d = 7;
+  uint32 claims_total = 8;
+  uint32 accounts_7d = 9;
+  uint32 accounts = 10;
+  uint32 migrated_accounts = 11;
+  uint64 migrated_votes = 12;
+  uint32 unopened_7d = 13;
+  repeated AdminDailyClaimRow claims = 14;
+  repeated AdminDailyPlayerRow players = 15;
+  repeated DailyRewardDay days = 16;
+}
+
+message AdminStaffTrophies {
+
+  oneof op {
+    AdminStaffTrophyList list = 1;
+    AdminStaffTrophyDef save = 2;
+    AdminStaffTrophyUpload upload = 3;
+    AdminStaffTrophyHolders holders = 4;
+  }
+}
+
+message AdminStaffTrophyList {
+}
+
+message AdminStaffTrophyUpload {
+  bytes data = 1;
+}
+
+message AdminStaffTrophyHolders {
+  string trophy_id = 1;
+}
+
+message AdminStaffTrophyDef {
+  string id = 1;
+  map<string, string> name = 2;
+  map<string, string> description = 3;
+  string rarity = 4;
+  string effect = 5;
+  string image = 6;
+  uint32 unique_limit = 7;
+  bool active = 8;
+  string created_by = 9;
+  int64 created_at_ms = 10;
+  uint32 holders = 11;
+}
+
+message AdminStaffTrophyHolder {
+  string trophy_id = 1;
+  int64 account_id = 2;
+  string name = 3;
+  string note = 4;
+  string granted_by = 5;
+  int64 granted_at_ms = 6;
+}
+
+message AdminStaffTrophiesResult {
+  repeated AdminStaffTrophyDef trophies = 1;
+  repeated AdminStaffTrophyHolder holders = 2;
+  string image = 3;
+}
+
+message AdminRankLock {
+  uint32 action = 1;
+  int64 lock_id = 2;
+  string label = 3;
+  int64 lock_at_ms = 4;
+  uint32 kind = 5;
+  string class_id = 6;
+  uint32 limit = 7;
+}
+
+message AdminRankLockInfo {
+  int64 id = 1;
+  string label = 2;
+  int64 lock_at_ms = 3;
+  int64 taken_at_ms = 4;
+  uint32 status = 5;
+  bool late = 6;
+  string created_by = 7;
+  int64 created_at_ms = 8;
+  uint32 rows = 9;
+  bool flushed = 10;
+  uint32 flush_ms = 11;
+  int64 stale_ms = 12;
+  int64 computed_at_ms = 13;
+  uint32 mismatches = 14;
+  uint32 failed = 15;
+}
+
+message AdminRankLockLine {
+  uint32 pos = 1;
+  int64 account_id = 2;
+  string name = 3;
+  string class_id = 4;
+  string guild_tag = 5;
+  uint32 level = 6;
+  uint64 power = 7;
+  uint64 power_no_imbue = 8;
+  uint32 pos_power = 9;
+  uint32 pos_no_imbue = 10;
+  uint32 pos_level = 11;
+}
+
+message AdminRankLockResult {
+  repeated AdminRankLockInfo locks = 1;
+  AdminRankLockInfo lock = 2;
+  repeated AdminRankLockLine lines = 3;
+  uint32 kind = 4;
+  string class_id = 5;
+  uint32 uncertain_from = 6;
+  repeated string classes = 7;
+  int64 server_now_ms = 8;
+  int64 changed_id = 9;
+}
+
+message AdminRetention {
+  uint32 days = 1;
+}
+
+message RetentionDay {
+  int32 day = 1;
+  uint32 new_accounts = 2;
+  uint32 active = 3;
+  uint32 returning = 4;
+  double avg_minutes = 5;
+  uint32 wau = 6;
+}
+
+message RetentionCohort {
+  int32 day = 1;
+  uint32 size = 2;
+  repeated double rates = 3;
+}
+
+message RetentionLevelBand {
+  string band = 1;
+  uint32 active = 2;
+  uint32 at_risk = 3;
+  uint32 churned = 4;
+}
+
+message RetentionPlayer {
+  int64 account_id = 1;
+  string name = 2;
+  uint32 level = 3;
+  uint64 power = 4;
+  int32 last_day = 5;
+  int64 last_seen_ms = 6;
+  uint32 active_days = 7;
+  bool payer = 8;
+}
+
+message AdminRetentionResult {
+  int32 today = 1;
+  uint32 dau = 2;
+  uint32 wau = 3;
+  uint32 mau = 4;
+  uint32 new_today = 5;
+  uint32 new_7d = 6;
+  uint32 total_players = 7;
+  double avg_minutes_today = 8;
+  double d1 = 9;
+  double d7 = 10;
+  double d30 = 11;
+  uint32 payers_total = 12;
+  uint32 payers_active_7d = 13;
+  int32 minutes_since_day = 14;
+  repeated RetentionDay daily = 15;
+  repeated RetentionCohort cohorts = 16;
+  uint32 funnel_registered = 17;
+  uint32 funnel_class = 18;
+  uint32 funnel_level5 = 19;
+  uint32 funnel_level10 = 20;
+  uint32 funnel_level20 = 21;
+  uint32 funnel_level50 = 22;
+  uint32 funnel_back_7d = 23;
+  uint32 funnel_matured_7d = 24;
+  repeated RetentionLevelBand levels = 25;
+  repeated RetentionPlayer at_risk = 26;
+}
+
+message AdminRequest {
+
+  oneof op {
+    AdminOverview overview = 1;
+    AdminSearch search = 2;
+    AdminInspect inspect = 3;
+    AdminBan ban = 4;
+    AdminUnban unban = 5;
+    AdminBanned banned = 6;
+    AdminKick kick = 7;
+    AdminSetRole set_role = 8;
+    AdminGrant grant = 9;
+    AdminSetValues set_values = 10;
+    AdminRemoveItems remove_items = 11;
+    AdminLedger ledger = 12;
+    AdminAudit audit = 13;
+    AdminAnnounce announce = 14;
+    AdminTranslate translate = 15;
+    AdminMaintenance maintenance = 16;
+    AdminSetMaintenance set_maintenance = 17;
+    AdminShutdown shutdown = 18;
+    AdminBalanceList balance_list = 19;
+    AdminBalanceGet balance_get = 20;
+    AdminBalanceSave balance_save = 21;
+    AdminBalanceReset balance_reset = 22;
+    AdminBackups backups = 23;
+    AdminBackupCreate backup_create = 24;
+    AdminBackupVerify backup_verify = 25;
+    AdminRestore restore = 26;
+    AdminResetPreview reset_preview = 27;
+    AdminResetExecute reset_execute = 28;
+    AdminResetHistory reset_history = 29;
+    AdminPerf perf = 30;
+    AdminPerfRules perf_rules = 31;
+    AdminBlackBox black_box = 32;
+    AdminGuilds guilds = 36;
+    AdminGuild guild = 37;
+    AdminGuildEmblem guild_emblem = 38;
+    AdminMarket market = 39;
+    AdminBonuses bonuses = 40;
+    AdminSetBonus set_bonus = 41;
+    AdminPool pool = 42;
+    AdminPoolReset pool_reset = 43;
+    AdminFinance finance = 44;
+    AdminFinancePlayer finance_player = 45;
+    AdminFinanceOrder finance_order = 46;
+    AdminFinanceNote finance_note = 47;
+    AdminSale sale = 48;
+    AdminReloadClients reload_clients = 49;
+    AdminMultiAccounts multi_accounts = 50;
+    AdminAccountLogSummary account_log_summary = 51;
+    AdminAccountLog account_log = 52;
+    AdminRetention retention = 53;
+    AdminBalanceSetEnabled balance_set_enabled = 54;
+    AdminIpExceptions ip_exceptions = 55;
+    AdminIpExceptionAdd ip_exception_add = 56;
+    AdminIpExceptionRemove ip_exception_remove = 57;
+    AdminIpExceptionActivity ip_exception_activity = 58;
+    AdminPremiumShop premium_shop = 59;
+    AdminLeagueList league_list = 60;
+    AdminLeagueGet league_get = 61;
+    AdminLeagueSaveDraft league_save_draft = 62;
+    AdminLeaguePreview league_preview = 63;
+    AdminLeagueSchedule league_schedule = 64;
+    AdminLeagueUnschedule league_unschedule = 65;
+    AdminLeagueStartNow league_start_now = 66;
+    AdminLeagueEndNow league_end_now = 67;
+    AdminLeagueCancel league_cancel = 68;
+    AdminLeagueParticipants league_participants = 69;
+    AdminLeagueStandings league_standings = 70;
+    AdminLeagueRewards league_rewards = 71;
+    AdminLeagueAudit league_audit = 72;
+    AdminGuildProgressAdjust guild_progress_adjust = 73;
+    AdminGuildsLock guilds_lock = 74;
+    AdminTopIdle topidle = 75;
+    AdminTopIdleUnlink topidle_unlink = 76;
+    AdminAuditTrail audit_trail = 77;
+    AdminAsnFlagSet asn_flag_set = 78;
+    AdminAsnFlagRemove asn_flag_remove = 79;
+    AdminTrophy trophy = 80;
+    AdminSuspectLinks suspect_links = 85;
+    AdminSuspectLinksRun suspect_links_run = 86;
+    AdminTransferHolds transfer_holds = 87;
+    AdminTransferHoldAct transfer_hold_act = 88;
+    AdminHousing housing = 90;
+    AdminDropCampaigns drop_campaigns = 91;
+    AdminDropCampaignCreate drop_campaign_create = 92;
+    AdminDropCampaignCancel drop_campaign_cancel = 93;
+    AdminDropCampaignUpdate drop_campaign_update = 94;
+    AdminDailyRewards daily_rewards = 95;
+    AdminRankLock rank_lock = 96;
+    AdminStaffTrophies staff_trophies = 110;
+    AdminFreeRespec free_respec = 120;
+    AdminSetFreeRespec set_free_respec = 121;
+    AdminLookShop look_shop = 122;
+    AdminSetLookShop set_look_shop = 123;
+    AdminLookTrade look_trade = 130;
+    AdminTransferTrusted transfer_trusted = 140;
+    AdminTransferTrustAdd transfer_trust_add = 141;
+    AdminTransferTrustRemove transfer_trust_remove = 142;
+  }
+}
+
+message AdminResponse {
+
+  oneof result {
+    AdminOverviewResult overview = 1;
+    AdminSearchResult search = 2;
+    AdminInspectResult inspect = 3;
+    AdminBanResult ban = 4;
+    AdminBanResult unban = 5;
+    AdminBannedResult banned = 6;
+    AdminKickResult kick = 7;
+    AdminSetRoleResult set_role = 8;
+    AdminGrantResult grant = 9;
+    AdminSetValuesResult set_values = 10;
+    AdminRemoveItemsResult remove_items = 11;
+    AdminLedgerResult ledger = 12;
+    AdminAuditResult audit = 13;
+    AdminAnnounceResult announce = 14;
+    AdminTranslateResult translate = 15;
+    AdminMaintenanceState maintenance = 16;
+    AdminSetMaintenanceResult set_maintenance = 17;
+    AdminShutdownResult shutdown = 18;
+    AdminBalanceListResult balance_list = 19;
+    AdminBalanceGetResult balance_get = 20;
+    AdminBalanceSaveResult balance_save = 21;
+    AdminBalanceSaveResult balance_reset = 22;
+    AdminBackupsResult backups = 23;
+    AdminBackupVerifyResult backup_create = 24;
+    AdminBackupVerifyResult backup_verify = 25;
+    AdminRestoreResult restore = 26;
+    AdminResetPreviewResult reset_preview = 27;
+    AdminResetExecuteResult reset_execute = 28;
+    AdminResetHistoryResult reset_history = 29;
+    AdminPerfResult perf = 30;
+    AdminPerfResult perf_rules = 31;
+    AdminBlackBoxResult black_box = 32;
+    AdminGuildsResult guilds = 36;
+    GuildAdminDetail guild = 37;
+    AdminDone guild_emblem = 38;
+    MarketAdminResult market = 39;
+    AdminBonusesResult bonuses = 40;
+    AdminBonusesResult set_bonus = 41;
+    PoolTelemetry pool = 42;
+    AdminPoolResetResult pool_reset = 43;
+    AdminFinanceResult finance = 44;
+    AdminFinancePlayerResult finance_player = 45;
+    CommerceOrder finance_order = 46;
+    AdminDone finance_note = 47;
+    CommerceDelivery sale = 48;
+    AdminReloadClientsResult reload_clients = 49;
+    AdminMultiAccountsResult multi_accounts = 50;
+    AdminAccountLogSummaryResult account_log_summary = 51;
+    AdminAccountLogResult account_log = 52;
+    AdminRetentionResult retention = 53;
+    AdminBalanceSaveResult balance_set_enabled = 54;
+    AdminIpExceptionsResult ip_exceptions = 55;
+    AdminIpExceptionsResult ip_exception_add = 56;
+    AdminIpExceptionsResult ip_exception_remove = 57;
+    AdminIpExceptionActivityResult ip_exception_activity = 58;
+    AdminPremiumShopResult premium_shop = 59;
+    AdminLeagueListResult league_list = 60;
+    AdminLeagueResult league_get = 61;
+    AdminLeagueResult league_save_draft = 62;
+    AdminLeaguePreviewResult league_preview = 63;
+    AdminLeagueResult league_schedule = 64;
+    AdminLeagueResult league_unschedule = 65;
+    AdminLeagueResult league_start_now = 66;
+    AdminLeagueResult league_end_now = 67;
+    AdminLeagueResult league_cancel = 68;
+    AdminLeagueParticipantsResult league_participants = 69;
+    AdminLeagueStandingsResult league_standings = 70;
+    AdminLeagueRewardsResult league_rewards = 71;
+    AdminLeagueAuditResult league_audit = 72;
+    GuildProgress guild_progress_adjust = 73;
+    AdminGuildsLockResult guilds_lock = 74;
+    AdminTopIdleResult topidle = 75;
+    AdminTopIdleResult topidle_unlink = 76;
+    AdminAuditTrailResult audit_trail = 77;
+    AdminAuditTrailResult asn_flag_set = 78;
+    AdminAuditTrailResult asn_flag_remove = 79;
+    AdminTrophyResult trophy = 80;
+    AdminSuspectLinksResult suspect_links = 85;
+    AdminSuspectLinksResult suspect_links_run = 86;
+    AdminTransferHoldsResult transfer_holds = 87;
+    AdminTransferHoldsResult transfer_hold_act = 88;
+    AdminHousingResult housing = 90;
+    AdminDropCampaignsResult drop_campaigns = 91;
+    AdminDropCampaignsResult drop_campaign_create = 92;
+    AdminDropCampaignsResult drop_campaign_cancel = 93;
+    AdminDropCampaignsResult drop_campaign_update = 94;
+    AdminDailyRewardsResult daily_rewards = 95;
+    AdminRankLockResult rank_lock = 96;
+    AdminStaffTrophiesResult staff_trophies = 110;
+    FreeRespecState free_respec = 120;
+    FreeRespecState set_free_respec = 121;
+    LookShopStatus look_shop = 122;
+    LookShopStatus set_look_shop = 123;
+    AdminLookTradeResult look_trade = 130;
+    AdminTransferTrustedResult transfer_trusted = 140;
+    AdminTransferTrustedResult transfer_trust_add = 141;
+    AdminTransferTrustedResult transfer_trust_remove = 142;
+  }
+}
+
+message AdminLookTrade {
+  string account = 1;
+  string look_id = 2;
+  string kind = 3;
+  uint32 page = 4;
+  uint64 remove_listing = 5;
+  string reason = 6;
+}
+
+message AdminLookMove {
+  uint64 id = 1;
+  string look_id = 2;
+  string kind = 3;
+  string from = 4;
+  string to = 5;
+  uint64 listing_id = 6;
+  uint32 currency = 7;
+  uint64 price = 8;
+  uint64 fee = 9;
+  string ip = 10;
+  int64 at_ms = 11;
+}
+
+message AdminLookTradeResult {
+  uint32 open = 1;
+  uint32 sales_7d = 2;
+  uint32 gifts_7d = 3;
+  uint64 gold_7d = 4;
+  uint64 diamonds_7d = 5;
+  repeated AdminLookMove moves = 6;
+  uint32 total = 7;
+  uint32 page = 8;
+  uint32 page_size = 9;
+  repeated LookListing listings = 10;
+  bool removed = 11;
+}
+
+message FreeRespecState {
+  bool free_class_change = 1;
+  bool free_point_reset = 2;
+  int64 until_ms = 3;
+  string by = 4;
+  string reason = 5;
+  int64 since_ms = 6;
+}
+
+message AdminFreeRespec {
+}
+
+message LookShopTab {
+  bool hidden = 1;
+  bool open = 2;
+  int64 end_ms = 3;
+  string rotation_id = 4;
+  string by = 5;
+  string reason = 6;
+  int64 since_ms = 7;
+}
+
+message LookShopStatus {
+  LookShopTab skins = 1;
+  LookShopTab weapons = 2;
+  LookShopTab tower = 3;
+}
+
+message AdminLookShop {
+}
+
+message AdminSetLookShop {
+  string tab = 1;
+  bool hidden = 2;
+  bool stocked = 3;
+  string rotation_id = 4;
+  int64 end_ms = 5;
+  string reason = 6;
+}
+
+message AdminSetFreeRespec {
+  bool free_class_change = 1;
+  bool free_point_reset = 2;
+  int64 until_ms = 3;
+  string reason = 4;
+}
+
+message AdminAnnouncement {
+  map<string, string> texts = 1;
+  string key = 2;
+  map<string, string> params = 3;
+  string sender = 4;
+}
+
+message AdminPush {
+
+  oneof event {
+    AdminAnnouncement announcement = 1;
+    AdminMaintenanceState maintenance = 2;
+    Role role_changed = 3;
+    AdminReload reload = 4;
+    AdminOpenPanel open_panel = 5;
+    FreeRespecState free_respec = 6;
+    LookShopStatus look_shop = 7;
+  }
+}
+

@@ -1,0 +1,103 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+message ShadowBookEntry {
+  string species = 1;
+  string rank = 2;
+}
+
+message ArsenalEntry {
+  string def_id = 1;
+  string rarity = 2;
+}
+
+message CollectionBonus {
+  double shadow_hp = 1;
+  double capture = 2;
+  double life = 3;
+  double defense = 4;
+}
+
+message CollectionsState {
+  repeated ShadowBookEntry shadows = 1;
+  repeated ArsenalEntry arsenal = 2;
+  CollectionBonus bonus = 3;
+  double shadow_weight = 4;
+  double arsenal_weight = 5;
+  repeated ShadowBookEntry shadows_ready = 6;
+  repeated ArsenalEntry arsenal_ready = 7;
+}
+
+message CollectionsGet {
+}
+
+message CollectionsRegisterShadow {
+  uint64 uid = 1;
+  bool confirm_favorite = 2;
+}
+
+message CollectionsRegisterItem {
+  uint64 uid = 1;
+}
+
+message CollectionsCandidates {
+
+  oneof entry {
+    ShadowBookEntry shadow = 1;
+    ArsenalEntry item = 2;
+  }
+}
+
+message CollectionsRequest {
+
+  oneof op {
+    CollectionsGet get = 1;
+    CollectionsRegisterShadow register_shadow = 2;
+    CollectionsRegisterItem register_item = 3;
+    CollectionsCandidates candidates = 4;
+  }
+}
+
+message CollectionsRegistered {
+  CollectionsState state = 1;
+  uint64 consumed_uid = 2;
+  ShadowBookEntry shadow = 3;
+  ArsenalEntry item = 4;
+  uint32 gems_returned = 5;
+}
+
+message CollectionsCandidatesResult {
+  ShadowBookEntry shadow = 1;
+  ArsenalEntry item = 2;
+  repeated Shadow shadows = 3;
+  repeated ItemInstance items = 4;
+  bool registered = 5;
+}
+
+message CollectionsResponse {
+
+  oneof result {
+    CollectionsState state = 1;
+    CollectionsRegistered registered = 2;
+    CollectionsCandidatesResult candidates = 3;
+  }
+}
+
+message CollectionWeight {
+  string id = 1;
+  double weight = 2;
+}
+
+message CollectionRules {
+  repeated CollectionWeight shadow_rank_weights = 1;
+  CollectionBonus shadow_per_weight = 2;
+  CollectionBonus shadow_caps = 3;
+  repeated CollectionWeight arsenal_rarity_weights = 4;
+  CollectionBonus arsenal_per_weight = 5;
+  CollectionBonus arsenal_caps = 6;
+  repeated string shadow_species = 7;
+  repeated string arsenal_items = 8;
+}
+

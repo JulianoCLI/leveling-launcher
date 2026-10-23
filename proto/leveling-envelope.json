@@ -1,0 +1,1608 @@
+{
+  "ClientMessage": [
+    {
+      "case": "ping",
+      "field": "ping",
+      "number": 2,
+      "type": "Ping"
+    },
+    {
+      "case": "register",
+      "field": "register",
+      "number": 3,
+      "type": "Register"
+    },
+    {
+      "case": "login",
+      "field": "login",
+      "number": 4,
+      "type": "Login"
+    },
+    {
+      "case": "resume",
+      "field": "resume",
+      "number": 5,
+      "type": "Resume"
+    },
+    {
+      "case": "logout",
+      "field": "logout",
+      "number": 6,
+      "type": "Logout"
+    },
+    {
+      "case": "staff_login",
+      "field": "staff_login",
+      "number": 7,
+      "type": "StaffLogin"
+    },
+    {
+      "case": "staff_resume",
+      "field": "staff_resume",
+      "number": 8,
+      "type": "StaffResume"
+    },
+    {
+      "case": "drop_test_access",
+      "field": "drop_test_access",
+      "number": 9,
+      "type": "DropTestAccess"
+    },
+    {
+      "case": "move_dir",
+      "field": "move_dir",
+      "number": 10,
+      "type": "MoveDir"
+    },
+    {
+      "case": "move_to",
+      "field": "move_to",
+      "number": 11,
+      "type": "MoveTo"
+    },
+    {
+      "case": "set_target",
+      "field": "set_target",
+      "number": 12,
+      "type": "SetTarget"
+    },
+    {
+      "case": "use_skill",
+      "field": "use_skill",
+      "number": 13,
+      "type": "UseSkill"
+    },
+    {
+      "case": "interact",
+      "field": "interact",
+      "number": 14,
+      "type": "Interact"
+    },
+    {
+      "case": "roll",
+      "field": "roll",
+      "number": 15,
+      "type": "Roll"
+    },
+    {
+      "case": "emote",
+      "field": "emote",
+      "number": 16,
+      "type": "Emote"
+    },
+    {
+      "case": "start_hunt",
+      "field": "start_hunt",
+      "number": 30,
+      "type": "StartHunt"
+    },
+    {
+      "case": "leave_hunt",
+      "field": "leave_hunt",
+      "number": 31,
+      "type": "LeaveHunt"
+    },
+    {
+      "case": "enter_boss_dungeon",
+      "field": "enter_boss_dungeon",
+      "number": 32,
+      "type": "EnterBossDungeon"
+    },
+    {
+      "case": "use_consumable",
+      "field": "use_consumable",
+      "number": 34,
+      "type": "UseConsumable"
+    },
+    {
+      "case": "revive",
+      "field": "revive",
+      "number": 35,
+      "type": "Revive"
+    },
+    {
+      "case": "give_up",
+      "field": "give_up",
+      "number": 36,
+      "type": "GiveUp"
+    },
+    {
+      "case": "travel",
+      "field": "travel",
+      "number": 37,
+      "type": "Travel"
+    },
+    {
+      "case": "reset_hunt_stats",
+      "field": "reset_hunt_stats",
+      "number": 38,
+      "type": "ResetHuntStats"
+    },
+    {
+      "case": "daily_boss",
+      "field": "daily_boss",
+      "number": 39,
+      "type": "DailyBoss"
+    },
+    {
+      "case": "enter_dungeon",
+      "field": "enter_dungeon",
+      "number": 40,
+      "type": "EnterDungeon"
+    },
+    {
+      "case": "dungeon_list",
+      "field": "dungeon_list",
+      "number": 41,
+      "type": "DungeonList"
+    },
+    {
+      "case": "fenda",
+      "field": "fenda",
+      "number": 42,
+      "type": "Fenda"
+    },
+    {
+      "case": "stop_boss_auto",
+      "field": "stop_boss_auto",
+      "number": 43,
+      "type": "StopBossAuto"
+    },
+    {
+      "case": "inventory_page",
+      "field": "inventory_page",
+      "number": 50,
+      "type": "InventoryPageRequest"
+    },
+    {
+      "case": "equip",
+      "field": "equip",
+      "number": 51,
+      "type": "Equip"
+    },
+    {
+      "case": "unequip",
+      "field": "unequip",
+      "number": 52,
+      "type": "Unequip"
+    },
+    {
+      "case": "equip_best_preview",
+      "field": "equip_best_preview",
+      "number": 53,
+      "type": "EquipBestPreview"
+    },
+    {
+      "case": "equip_best_apply",
+      "field": "equip_best_apply",
+      "number": 54,
+      "type": "EquipBestApply"
+    },
+    {
+      "case": "sell_items",
+      "field": "sell_items",
+      "number": 55,
+      "type": "SellItems"
+    },
+    {
+      "case": "lock_item",
+      "field": "lock_item",
+      "number": 56,
+      "type": "LockItem"
+    },
+    {
+      "case": "warehouse_move",
+      "field": "warehouse_move",
+      "number": 57,
+      "type": "WarehouseMove"
+    },
+    {
+      "case": "use_item",
+      "field": "use_item",
+      "number": 59,
+      "type": "UseItem"
+    },
+    {
+      "case": "fuse",
+      "field": "fuse",
+      "number": 62,
+      "type": "Fuse"
+    },
+    {
+      "case": "transfer_enchant",
+      "field": "transfer_enchant",
+      "number": 63,
+      "type": "TransferEnchant"
+    },
+    {
+      "case": "exchange_insignias",
+      "field": "exchange_insignias",
+      "number": 64,
+      "type": "ExchangeInsignias"
+    },
+    {
+      "case": "repair",
+      "field": "repair",
+      "number": 65,
+      "type": "Repair"
+    },
+    {
+      "case": "dismantle",
+      "field": "dismantle",
+      "number": 67,
+      "type": "Dismantle"
+    },
+    {
+      "case": "dismiss_death_report",
+      "field": "dismiss_death_report",
+      "number": 68,
+      "type": "DismissDeathReport"
+    },
+    {
+      "case": "channel_list",
+      "field": "channel_list",
+      "number": 69,
+      "type": "ChannelList"
+    },
+    {
+      "case": "switch_channel",
+      "field": "switch_channel",
+      "number": 70,
+      "type": "SwitchChannel"
+    },
+    {
+      "case": "enchant",
+      "field": "enchant",
+      "number": 80,
+      "type": "Enchant"
+    },
+    {
+      "case": "enchant_batch",
+      "field": "enchant_batch",
+      "number": 81,
+      "type": "EnchantBatch"
+    },
+    {
+      "case": "socket_gem",
+      "field": "socket_gem",
+      "number": 83,
+      "type": "SocketGem"
+    },
+    {
+      "case": "unsocket_gem",
+      "field": "unsocket_gem",
+      "number": 84,
+      "type": "UnsocketGem"
+    },
+    {
+      "case": "combine_gems",
+      "field": "combine_gems",
+      "number": 85,
+      "type": "CombineGems"
+    },
+    {
+      "case": "add_socket",
+      "field": "add_socket",
+      "number": 86,
+      "type": "AddSocket"
+    },
+    {
+      "case": "imbue",
+      "field": "imbue",
+      "number": 87,
+      "type": "Imbue"
+    },
+    {
+      "case": "remove_imbuement",
+      "field": "remove_imbuement",
+      "number": 88,
+      "type": "RemoveImbuement"
+    },
+    {
+      "case": "reforge",
+      "field": "reforge",
+      "number": 89,
+      "type": "Reforge"
+    },
+    {
+      "case": "allocate_stats",
+      "field": "allocate_stats",
+      "number": 90,
+      "type": "AllocateStats"
+    },
+    {
+      "case": "reset_stats",
+      "field": "reset_stats",
+      "number": 91,
+      "type": "ResetStats"
+    },
+    {
+      "case": "allocate_talent",
+      "field": "allocate_talent",
+      "number": 92,
+      "type": "AllocateTalent"
+    },
+    {
+      "case": "choose_class",
+      "field": "choose_class",
+      "number": 93,
+      "type": "ChooseClass"
+    },
+    {
+      "case": "change_class",
+      "field": "change_class",
+      "number": 94,
+      "type": "ChangeClass"
+    },
+    {
+      "case": "rename",
+      "field": "rename",
+      "number": 95,
+      "type": "Rename"
+    },
+    {
+      "case": "change_gender",
+      "field": "change_gender",
+      "number": 96,
+      "type": "ChangeGender"
+    },
+    {
+      "case": "set_skin",
+      "field": "set_skin",
+      "number": 97,
+      "type": "SetSkin"
+    },
+    {
+      "case": "set_automation",
+      "field": "set_automation",
+      "number": 98,
+      "type": "SetAutomation"
+    },
+    {
+      "case": "promotion",
+      "field": "promotion",
+      "number": 99,
+      "type": "Promotion"
+    },
+    {
+      "case": "set_gear_privacy",
+      "field": "set_gear_privacy",
+      "number": 100,
+      "type": "SetGearPrivacy"
+    },
+    {
+      "case": "set_gear_look",
+      "field": "set_gear_look",
+      "number": 101,
+      "type": "SetGearLook"
+    },
+    {
+      "case": "set_appearance",
+      "field": "set_appearance",
+      "number": 102,
+      "type": "SetAppearance"
+    },
+    {
+      "case": "buy_hair_style",
+      "field": "buy_hair_style",
+      "number": 103,
+      "type": "BuyHairStyle"
+    },
+    {
+      "case": "set_look_chroma",
+      "field": "set_look_chroma",
+      "number": 104,
+      "type": "SetLookChroma"
+    },
+    {
+      "case": "buy_chroma",
+      "field": "buy_chroma",
+      "number": 105,
+      "type": "BuyChroma"
+    },
+    {
+      "case": "preview_stats",
+      "field": "preview_stats",
+      "number": 106,
+      "type": "PreviewStats"
+    },
+    {
+      "case": "reset_talents",
+      "field": "reset_talents",
+      "number": 107,
+      "type": "ResetTalents"
+    },
+    {
+      "case": "shadow_capture",
+      "field": "shadow_capture",
+      "number": 120,
+      "type": "ShadowCapture"
+    },
+    {
+      "case": "shadow_set_team",
+      "field": "shadow_set_team",
+      "number": 121,
+      "type": "ShadowSetTeam"
+    },
+    {
+      "case": "shadow_favorite",
+      "field": "shadow_favorite",
+      "number": 123,
+      "type": "ShadowFavorite"
+    },
+    {
+      "case": "shadow_equip",
+      "field": "shadow_equip",
+      "number": 124,
+      "type": "ShadowEquip"
+    },
+    {
+      "case": "shadow_unequip",
+      "field": "shadow_unequip",
+      "number": 125,
+      "type": "ShadowUnequip"
+    },
+    {
+      "case": "shadow_list",
+      "field": "shadow_list",
+      "number": 126,
+      "type": "ShadowList"
+    },
+    {
+      "case": "shadow_equip_best",
+      "field": "shadow_equip_best",
+      "number": 127,
+      "type": "ShadowEquipBest"
+    },
+    {
+      "case": "expedition",
+      "field": "expedition",
+      "number": 133,
+      "type": "ExpeditionRequest"
+    },
+    {
+      "case": "shadow_dissolve",
+      "field": "shadow_dissolve",
+      "number": 134,
+      "type": "ShadowDissolve"
+    },
+    {
+      "case": "shadow_evolve",
+      "field": "shadow_evolve",
+      "number": 138,
+      "type": "ShadowEvolve"
+    },
+    {
+      "case": "shadow_species_list",
+      "field": "shadow_species_list",
+      "number": 139,
+      "type": "ShadowSpeciesList"
+    },
+    {
+      "case": "buy_consumable",
+      "field": "buy_consumable",
+      "number": 140,
+      "type": "BuyConsumable"
+    },
+    {
+      "case": "buy_essence",
+      "field": "buy_essence",
+      "number": 141,
+      "type": "BuyEssence"
+    },
+    {
+      "case": "buy_material",
+      "field": "buy_material",
+      "number": 142,
+      "type": "BuyMaterial"
+    },
+    {
+      "case": "buy_premium",
+      "field": "buy_premium",
+      "number": 143,
+      "type": "BuyPremium"
+    },
+    {
+      "case": "set_aura",
+      "field": "set_aura",
+      "number": 144,
+      "type": "SetAura"
+    },
+    {
+      "case": "set_email",
+      "field": "set_email",
+      "number": 161,
+      "type": "SetEmail"
+    },
+    {
+      "case": "resend_email_code",
+      "field": "resend_email_code",
+      "number": 162,
+      "type": "ResendEmailCode"
+    },
+    {
+      "case": "verify_email",
+      "field": "verify_email",
+      "number": 163,
+      "type": "VerifyEmail"
+    },
+    {
+      "case": "shadow_gear_options",
+      "field": "shadow_gear_options",
+      "number": 164,
+      "type": "ShadowGearOptions"
+    },
+    {
+      "case": "mail_request",
+      "field": "mail_request",
+      "number": 200,
+      "type": "MailRequest"
+    },
+    {
+      "case": "market_request",
+      "field": "market_request",
+      "number": 210,
+      "type": "MarketRequest"
+    },
+    {
+      "case": "pool_request",
+      "field": "pool_request",
+      "number": 215,
+      "type": "PoolRequest"
+    },
+    {
+      "case": "trade_request",
+      "field": "trade_request",
+      "number": 220,
+      "type": "TradeRequest"
+    },
+    {
+      "case": "guild_request",
+      "field": "guild_request",
+      "number": 230,
+      "type": "GuildRequest"
+    },
+    {
+      "case": "social_request",
+      "field": "social_request",
+      "number": 240,
+      "type": "SocialRequest"
+    },
+    {
+      "case": "pvp_request",
+      "field": "pvp_request",
+      "number": 250,
+      "type": "PvpRequest"
+    },
+    {
+      "case": "commerce_request",
+      "field": "commerce_request",
+      "number": 260,
+      "type": "CommerceRequest"
+    },
+    {
+      "case": "admin_request",
+      "field": "admin_request",
+      "number": 270,
+      "type": "AdminRequest"
+    },
+    {
+      "case": "gvg_request",
+      "field": "gvg_request",
+      "number": 280,
+      "type": "GvgRequest"
+    },
+    {
+      "case": "party_request",
+      "field": "party_request",
+      "number": 290,
+      "type": "PartyRequest"
+    },
+    {
+      "case": "wallet_request",
+      "field": "wallet_request",
+      "number": 300,
+      "type": "WalletRequest"
+    },
+    {
+      "case": "set_profile_look",
+      "field": "set_profile_look",
+      "number": 302,
+      "type": "SetProfileLook"
+    },
+    {
+      "case": "housing_request",
+      "field": "housing_request",
+      "number": 310,
+      "type": "HousingRequest"
+    },
+    {
+      "case": "training_request",
+      "field": "training_request",
+      "number": 320,
+      "type": "TrainingRequest"
+    },
+    {
+      "case": "guild_boss_request",
+      "field": "guild_boss_request",
+      "number": 330,
+      "type": "GuildBossRequest"
+    },
+    {
+      "case": "discord_request",
+      "field": "discord_request",
+      "number": 340,
+      "type": "DiscordRequest"
+    },
+    {
+      "case": "news_request",
+      "field": "news_request",
+      "number": 350,
+      "type": "NewsRequest"
+    },
+    {
+      "case": "dungeon_break_request",
+      "field": "dungeon_break_request",
+      "number": 360,
+      "type": "DungeonBreakRequest"
+    },
+    {
+      "case": "tower_request",
+      "field": "tower_request",
+      "number": 370,
+      "type": "TowerRequest"
+    },
+    {
+      "case": "team_war_request",
+      "field": "team_war_request",
+      "number": 380,
+      "type": "TeamWarRequest"
+    },
+    {
+      "case": "tournament_request",
+      "field": "tournament_request",
+      "number": 400,
+      "type": "TournamentRequest"
+    },
+    {
+      "case": "missions_request",
+      "field": "missions_request",
+      "number": 410,
+      "type": "MissionsRequest"
+    },
+    {
+      "case": "collections_request",
+      "field": "collections_request",
+      "number": 420,
+      "type": "CollectionsRequest"
+    },
+    {
+      "case": "battle_pass_request",
+      "field": "battle_pass_request",
+      "number": 430,
+      "type": "BattlePassRequest"
+    }
+  ],
+  "ServerMessage": [
+    {
+      "case": "error",
+      "field": "error",
+      "number": 2,
+      "type": "Error"
+    },
+    {
+      "case": "pong",
+      "field": "pong",
+      "number": 3,
+      "type": "Pong"
+    },
+    {
+      "case": "auth_ok",
+      "field": "auth_ok",
+      "number": 4,
+      "type": "AuthOk"
+    },
+    {
+      "case": "logout_ok",
+      "field": "logout_ok",
+      "number": 5,
+      "type": "LogoutOk"
+    },
+    {
+      "case": "session_ended",
+      "field": "session_ended",
+      "number": 6,
+      "type": "SessionEnded"
+    },
+    {
+      "case": "notice",
+      "field": "notice",
+      "number": 7,
+      "type": "Notice"
+    },
+    {
+      "case": "character_state",
+      "field": "character_state",
+      "number": 8,
+      "type": "CharacterState"
+    },
+    {
+      "case": "character_patch",
+      "field": "character_patch",
+      "number": 9,
+      "type": "CharacterPatch"
+    },
+    {
+      "case": "scene_enter",
+      "field": "scene_enter",
+      "number": 10,
+      "type": "SceneEnter"
+    },
+    {
+      "case": "world_snapshot",
+      "field": "world_snapshot",
+      "number": 11,
+      "type": "WorldSnapshot"
+    },
+    {
+      "case": "entity_spawn",
+      "field": "entity_spawn",
+      "number": 12,
+      "type": "EntitySpawn"
+    },
+    {
+      "case": "entity_despawn",
+      "field": "entity_despawn",
+      "number": 13,
+      "type": "EntityDespawn"
+    },
+    {
+      "case": "world_events",
+      "field": "world_events",
+      "number": 14,
+      "type": "WorldEvents"
+    },
+    {
+      "case": "npc_interaction",
+      "field": "npc_interaction",
+      "number": 15,
+      "type": "NpcInteraction"
+    },
+    {
+      "case": "move_ack",
+      "field": "move_ack",
+      "number": 16,
+      "type": "MoveAck"
+    },
+    {
+      "case": "start_hunt_result",
+      "field": "start_hunt_result",
+      "number": 30,
+      "type": "StartHuntResult"
+    },
+    {
+      "case": "leave_hunt_result",
+      "field": "leave_hunt_result",
+      "number": 31,
+      "type": "LeaveHuntResult"
+    },
+    {
+      "case": "enter_boss_dungeon_result",
+      "field": "enter_boss_dungeon_result",
+      "number": 32,
+      "type": "EnterBossDungeonResult"
+    },
+    {
+      "case": "use_consumable_result",
+      "field": "use_consumable_result",
+      "number": 34,
+      "type": "UseConsumableResult"
+    },
+    {
+      "case": "revive_result",
+      "field": "revive_result",
+      "number": 35,
+      "type": "ReviveResult"
+    },
+    {
+      "case": "give_up_result",
+      "field": "give_up_result",
+      "number": 36,
+      "type": "GiveUpResult"
+    },
+    {
+      "case": "travel_result",
+      "field": "travel_result",
+      "number": 37,
+      "type": "TravelResult"
+    },
+    {
+      "case": "reset_hunt_stats_result",
+      "field": "reset_hunt_stats_result",
+      "number": 38,
+      "type": "ResetHuntStatsResult"
+    },
+    {
+      "case": "daily_boss_state",
+      "field": "daily_boss_state",
+      "number": 39,
+      "type": "DailyBossState"
+    },
+    {
+      "case": "hunt_session",
+      "field": "hunt_session",
+      "number": 41,
+      "type": "HuntSession"
+    },
+    {
+      "case": "boss_dungeon_result",
+      "field": "boss_dungeon_result",
+      "number": 42,
+      "type": "BossDungeonResult"
+    },
+    {
+      "case": "death_state",
+      "field": "death_state",
+      "number": 43,
+      "type": "DeathState"
+    },
+    {
+      "case": "daily_boss_result",
+      "field": "daily_boss_result",
+      "number": 44,
+      "type": "DailyBossResult"
+    },
+    {
+      "case": "enter_dungeon_result",
+      "field": "enter_dungeon_result",
+      "number": 45,
+      "type": "EnterDungeonResult"
+    },
+    {
+      "case": "dungeon_list_result",
+      "field": "dungeon_list_result",
+      "number": 46,
+      "type": "DungeonListResult"
+    },
+    {
+      "case": "dungeon_progress",
+      "field": "dungeon_progress",
+      "number": 47,
+      "type": "DungeonProgress"
+    },
+    {
+      "case": "dungeon_result",
+      "field": "dungeon_result",
+      "number": 48,
+      "type": "DungeonResult"
+    },
+    {
+      "case": "fenda_state",
+      "field": "fenda_state",
+      "number": 49,
+      "type": "FendaState"
+    },
+    {
+      "case": "inventory_page",
+      "field": "inventory_page",
+      "number": 50,
+      "type": "InventoryPage"
+    },
+    {
+      "case": "equip_result",
+      "field": "equip_result",
+      "number": 51,
+      "type": "EquipResult"
+    },
+    {
+      "case": "unequip_result",
+      "field": "unequip_result",
+      "number": 52,
+      "type": "UnequipResult"
+    },
+    {
+      "case": "equip_best_preview_result",
+      "field": "equip_best_preview_result",
+      "number": 53,
+      "type": "EquipBestPreviewResult"
+    },
+    {
+      "case": "equip_best_apply_result",
+      "field": "equip_best_apply_result",
+      "number": 54,
+      "type": "EquipBestApplyResult"
+    },
+    {
+      "case": "sell_result",
+      "field": "sell_result",
+      "number": 55,
+      "type": "SellResult"
+    },
+    {
+      "case": "lock_item_result",
+      "field": "lock_item_result",
+      "number": 56,
+      "type": "LockItemResult"
+    },
+    {
+      "case": "warehouse_move_result",
+      "field": "warehouse_move_result",
+      "number": 57,
+      "type": "WarehouseMoveResult"
+    },
+    {
+      "case": "use_item_result",
+      "field": "use_item_result",
+      "number": 59,
+      "type": "UseItemResult"
+    },
+    {
+      "case": "inventory_delta",
+      "field": "inventory_delta",
+      "number": 60,
+      "type": "InventoryDelta"
+    },
+    {
+      "case": "fenda_result",
+      "field": "fenda_result",
+      "number": 61,
+      "type": "FendaResult"
+    },
+    {
+      "case": "fuse_result",
+      "field": "fuse_result",
+      "number": 62,
+      "type": "FuseResult"
+    },
+    {
+      "case": "transfer_enchant_result",
+      "field": "transfer_enchant_result",
+      "number": 63,
+      "type": "TransferEnchantResult"
+    },
+    {
+      "case": "exchange_insignias_result",
+      "field": "exchange_insignias_result",
+      "number": 64,
+      "type": "ExchangeInsigniasResult"
+    },
+    {
+      "case": "repair_result",
+      "field": "repair_result",
+      "number": 65,
+      "type": "RepairResult"
+    },
+    {
+      "case": "fight_rules",
+      "field": "fight_rules",
+      "number": 66,
+      "type": "FightRules"
+    },
+    {
+      "case": "dismantle_result",
+      "field": "dismantle_result",
+      "number": 67,
+      "type": "DismantleResult"
+    },
+    {
+      "case": "dismiss_death_report_result",
+      "field": "dismiss_death_report_result",
+      "number": 68,
+      "type": "DismissDeathReportResult"
+    },
+    {
+      "case": "channel_list_result",
+      "field": "channel_list_result",
+      "number": 69,
+      "type": "ChannelListResult"
+    },
+    {
+      "case": "switch_channel_result",
+      "field": "switch_channel_result",
+      "number": 70,
+      "type": "SwitchChannelResult"
+    },
+    {
+      "case": "enchant_result",
+      "field": "enchant_result",
+      "number": 80,
+      "type": "EnchantResult"
+    },
+    {
+      "case": "enchant_batch_result",
+      "field": "enchant_batch_result",
+      "number": 81,
+      "type": "EnchantBatchResult"
+    },
+    {
+      "case": "socket_gem_result",
+      "field": "socket_gem_result",
+      "number": 83,
+      "type": "SocketGemResult"
+    },
+    {
+      "case": "unsocket_gem_result",
+      "field": "unsocket_gem_result",
+      "number": 84,
+      "type": "UnsocketGemResult"
+    },
+    {
+      "case": "combine_gems_result",
+      "field": "combine_gems_result",
+      "number": 85,
+      "type": "CombineGemsResult"
+    },
+    {
+      "case": "add_socket_result",
+      "field": "add_socket_result",
+      "number": 86,
+      "type": "AddSocketResult"
+    },
+    {
+      "case": "imbue_result",
+      "field": "imbue_result",
+      "number": 87,
+      "type": "ImbueResult"
+    },
+    {
+      "case": "remove_imbuement_result",
+      "field": "remove_imbuement_result",
+      "number": 88,
+      "type": "RemoveImbuementResult"
+    },
+    {
+      "case": "reforge_result",
+      "field": "reforge_result",
+      "number": 89,
+      "type": "ReforgeResult"
+    },
+    {
+      "case": "allocate_stats_result",
+      "field": "allocate_stats_result",
+      "number": 90,
+      "type": "AllocateStatsResult"
+    },
+    {
+      "case": "reset_stats_result",
+      "field": "reset_stats_result",
+      "number": 91,
+      "type": "ResetStatsResult"
+    },
+    {
+      "case": "allocate_talent_result",
+      "field": "allocate_talent_result",
+      "number": 92,
+      "type": "AllocateTalentResult"
+    },
+    {
+      "case": "choose_class_result",
+      "field": "choose_class_result",
+      "number": 93,
+      "type": "ChooseClassResult"
+    },
+    {
+      "case": "change_class_result",
+      "field": "change_class_result",
+      "number": 94,
+      "type": "ChangeClassResult"
+    },
+    {
+      "case": "rename_result",
+      "field": "rename_result",
+      "number": 95,
+      "type": "RenameResult"
+    },
+    {
+      "case": "change_gender_result",
+      "field": "change_gender_result",
+      "number": 96,
+      "type": "ChangeGenderResult"
+    },
+    {
+      "case": "set_skin_result",
+      "field": "set_skin_result",
+      "number": 97,
+      "type": "SetSkinResult"
+    },
+    {
+      "case": "set_automation_result",
+      "field": "set_automation_result",
+      "number": 98,
+      "type": "SetAutomationResult"
+    },
+    {
+      "case": "promotion_state",
+      "field": "promotion_state",
+      "number": 99,
+      "type": "PromotionState"
+    },
+    {
+      "case": "set_gear_privacy_result",
+      "field": "set_gear_privacy_result",
+      "number": 100,
+      "type": "SetGearPrivacyResult"
+    },
+    {
+      "case": "set_gear_look_result",
+      "field": "set_gear_look_result",
+      "number": 101,
+      "type": "SetGearLookResult"
+    },
+    {
+      "case": "set_appearance_result",
+      "field": "set_appearance_result",
+      "number": 102,
+      "type": "SetAppearanceResult"
+    },
+    {
+      "case": "buy_hair_style_result",
+      "field": "buy_hair_style_result",
+      "number": 103,
+      "type": "BuyHairStyleResult"
+    },
+    {
+      "case": "chroma_result",
+      "field": "chroma_result",
+      "number": 104,
+      "type": "ChromaResult"
+    },
+    {
+      "case": "preview_stats_result",
+      "field": "preview_stats_result",
+      "number": 106,
+      "type": "PreviewStatsResult"
+    },
+    {
+      "case": "reset_talents_result",
+      "field": "reset_talents_result",
+      "number": 107,
+      "type": "ResetTalentsResult"
+    },
+    {
+      "case": "shadow_capture_result",
+      "field": "shadow_capture_result",
+      "number": 120,
+      "type": "ShadowCaptureResult"
+    },
+    {
+      "case": "shadow_set_team_result",
+      "field": "shadow_set_team_result",
+      "number": 121,
+      "type": "ShadowSetTeamResult"
+    },
+    {
+      "case": "shadow_favorite_result",
+      "field": "shadow_favorite_result",
+      "number": 123,
+      "type": "ShadowFavoriteResult"
+    },
+    {
+      "case": "shadow_equip_result",
+      "field": "shadow_equip_result",
+      "number": 124,
+      "type": "ShadowEquipResult"
+    },
+    {
+      "case": "shadow_unequip_result",
+      "field": "shadow_unequip_result",
+      "number": 125,
+      "type": "ShadowUnequipResult"
+    },
+    {
+      "case": "shadow_page",
+      "field": "shadow_page",
+      "number": 126,
+      "type": "ShadowPage"
+    },
+    {
+      "case": "shadow_equip_best_result",
+      "field": "shadow_equip_best_result",
+      "number": 127,
+      "type": "ShadowEquipBestResult"
+    },
+    {
+      "case": "arise_result",
+      "field": "arise_result",
+      "number": 130,
+      "type": "AriseResult"
+    },
+    {
+      "case": "shadow_delta",
+      "field": "shadow_delta",
+      "number": 131,
+      "type": "ShadowDelta"
+    },
+    {
+      "case": "expedition_result",
+      "field": "expedition_result",
+      "number": 133,
+      "type": "ExpeditionResult"
+    },
+    {
+      "case": "shadow_dissolve_result",
+      "field": "shadow_dissolve_result",
+      "number": 134,
+      "type": "ShadowDissolveResult"
+    },
+    {
+      "case": "shadow_evolve_result",
+      "field": "shadow_evolve_result",
+      "number": 138,
+      "type": "ShadowEvolveResult"
+    },
+    {
+      "case": "shadow_species_page",
+      "field": "shadow_species_page",
+      "number": 139,
+      "type": "ShadowSpeciesPage"
+    },
+    {
+      "case": "buy_consumable_result",
+      "field": "buy_consumable_result",
+      "number": 140,
+      "type": "BuyConsumableResult"
+    },
+    {
+      "case": "buy_essence_result",
+      "field": "buy_essence_result",
+      "number": 141,
+      "type": "BuyEssenceResult"
+    },
+    {
+      "case": "buy_material_result",
+      "field": "buy_material_result",
+      "number": 142,
+      "type": "BuyMaterialResult"
+    },
+    {
+      "case": "buy_premium_result",
+      "field": "buy_premium_result",
+      "number": 143,
+      "type": "BuyPremiumResult"
+    },
+    {
+      "case": "set_aura_result",
+      "field": "set_aura_result",
+      "number": 144,
+      "type": "SetAuraResult"
+    },
+    {
+      "case": "content_catalog",
+      "field": "content_catalog",
+      "number": 160,
+      "type": "ContentCatalog"
+    },
+    {
+      "case": "set_email_result",
+      "field": "set_email_result",
+      "number": 161,
+      "type": "SetEmailResult"
+    },
+    {
+      "case": "resend_email_code_result",
+      "field": "resend_email_code_result",
+      "number": 162,
+      "type": "ResendEmailCodeResult"
+    },
+    {
+      "case": "verify_email_result",
+      "field": "verify_email_result",
+      "number": 163,
+      "type": "VerifyEmailResult"
+    },
+    {
+      "case": "shadow_gear_options_result",
+      "field": "shadow_gear_options_result",
+      "number": 164,
+      "type": "ShadowGearOptionsResult"
+    },
+    {
+      "case": "mail_response",
+      "field": "mail_response",
+      "number": 200,
+      "type": "MailResponse"
+    },
+    {
+      "case": "mail_push",
+      "field": "mail_push",
+      "number": 201,
+      "type": "MailPush"
+    },
+    {
+      "case": "market_response",
+      "field": "market_response",
+      "number": 210,
+      "type": "MarketResponse"
+    },
+    {
+      "case": "market_push",
+      "field": "market_push",
+      "number": 211,
+      "type": "MarketPush"
+    },
+    {
+      "case": "pool_response",
+      "field": "pool_response",
+      "number": 215,
+      "type": "PoolResponse"
+    },
+    {
+      "case": "pool_push",
+      "field": "pool_push",
+      "number": 216,
+      "type": "PoolPush"
+    },
+    {
+      "case": "trade_response",
+      "field": "trade_response",
+      "number": 220,
+      "type": "TradeResponse"
+    },
+    {
+      "case": "trade_push",
+      "field": "trade_push",
+      "number": 221,
+      "type": "TradePush"
+    },
+    {
+      "case": "guild_response",
+      "field": "guild_response",
+      "number": 230,
+      "type": "GuildResponse"
+    },
+    {
+      "case": "guild_push",
+      "field": "guild_push",
+      "number": 231,
+      "type": "GuildPush"
+    },
+    {
+      "case": "social_response",
+      "field": "social_response",
+      "number": 240,
+      "type": "SocialResponse"
+    },
+    {
+      "case": "social_push",
+      "field": "social_push",
+      "number": 241,
+      "type": "SocialPush"
+    },
+    {
+      "case": "pvp_response",
+      "field": "pvp_response",
+      "number": 250,
+      "type": "PvpResponse"
+    },
+    {
+      "case": "pvp_push",
+      "field": "pvp_push",
+      "number": 251,
+      "type": "PvpPush"
+    },
+    {
+      "case": "commerce_response",
+      "field": "commerce_response",
+      "number": 260,
+      "type": "CommerceResponse"
+    },
+    {
+      "case": "commerce_push",
+      "field": "commerce_push",
+      "number": 261,
+      "type": "CommercePush"
+    },
+    {
+      "case": "admin_response",
+      "field": "admin_response",
+      "number": 270,
+      "type": "AdminResponse"
+    },
+    {
+      "case": "admin_push",
+      "field": "admin_push",
+      "number": 271,
+      "type": "AdminPush"
+    },
+    {
+      "case": "gvg_response",
+      "field": "gvg_response",
+      "number": 280,
+      "type": "GvgResponse"
+    },
+    {
+      "case": "gvg_push",
+      "field": "gvg_push",
+      "number": 281,
+      "type": "GvgPush"
+    },
+    {
+      "case": "party_response",
+      "field": "party_response",
+      "number": 290,
+      "type": "PartyResponse"
+    },
+    {
+      "case": "party_push",
+      "field": "party_push",
+      "number": 291,
+      "type": "PartyPush"
+    },
+    {
+      "case": "wallet_response",
+      "field": "wallet_response",
+      "number": 300,
+      "type": "WalletResponse"
+    },
+    {
+      "case": "wallet_push",
+      "field": "wallet_push",
+      "number": 301,
+      "type": "WalletPush"
+    },
+    {
+      "case": "set_profile_look_result",
+      "field": "set_profile_look_result",
+      "number": 302,
+      "type": "SetProfileLookResult"
+    },
+    {
+      "case": "housing_response",
+      "field": "housing_response",
+      "number": 310,
+      "type": "HousingResponse"
+    },
+    {
+      "case": "housing_push",
+      "field": "housing_push",
+      "number": 311,
+      "type": "HousingPush"
+    },
+    {
+      "case": "training_response",
+      "field": "training_response",
+      "number": 320,
+      "type": "TrainingResponse"
+    },
+    {
+      "case": "training_push",
+      "field": "training_push",
+      "number": 321,
+      "type": "TrainingPush"
+    },
+    {
+      "case": "guild_boss_response",
+      "field": "guild_boss_response",
+      "number": 330,
+      "type": "GuildBossResponse"
+    },
+    {
+      "case": "guild_boss_push",
+      "field": "guild_boss_push",
+      "number": 331,
+      "type": "GuildBossPush"
+    },
+    {
+      "case": "discord_response",
+      "field": "discord_response",
+      "number": 340,
+      "type": "DiscordResponse"
+    },
+    {
+      "case": "news_response",
+      "field": "news_response",
+      "number": 350,
+      "type": "NewsResponse"
+    },
+    {
+      "case": "news_push",
+      "field": "news_push",
+      "number": 351,
+      "type": "NewsPush"
+    },
+    {
+      "case": "dungeon_break_response",
+      "field": "dungeon_break_response",
+      "number": 360,
+      "type": "DungeonBreakResponse"
+    },
+    {
+      "case": "dungeon_break_push",
+      "field": "dungeon_break_push",
+      "number": 361,
+      "type": "DungeonBreakPush"
+    },
+    {
+      "case": "tower_state",
+      "field": "tower_state",
+      "number": 370,
+      "type": "TowerState"
+    },
+    {
+      "case": "tower_push",
+      "field": "tower_push",
+      "number": 371,
+      "type": "TowerPush"
+    },
+    {
+      "case": "team_war_response",
+      "field": "team_war_response",
+      "number": 380,
+      "type": "TeamWarResponse"
+    },
+    {
+      "case": "team_war_push",
+      "field": "team_war_push",
+      "number": 381,
+      "type": "TeamWarPush"
+    },
+    {
+      "case": "tournament_response",
+      "field": "tournament_response",
+      "number": 400,
+      "type": "TournamentResponse"
+    },
+    {
+      "case": "tournament_push",
+      "field": "tournament_push",
+      "number": 401,
+      "type": "TournamentPush"
+    },
+    {
+      "case": "missions_response",
+      "field": "missions_response",
+      "number": 410,
+      "type": "MissionsResponse"
+    },
+    {
+      "case": "missions_push",
+      "field": "missions_push",
+      "number": 411,
+      "type": "MissionsPush"
+    },
+    {
+      "case": "collections_response",
+      "field": "collections_response",
+      "number": 420,
+      "type": "CollectionsResponse"
+    },
+    {
+      "case": "battle_pass_response",
+      "field": "battle_pass_response",
+      "number": 430,
+      "type": "BattlePassResponse"
+    },
+    {
+      "case": "battle_pass_push",
+      "field": "battle_pass_push",
+      "number": 431,
+      "type": "BattlePassPush"
+    },
+    {
+      "case": "boss_auto_state",
+      "field": "boss_auto_state",
+      "number": 432,
+      "type": "BossAutoState"
+    }
+  ]
+}

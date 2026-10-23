@@ -1,0 +1,553 @@
+/* Shell do launcher: barra de título, grade de painéis e HUD. */
+
+:root {
+  --color-bg: #070a0f;
+  --color-bg-elevated: #10161f;
+  --color-surface-1: #161e29;
+  --color-surface-2: rgba(255, 255, 255, .06);
+  --color-surface-hover: rgba(255, 255, 255, .09);
+  --color-text-primary: #e8eef6;
+  --color-text-secondary: #94a3b5;
+  --color-accent: #6ee7b7;
+  --border-subtle: #1f2937;
+  --border-strong: #2b3747;
+  --theme-color-scheme: dark;
+  --titlebar-h: 34px;
+  --tabbar-h: 28px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+  color-scheme: var(--theme-color-scheme);
+}
+
+/* ------------------------------------------------------------- barra de título */
+
+#titlebar {
+  height: var(--titlebar-h);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 0 10px;
+  background: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+#titlebar .logo {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 800;
+  font-size: 12.5px;
+  letter-spacing: .4px;
+}
+
+#titlebar .logo .mark {
+  color: var(--color-accent);
+  font-size: 15px;
+}
+
+#titlebar .ver {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-size: 10.5px;
+}
+
+#titlebar .spacer {
+  flex: 1;
+}
+
+#titlebar button {
+  -webkit-app-region: no-drag;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--color-text-primary);
+  border-radius: 7px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#titlebar button:hover {
+  background: var(--color-surface-hover);
+}
+
+#titlebar button.is-on {
+  background: rgba(110, 231, 183, .16);
+  border-color: rgba(110, 231, 183, .35);
+  color: var(--color-accent);
+}
+
+#titlebar .wincontrols {
+  display: flex;
+  margin-left: 6px;
+}
+
+#titlebar .wincontrols button {
+  border: 0;
+  border-radius: 0;
+  width: 44px;
+  height: var(--titlebar-h);
+  font-size: 13px;
+  padding: 0;
+}
+
+#titlebar .wincontrols button:last-child:hover {
+  background: #c0392b;
+  color: #fff;
+}
+
+#panelCount {
+  -webkit-app-region: no-drag;
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  padding: 4px 6px;
+  font-size: 11.5px;
+}
+
+/* ----------------------------------------------------------------------- abas */
+
+#tabbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--tabbar-h);
+  padding: 0 6px;
+  background: var(--color-surface-1);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* As abas rolam na horizontal: com dezenas de contas a barra não pode empurrar
+   os botões de adicionar e remover para fora da janela. */
+#tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+#tabs::-webkit-scrollbar {
+  display: none;
+}
+
+#tabbar button {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--color-text-secondary);
+  border-radius: 7px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#tabbar button:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+}
+
+#tabbar button:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+
+#tabs .tab[aria-selected="true"] {
+  background: rgba(110, 231, 183, .16);
+  border-color: rgba(110, 231, 183, .35);
+  color: var(--color-accent);
+}
+
+/* -------------------------------------------------------------------- painéis */
+
+#grid {
+  height: calc(100% - var(--titlebar-h) - var(--tabbar-h));
+  display: grid;
+  gap: 4px;
+  padding: 4px;
+  background: var(--color-bg);
+}
+
+#grid[data-panels="1"] {
+  grid-template-columns: 1fr;
+}
+
+#grid[data-panels="2"] {
+  grid-template-columns: 1fr 1fr;
+}
+
+#grid[data-panels="3"] {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+#grid[data-panels="4"] {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+/* `display: flex` sobrepõe o atributo `hidden`, então o painel escondido
+   continuaria ocupando sua célula na grade — preto, porque a WebView dele já
+   foi descartada. Esta regra é o que faz a contagem de painéis valer. */
+.panel[hidden] {
+  display: none;
+}
+
+.panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: var(--color-surface-1);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.panel-title {
+  font-weight: 700;
+  font-size: 11.5px;
+}
+
+.panel-who {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.panel-head button {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--color-text-primary);
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.panel-head button:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+}
+
+.panel-head button:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+.panel-head button.is-on {
+  background: rgba(224, 70, 54, .18);
+  border-color: rgba(224, 70, 54, .36);
+  color: #ff9b89;
+}
+
+/* A WebView é criada e removida conforme o uso, então o corpo precisa do próprio
+   fundo: sem ela, o painel ficaria claro no tema escuro. */
+.panel-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #000;
+}
+
+.panel-body webview {
+  width: 100%;
+  height: 100%;
+  display: inline-flex;
+  background: #000;
+}
+
+/* ------------------------------------------------------------------------ HUD */
+
+.panel-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  background: linear-gradient(170deg, #0d1420, #070a0f);
+  overflow-y: auto;
+}
+
+.panel.is-headless .panel-hud {
+  display: flex;
+}
+
+.lh-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.lh-name {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.lh-level {
+  font-size: 11.5px;
+  color: var(--color-accent);
+  font-weight: 700;
+}
+
+.lh-status {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
+}
+
+.lh-status.is-connected {
+  background: rgba(56, 211, 159, .16);
+  color: #7ee8c0;
+}
+
+.lh-status.is-connecting,
+.lh-status.is-reconnecting {
+  background: rgba(230, 170, 50, .16);
+  color: #ffd27a;
+}
+
+.lh-status.is-error {
+  background: rgba(224, 70, 54, .18);
+  color: #ff9b89;
+}
+
+.lh-hp {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  overflow: hidden;
+}
+
+.lh-hp span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #38d39f;
+  transition: width .25s linear;
+}
+
+.lh-hp span.is-mid {
+  background: #e6aa32;
+}
+
+.lh-hp span.is-low {
+  background: #e04636;
+}
+
+.lh-hptext {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.lh-alert {
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.lh-alert.is-danger {
+  background: rgba(224, 70, 54, .18);
+  border: 1px solid rgba(224, 70, 54, .36);
+  color: #ff9b89;
+}
+
+.lh-alert.is-warn {
+  background: rgba(230, 170, 50, .14);
+  border: 1px solid rgba(230, 170, 50, .3);
+  color: #ffd27a;
+}
+
+.lh-grid {
+  display: grid;
+  /* 128px cabe "Pontos de talento" e valores como "1.234 / 5.678" sem cortar. */
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 7px;
+}
+
+.lh-cell {
+  background: var(--color-surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  padding: 7px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.lh-label {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  /* Rótulos longos quebram em duas linhas em vez de esticar a célula. */
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Antes era `nowrap` com ellipsis, o que cortava números grandes justamente
+ * quando eles importam. Agora a linha quebra e a célula cresce.
+ */
+.lh-value {
+  font-size: 15px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------- grupo */
+
+/* `display` em classe vence `[hidden]`, que só traz `display: none` do UA. */
+.lh-party[hidden] {
+  display: none;
+}
+
+.lh-party {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  padding: 8px 9px;
+}
+
+.lh-party-title {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  margin-bottom: 2px;
+}
+
+.lh-member {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11.5px;
+}
+
+.lh-member-name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lh-member-detail,
+.lh-member-hp {
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lh-member.is-self .lh-member-name {
+  color: var(--color-accent);
+}
+
+.lh-member.is-offline {
+  opacity: .5;
+}
+
+.lh-member.is-dead .lh-member-hp {
+  color: #ff9b89;
+}
+
+/* Última reposição automática: o monitor gastou ouro, então isto aparece. */
+.lh-refill {
+  margin-top: 6px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: rgba(120, 200, 140, .12);
+  border: 1px solid rgba(120, 200, 140, .28);
+  color: #9fe0b4;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+/* Viagem em curso: a conta está fora da caçada agora, não é um histórico. */
+.lh-refill[data-mode="trip"] {
+  background: rgba(120, 170, 230, .14);
+  border-color: rgba(120, 170, 230, .32);
+  color: #a8cdf0;
+}
+
+.lh-refill[data-mode="erro"] {
+  background: rgba(230, 120, 120, .13);
+  border-color: rgba(230, 120, 120, .3);
+  color: #f0a8a8;
+}
+
+.lh-foot {
+  margin-top: auto;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+/* --------------------------------------------------------------- modal comum */
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.modal-actions button {
+  background: var(--color-surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--color-text-primary);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.modal-actions button:hover {
+  background: var(--color-surface-hover);
+}

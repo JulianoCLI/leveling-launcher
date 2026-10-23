@@ -1,0 +1,1036 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum GuildRole {
+  GUILD_ROLE_UNSPECIFIED = 0;
+  GUILD_ROLE_LEADER = 1;
+  GUILD_ROLE_VICE = 2;
+  GUILD_ROLE_OFFICER = 3;
+  GUILD_ROLE_MEMBER = 4;
+  GUILD_ROLE_RECRUIT = 5;
+}
+
+enum GuildRecruitment {
+  GUILD_RECRUITMENT_UNSPECIFIED = 0;
+  GUILD_RECRUITMENT_OPEN = 1;
+  GUILD_RECRUITMENT_APPROVAL = 2;
+  GUILD_RECRUITMENT_INVITE_ONLY = 3;
+  GUILD_RECRUITMENT_CLOSED = 4;
+}
+
+enum GuildPermission {
+  GUILD_PERMISSION_UNSPECIFIED = 0;
+  GUILD_PERMISSION_INVITE = 1;
+  GUILD_PERMISSION_ACCEPT_REQUEST = 2;
+  GUILD_PERMISSION_DECLINE_REQUEST = 3;
+  GUILD_PERMISSION_KICK = 4;
+  GUILD_PERMISSION_PROMOTE = 5;
+  GUILD_PERMISSION_DEMOTE = 6;
+  GUILD_PERMISSION_EDIT_DESCRIPTION = 7;
+  GUILD_PERMISSION_EDIT_MOTD = 8;
+  GUILD_PERMISSION_EDIT_RECRUITMENT = 9;
+  GUILD_PERMISSION_EDIT_EMBLEM = 10;
+  GUILD_PERMISSION_MANAGE_ROLES = 11;
+  GUILD_PERMISSION_VIEW_LOGS = 12;
+  GUILD_PERMISSION_MODERATE_CHAT = 13;
+  GUILD_PERMISSION_MANAGE_VAULT = 14;
+  GUILD_PERMISSION_WITHDRAW_VAULT = 15;
+  GUILD_PERMISSION_MANAGE_EVENTS = 16;
+  GUILD_PERMISSION_TRANSFER_LEADERSHIP = 17;
+  GUILD_PERMISSION_DISBAND = 18;
+  GUILD_PERMISSION_EDIT_TAG = 19;
+  GUILD_PERMISSION_MANAGE_HOUSING = 20;
+}
+
+enum GuildSort {
+  GUILD_SORT_POWER = 0;
+  GUILD_SORT_LEVEL = 1;
+  GUILD_SORT_MEMBERS = 2;
+  GUILD_SORT_EXP = 3;
+  GUILD_SORT_ACTIVITY = 4;
+  GUILD_SORT_NEWEST = 5;
+  GUILD_SORT_SCORE = 6;
+  GUILD_SORT_PRESTIGE = 7;
+}
+
+enum GuildLeague {
+  GUILD_LEAGUE_UNSPECIFIED = 0;
+  GUILD_LEAGUE_BRONZE = 1;
+  GUILD_LEAGUE_SILVER = 2;
+  GUILD_LEAGUE_GOLD = 3;
+  GUILD_LEAGUE_PLATINUM = 4;
+  GUILD_LEAGUE_CRYSTAL = 5;
+  GUILD_LEAGUE_MASTER = 6;
+  GUILD_LEAGUE_LEGENDARY = 7;
+}
+
+enum GuildStructure {
+  GUILD_STRUCTURE_UNSPECIFIED = 0;
+  GUILD_STRUCTURE_CENTER = 1;
+  GUILD_STRUCTURE_ACADEMY = 2;
+  GUILD_STRUCTURE_VAULT = 3;
+  GUILD_STRUCTURE_LAB = 4;
+  GUILD_STRUCTURE_EXPEDITIONS = 5;
+  GUILD_STRUCTURE_BOSS_ARENA = 6;
+  GUILD_STRUCTURE_SHOP = 7;
+}
+
+enum GuildLeagueSeasonStatus {
+  GUILD_LEAGUE_SEASON_STATUS_UNSPECIFIED = 0;
+  GUILD_LEAGUE_SEASON_STATUS_DRAFT = 1;
+  GUILD_LEAGUE_SEASON_STATUS_SCHEDULED = 2;
+  GUILD_LEAGUE_SEASON_STATUS_ACTIVE = 3;
+  GUILD_LEAGUE_SEASON_STATUS_SETTLING = 4;
+  GUILD_LEAGUE_SEASON_STATUS_ENDED = 5;
+  GUILD_LEAGUE_SEASON_STATUS_CANCELLED = 6;
+}
+
+enum GuildMissionPeriod {
+  GUILD_MISSION_PERIOD_UNSPECIFIED = 0;
+  GUILD_MISSION_PERIOD_DAILY = 1;
+  GUILD_MISSION_PERIOD_WEEKLY = 2;
+}
+
+enum GuildNotificationKind {
+  GUILD_NOTIFICATION_KIND_UNSPECIFIED = 0;
+  GUILD_NOTIFICATION_KIND_GENERAL = 1;
+  GUILD_NOTIFICATION_KIND_EVENT = 2;
+  GUILD_NOTIFICATION_KIND_WAR = 3;
+  GUILD_NOTIFICATION_KIND_BOSS = 4;
+  GUILD_NOTIFICATION_KIND_RECRUITMENT = 5;
+}
+
+enum GuildNotifyMute {
+  GUILD_NOTIFY_MUTE_NONE = 0;
+  GUILD_NOTIFY_MUTE_AUTO = 1;
+  GUILD_NOTIFY_MUTE_ALL = 2;
+}
+
+enum GuildNoticeKind {
+  GUILD_NOTICE_KIND_UNSPECIFIED = 0;
+  GUILD_NOTICE_KIND_INVITED = 1;
+  GUILD_NOTICE_KIND_MEMBER_JOINED = 2;
+  GUILD_NOTICE_KIND_MEMBER_LEFT = 3;
+  GUILD_NOTICE_KIND_DISBANDED = 4;
+  GUILD_NOTICE_KIND_APPLICATION = 5;
+  GUILD_NOTICE_KIND_APPLICATION_ACCEPTED = 6;
+  GUILD_NOTICE_KIND_APPLICATION_DECLINED = 7;
+  GUILD_NOTICE_KIND_KICKED = 8;
+  GUILD_NOTICE_KIND_PROMOTED = 9;
+  GUILD_NOTICE_KIND_DEMOTED = 10;
+  GUILD_NOTICE_KIND_LEADERSHIP = 11;
+  GUILD_NOTICE_KIND_UPDATED = 12;
+  GUILD_NOTICE_KIND_EMBLEM = 13;
+  GUILD_NOTICE_KIND_VAULT = 14;
+  GUILD_NOTICE_KIND_PUBLIC_CHANGED = 15;
+  GUILD_NOTICE_KIND_MEMBER_ONLINE = 16;
+  GUILD_NOTICE_KIND_MEMBER_OFFLINE = 17;
+  GUILD_NOTICE_KIND_MUTED = 18;
+  GUILD_NOTICE_KIND_ROLE_CHANGED = 19;
+  GUILD_NOTICE_KIND_STRUCTURE_UP = 20;
+  GUILD_NOTICE_KIND_LEVEL_UP = 21;
+  GUILD_NOTICE_KIND_MISSION_DONE = 22;
+  GUILD_NOTICE_KIND_OBJECTIVE_DONE = 23;
+  GUILD_NOTICE_KIND_ANNOUNCEMENT = 24;
+  GUILD_NOTICE_KIND_LEAGUE_STARTED = 25;
+  GUILD_NOTICE_KIND_LEAGUE_ENDED = 26;
+}
+
+message GuildEmblemV2 {
+  repeated string palette = 1;
+  string pixels = 2;
+}
+
+message GuildSummary {
+  int64 id = 1;
+  string name = 2;
+  string tag = 3;
+  string description = 4;
+  string motd = 5;
+  string emblem = 6;
+  bool emblem_locked = 7;
+  int64 emblem_at_ms = 8;
+  uint64 leader_id = 9;
+  string leader_name = 10;
+  uint32 level = 11;
+  uint64 exp = 12;
+  GuildRecruitment recruitment = 13;
+  uint32 min_level = 14;
+  uint64 min_power = 15;
+  string language = 16;
+  string region = 17;
+  uint32 max_members = 18;
+  uint32 members = 19;
+  uint64 power = 20;
+  int64 activity_ms = 21;
+  uint64 gold = 22;
+  int64 created_at_ms = 23;
+  int64 tag_changed_at_ms = 24;
+  GuildEmblemV2 emblem_v2 = 25;
+  GuildLeague league = 26;
+  uint64 prestige = 27;
+  string banner = 28;
+  uint64 score = 29;
+  bool chat_locked = 30;
+}
+
+message GuildMember {
+  uint64 account_id = 1;
+  string name = 2;
+  uint32 level = 3;
+  string class_id = 4;
+  uint64 power = 5;
+  GuildRole role = 6;
+  int64 joined_at_ms = 7;
+  uint64 contribution = 8;
+  int64 active_at_ms = 9;
+  int64 muted_until_ms = 10;
+  bool online = 11;
+  int64 last_login_ms = 12;
+  uint64 hunter_power = 13;
+  uint64 team_power = 14;
+}
+
+message GuildMine {
+  GuildSummary guild = 1;
+  GuildMember me = 2;
+  repeated GuildPermission permissions = 3;
+  repeated GuildMember members = 4;
+}
+
+message GuildInfo {
+  GuildMine mine = 1;
+  uint32 invites = 2;
+  int64 locked_until_ms = 3;
+  string locked_reason = 4;
+  uint32 announcements_unread = 5;
+  uint32 notifications_unread = 6;
+  GuildNotifyMute notify_mute = 7;
+}
+
+message GuildRoleInfo {
+  GuildRole role = 1;
+  uint32 level = 2;
+  repeated GuildPermission permissions = 3;
+}
+
+message GuildEmblemConfig {
+  uint32 version = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  string palette_id = 4;
+  repeated string colors = 5;
+  uint32 cooldown_min = 6;
+}
+
+message GuildEmblemV2Config {
+  uint32 grid = 1;
+  uint32 max_layers = 2;
+  uint32 max_colors = 3;
+  uint32 max_layer_rle_chars = 4;
+  uint32 max_doc_bytes = 5;
+  uint32 max_segments = 6;
+  uint32 layer_name_max = 7;
+  int32 offset_min = 8;
+  int32 offset_max = 9;
+  uint32 scale_min = 10;
+  uint32 scale_max = 11;
+  int32 rot_min = 12;
+  int32 rot_max = 13;
+  uint32 cooldown_min = 14;
+}
+
+message GuildConfig {
+  repeated GuildRoleInfo roles = 1;
+  uint32 max_members = 2;
+  uint32 name_min = 3;
+  uint32 name_max = 4;
+  uint32 tag_min = 5;
+  uint32 tag_max = 6;
+  uint32 description_max = 7;
+  uint32 motd_max = 8;
+  uint32 page_size = 9;
+  GuildEmblemConfig emblem = 10;
+  uint32 invite_hours = 11;
+  int64 tag_change_interval_ms = 12;
+  uint32 max_min_level = 13;
+  uint32 mute_max_minutes = 14;
+  bool boss_enabled = 15;
+  uint32 base_members = 16;
+  uint32 max_members_cap = 17;
+  GuildEmblemV2Config emblem_v2 = 18;
+  repeated string banners = 19;
+  uint32 tax_max_pct = 20;
+  uint32 change_cost_diamonds = 21;
+  repeated uint32 banner_levels = 22;
+}
+
+message GuildGet {
+}
+
+message GuildConfigGet {
+}
+
+message GuildCreate {
+  string name = 1;
+  string tag = 2;
+  string description = 3;
+  GuildRecruitment recruitment = 4;
+  uint32 min_level = 5;
+  uint64 min_power = 6;
+  string language = 7;
+  string region = 8;
+}
+
+message GuildJoin {
+  int64 guild_id = 1;
+}
+
+message GuildLeave {
+}
+
+message GuildDisband {
+  string confirm_name = 1;
+}
+
+message GuildList {
+  string name = 1;
+  GuildRecruitment recruitment = 2;
+  bool recruiting = 3;
+  uint32 level_min = 4;
+  uint64 power_min = 5;
+  uint32 members_min = 6;
+  GuildSort sort = 7;
+  uint32 page = 8;
+  GuildLeague league = 9;
+  uint64 min_prestige = 10;
+  string language = 11;
+}
+
+message GuildListPage {
+  repeated GuildSummary guilds = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 page_size = 4;
+  repeated int64 applied = 5;
+}
+
+message GuildProfileGet {
+  int64 guild_id = 1;
+}
+
+message GuildProfile {
+  GuildSummary guild = 1;
+  uint32 leader_level = 2;
+  bool leader_online = 3;
+  bool applied = 4;
+}
+
+message GuildPublicGet {
+  repeated int64 ids = 1;
+}
+
+message GuildPublicEntry {
+  int64 id = 1;
+  string name = 2;
+  string tag = 3;
+  string emblem = 4;
+  GuildEmblemV2 emblem_v2 = 5;
+  GuildLeague league = 6;
+}
+
+message GuildPublicList {
+  repeated GuildPublicEntry guilds = 1;
+}
+
+message GuildInvite {
+  string name = 1;
+}
+
+message GuildInvitesGet {
+}
+
+message GuildInviteEntry {
+  int64 id = 1;
+  int64 created_at_ms = 2;
+  int64 expires_at_ms = 3;
+  string inviter_name = 4;
+  GuildSummary guild = 5;
+}
+
+message GuildInviteList {
+  repeated GuildInviteEntry invites = 1;
+}
+
+message GuildAnswerInvite {
+  int64 id = 1;
+  bool accept = 2;
+}
+
+message GuildApply {
+  int64 guild_id = 1;
+}
+
+message GuildApplicationsGet {
+}
+
+message GuildApplicationEntry {
+  int64 id = 1;
+  int64 created_at_ms = 2;
+  uint64 account_id = 3;
+  string name = 4;
+  uint32 level = 5;
+  string class_id = 6;
+  uint64 power = 7;
+  bool online = 8;
+}
+
+message GuildApplicationList {
+  repeated GuildApplicationEntry applications = 1;
+}
+
+message GuildAnswerApplication {
+  int64 id = 1;
+  bool accept = 2;
+}
+
+message GuildKick {
+  uint64 account_id = 1;
+}
+
+message GuildSetRole {
+  uint64 account_id = 1;
+  GuildRole role = 2;
+}
+
+message GuildTransfer {
+  uint64 account_id = 1;
+}
+
+message GuildEdit {
+  optional string description = 1;
+  optional string motd = 2;
+  optional GuildRecruitment recruitment = 3;
+  optional uint32 min_level = 4;
+  optional uint64 min_power = 5;
+  optional bool chat_locked = 6;
+}
+
+message GuildSetTag {
+  string tag = 1;
+}
+
+message GuildSetEmblem {
+  string emblem = 1;
+}
+
+message GuildVaultGet {
+  uint32 page = 1;
+  uint32 page_size = 2;
+}
+
+message GuildVaultItem {
+  int64 id = 1;
+  ItemInstance item = 2;
+  string deposited_by = 3;
+  int64 at_ms = 4;
+}
+
+message GuildContribution {
+  int64 id = 1;
+  string name = 2;
+  string kind = 3;
+  uint64 value = 4;
+  string detail = 5;
+  int64 at_ms = 6;
+}
+
+message GuildVaultPage {
+  repeated GuildVaultItem items = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 page_size = 4;
+  uint64 gold = 5;
+  bool can_withdraw = 6;
+  bool can_manage = 7;
+  repeated GuildContribution contributions = 8;
+  uint32 capacity = 9;
+  repeated GuildLogEntry activity = 10;
+  string min_rarity = 11;
+}
+
+message GuildVaultDeposit {
+  uint64 item_uid = 1;
+  uint32 qty = 2;
+}
+
+message GuildVaultWithdraw {
+  int64 id = 1;
+  repeated int64 ids = 2;
+  int64 to_account = 3;
+}
+
+message GuildVaultSetRule {
+  string min_rarity = 1;
+}
+
+message GuildVaultPurge {
+  repeated string rarities = 1;
+  ItemCategory category = 2;
+  EquipSlot slot = 3;
+  bool confirm = 4;
+  uint32 expected = 5;
+}
+
+message GuildVaultPurgeResult {
+  uint32 matched = 1;
+  uint64 value = 2;
+  uint64 credited = 3;
+  uint32 skipped = 4;
+  bool done = 5;
+  uint64 vault_gold = 6;
+  uint64 donate_left = 7;
+}
+
+message GuildContributionGet {
+  uint32 days = 1;
+}
+
+message GuildContributionSource {
+  string source = 1;
+  uint64 prestige = 2;
+  uint64 units = 3;
+}
+
+message GuildMemberContribution {
+  int64 account_id = 1;
+  string name = 2;
+  int32 role = 3;
+  uint64 prestige = 4;
+  repeated GuildContributionSource sources = 5;
+  int64 joined_at_ms = 6;
+}
+
+message GuildContributionPage {
+  uint32 days = 1;
+  repeated GuildMemberContribution members = 2;
+}
+
+message GuildVaultGold {
+  uint64 amount = 1;
+  bool deposit = 2;
+}
+
+message GuildVaultResult {
+  uint64 vault_gold = 1;
+  uint64 gold = 2;
+  uint64 donate_left = 3;
+}
+
+message GuildMute {
+  uint64 account_id = 1;
+  uint32 minutes = 2;
+}
+
+message GuildLogsGet {
+  uint32 page = 1;
+}
+
+message GuildLogEntry {
+  int64 id = 1;
+  string action = 2;
+  string actor = 3;
+  string target = 4;
+  string detail = 5;
+  int64 at_ms = 6;
+}
+
+message GuildLogPage {
+  repeated GuildLogEntry entries = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 page_size = 4;
+}
+
+message GuildOk {
+}
+
+message GuildProgressGet {
+}
+
+message GuildStructureLevel {
+  GuildStructure structure = 1;
+  uint32 level = 2;
+  uint32 cap = 3;
+  uint64 next_cost = 4;
+}
+
+message GuildProgress {
+  uint32 level = 1;
+  uint64 exp = 2;
+  uint64 exp_level_start = 3;
+  uint64 exp_next_level = 4;
+  uint64 points = 5;
+  repeated GuildStructureLevel structures = 6;
+  uint32 tax_pct = 7;
+  GuildLeague league = 8;
+  uint64 prestige = 9;
+  uint32 members = 10;
+  uint32 max_members = 11;
+  uint64 donate_cap = 12;
+  uint64 donate_left = 13;
+  int64 donate_resets_at_ms = 14;
+  bool name_change_free = 15;
+  bool emblem_change_free = 16;
+  uint64 my_season_points = 17;
+  uint64 my_weekly_points = 18;
+  int64 season_id = 19;
+  uint64 bosses_total = 20;
+  int64 server_now_ms = 21;
+}
+
+message GuildStructureUpgrade {
+  GuildStructure structure = 1;
+}
+
+message GuildSetTax {
+  uint32 pct = 1;
+}
+
+message GuildShopListGet {
+}
+
+message GuildShopOffer {
+  string id = 1;
+  string item_id = 2;
+  uint32 qty = 3;
+  uint64 points_cost = 4;
+  uint64 gold_cost = 5;
+  uint64 gold_base = 6;
+  uint32 season_limit = 7;
+  uint32 bought = 8;
+  bool available = 9;
+  string kind = 10;
+  uint32 week_limit = 11;
+  uint32 week_bought = 12;
+  string icon = 13;
+}
+
+message GuildShopList {
+  repeated GuildShopOffer offers = 1;
+  uint64 my_points = 2;
+  uint32 discount_pct = 3;
+  int64 season_id = 4;
+  int64 week_ends_at_ms = 5;
+}
+
+message GuildShopBuy {
+  string offer = 1;
+  uint32 qty = 2;
+}
+
+message GuildShopResult {
+  GuildShopList shop = 1;
+  uint64 gold = 2;
+}
+
+message GuildMissionsGet {
+}
+
+message GuildMission {
+  string id = 1;
+  GuildMissionPeriod period = 2;
+  string kind = 3;
+  string param = 4;
+  uint64 progress = 5;
+  uint64 goal = 6;
+  int64 completed_at_ms = 7;
+  uint64 reward_points = 8;
+  uint64 reward_exp = 9;
+}
+
+message GuildObjective {
+  uint64 progress = 1;
+  uint64 goal = 2;
+  int64 paid_at_ms = 3;
+  uint64 reward_exp = 4;
+  uint64 reward_points = 5;
+  uint64 reward_prestige = 6;
+}
+
+message GuildMissions {
+  repeated GuildMission daily = 1;
+  repeated GuildMission weekly = 2;
+  GuildObjective objective = 3;
+  int64 daily_resets_at_ms = 4;
+  int64 weekly_resets_at_ms = 5;
+}
+
+message GuildAnnouncementsGet {
+  uint32 page = 1;
+}
+
+message GuildAnnouncement {
+  int64 id = 1;
+  string author = 2;
+  string text = 3;
+  string lang = 4;
+  int64 at_ms = 5;
+  bool read = 6;
+}
+
+message GuildAnnouncementPage {
+  repeated GuildAnnouncement entries = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 page_size = 4;
+  uint32 unread = 5;
+  uint32 left_today = 6;
+}
+
+message GuildAnnounce {
+  string text = 1;
+}
+
+message GuildAnnouncementRead {
+  int64 id = 1;
+}
+
+message GuildAnnouncementDelete {
+  int64 id = 1;
+}
+
+message GuildNotification {
+  int64 id = 1;
+  GuildNotificationKind kind = 2;
+  string code = 3;
+  string title = 4;
+  string text = 5;
+  string actor = 6;
+  string detail = 7;
+  int64 scheduled_at_ms = 8;
+  int64 at_ms = 9;
+  bool read = 10;
+}
+
+message GuildNotificationsGet {
+}
+
+message GuildNotificationPage {
+  repeated GuildNotification entries = 1;
+  uint32 unread = 2;
+  GuildNotifyMute mute = 3;
+  bool can_send = 4;
+  int64 next_send_at_ms = 5;
+  uint32 left_today = 6;
+  uint32 title_max = 7;
+  uint32 text_max = 8;
+  uint32 cooldown_secs = 9;
+  uint32 schedule_max_days = 10;
+  uint32 remind_lead_secs = 11;
+  int64 server_now_ms = 12;
+}
+
+message GuildNotify {
+  GuildNotificationKind kind = 1;
+  string title = 2;
+  string text = 3;
+  int64 scheduled_at_ms = 4;
+}
+
+message GuildNotificationsRead {
+  int64 up_to_id = 1;
+}
+
+message GuildSetNotifyMute {
+  GuildNotifyMute mute = 1;
+}
+
+message GuildNotificationPush {
+  GuildNotification notification = 1;
+  bool reminder = 2;
+  int64 guild_id = 3;
+}
+
+message GuildRename {
+  string name = 1;
+}
+
+message GuildSetBanner {
+  string banner_id = 1;
+}
+
+message GuildEmblemLayer {
+  string name = 1;
+  bool visible = 2;
+  int32 x = 3;
+  int32 y = 4;
+  uint32 scale = 5;
+  int32 rot = 6;
+  bool flip_h = 7;
+  bool flip_v = 8;
+  string pixels = 9;
+}
+
+message GuildEmblemDocGet {
+}
+
+message GuildEmblemDoc {
+  repeated string palette = 1;
+  repeated GuildEmblemLayer layers = 2;
+  bool from_v1 = 3;
+  GuildEmblemV2 composite = 4;
+  int64 emblem_at_ms = 5;
+  bool locked = 6;
+  bool change_free = 7;
+  uint32 change_cost_diamonds = 8;
+}
+
+message GuildSetEmblemV2 {
+  repeated string palette = 1;
+  repeated GuildEmblemLayer layers = 2;
+}
+
+message GuildLeagueSeasonInfo {
+  int64 id = 1;
+  string slug = 2;
+  uint32 number = 3;
+  string name = 4;
+  string subtitle = 5;
+  string description = 6;
+  string banner = 7;
+  GuildLeagueSeasonStatus status = 8;
+  int64 starts_at_ms = 9;
+  int64 ends_at_ms = 10;
+  uint32 announce_ver = 11;
+  string rules_hash = 12;
+}
+
+message GuildLeagueRewardItem {
+  string item_id = 1;
+  uint32 qty = 2;
+  string kind = 3;
+}
+
+message GuildLeagueReward {
+  int64 season_id = 1;
+  string season_name = 2;
+  uint32 tier = 3;
+  GuildLeague league = 4;
+  repeated GuildLeagueRewardItem items = 5;
+  string status = 6;
+  int64 expires_at_ms = 7;
+}
+
+message GuildLeagueCurrentGet {
+}
+
+message GuildLeagueCurrent {
+  GuildLeagueSeasonInfo season = 1;
+  GuildLeague league = 2;
+  uint64 prestige = 3;
+  uint32 position = 4;
+  uint64 my_points = 5;
+  repeated uint64 league_thresholds = 6;
+  repeated GuildLeagueReward rewards = 7;
+  int64 server_now_ms = 8;
+}
+
+message GuildLeagueBoardGet {
+  int64 season_id = 1;
+  uint32 page = 2;
+  uint32 page_size = 3;
+}
+
+message GuildLeagueBoardEntry {
+  uint32 position = 1;
+  int64 guild_id = 2;
+  string name = 3;
+  string tag = 4;
+  GuildEmblemV2 emblem_v2 = 5;
+  string emblem = 6;
+  GuildLeague league = 7;
+  uint64 prestige = 8;
+  uint64 exp = 9;
+  uint32 members = 10;
+}
+
+message GuildLeagueBoard {
+  int64 season_id = 1;
+  repeated GuildLeagueBoardEntry entries = 2;
+  uint32 total = 3;
+  uint32 page = 4;
+  uint32 page_size = 5;
+  uint32 my_position = 6;
+}
+
+message GuildLeagueHistoryGet {
+  uint32 page = 1;
+}
+
+message GuildLeagueHistoryEntry {
+  GuildLeagueSeasonInfo season = 1;
+  uint32 position = 2;
+  uint64 prestige = 3;
+  GuildLeague league_before = 4;
+  GuildLeague league_after = 5;
+  repeated GuildLeagueBoardEntry top = 6;
+}
+
+message GuildLeagueHistory {
+  repeated GuildLeagueHistoryEntry entries = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 page_size = 4;
+}
+
+message GuildLeagueClaim {
+  int64 season_id = 1;
+}
+
+message GuildBossGet {
+}
+
+message GuildRequest {
+
+  oneof op {
+    GuildGet get = 1;
+    GuildConfigGet config = 2;
+    GuildCreate create = 3;
+    GuildJoin join = 4;
+    GuildLeave leave = 5;
+    GuildDisband disband = 6;
+    GuildList list = 7;
+    GuildProfileGet profile = 8;
+    GuildPublicGet public = 9;
+    GuildInvite invite = 10;
+    GuildInvitesGet invites = 11;
+    GuildAnswerInvite answer_invite = 12;
+    GuildApply apply = 13;
+    GuildApplicationsGet applications = 14;
+    GuildAnswerApplication answer_application = 15;
+    GuildKick kick = 16;
+    GuildSetRole set_role = 17;
+    GuildTransfer transfer = 18;
+    GuildEdit edit = 19;
+    GuildSetTag set_tag = 20;
+    GuildSetEmblem set_emblem = 21;
+    GuildVaultGet vault = 22;
+    GuildVaultDeposit vault_deposit = 23;
+    GuildVaultWithdraw vault_withdraw = 24;
+    GuildVaultGold vault_gold = 25;
+    GuildMute mute = 26;
+    GuildLogsGet logs = 27;
+    GuildProgressGet progress = 28;
+    GuildStructureUpgrade structure_upgrade = 29;
+    GuildSetTax set_tax = 30;
+    GuildShopListGet shop_list = 31;
+    GuildShopBuy shop_buy = 32;
+    GuildMissionsGet missions = 33;
+    GuildAnnouncementsGet announcements = 34;
+    GuildAnnounce announce = 35;
+    GuildAnnouncementRead announcement_read = 36;
+    GuildAnnouncementDelete announcement_delete = 37;
+    GuildRename rename = 38;
+    GuildEmblemDocGet emblem_doc = 39;
+    GuildSetEmblemV2 set_emblem_v2 = 40;
+    GuildSetBanner set_banner = 41;
+    GuildLeagueCurrentGet league_current = 42;
+    GuildLeagueBoardGet league_board = 43;
+    GuildLeagueHistoryGet league_history = 44;
+    GuildLeagueClaim league_claim = 45;
+    GuildBossGet boss = 46;
+    GuildNotificationsGet notifications = 47;
+    GuildNotify notify = 48;
+    GuildNotificationsRead notifications_read = 49;
+    GuildSetNotifyMute set_notify_mute = 50;
+    GuildContributionGet contribution = 51;
+    GuildVaultSetRule vault_rule = 52;
+    GuildVaultPurge vault_purge = 53;
+  }
+}
+
+message GuildResponse {
+
+  oneof result {
+    GuildInfo info = 1;
+    GuildConfig config = 2;
+    GuildListPage list = 3;
+    GuildProfile profile = 4;
+    GuildPublicList public = 5;
+    GuildInviteList invites = 6;
+    GuildApplicationList applications = 7;
+    GuildVaultPage vault = 8;
+    GuildVaultResult vault_result = 9;
+    GuildLogPage logs = 10;
+    GuildOk ok = 11;
+    GuildProgress progress = 12;
+    GuildShopList shop = 13;
+    GuildShopResult shop_result = 14;
+    GuildMissions missions = 15;
+    GuildAnnouncementPage announcements = 16;
+    GuildEmblemDoc emblem_doc = 17;
+    GuildLeagueCurrent league_current = 18;
+    GuildLeagueBoard league_board = 19;
+    GuildLeagueHistory league_history = 20;
+    GuildNotificationPage notifications = 21;
+    GuildContributionPage contribution = 22;
+    GuildVaultPurgeResult vault_purge = 23;
+  }
+}
+
+message GuildNotice {
+  GuildNoticeKind kind = 1;
+  int64 guild_id = 2;
+  string guild_name = 3;
+  string guild_tag = 4;
+  string actor_name = 5;
+  string target_name = 6;
+  uint64 account_id = 7;
+  GuildRole role = 8;
+  uint32 minutes = 9;
+  GuildStructure structure = 10;
+  uint32 level = 11;
+  string mission = 12;
+  int64 season_id = 13;
+  string season_name = 14;
+  int64 announcement_id = 15;
+  string text = 16;
+  GuildLeague league = 17;
+}
+
+message GuildPush {
+
+  oneof event {
+    GuildNotice notice = 1;
+    GuildNotificationPush notification = 2;
+  }
+}
+
+message GuildInviteRecord {
+  int64 id = 1;
+  string target = 2;
+  string author = 3;
+  string status = 4;
+  int64 created_at_ms = 5;
+  int64 expires_at_ms = 6;
+}
+
+message GuildApplicationRecord {
+  int64 id = 1;
+  string name = 2;
+  string status = 3;
+  int64 created_at_ms = 4;
+}
+
+message GuildAdminDetail {
+  GuildSummary guild = 1;
+  repeated GuildMember members = 2;
+  repeated GuildLogEntry logs = 3;
+  repeated GuildInviteRecord invites = 4;
+  repeated GuildApplicationRecord applications = 5;
+  GuildProgress progress = 6;
+}
+

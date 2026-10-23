@@ -1,0 +1,93 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+message Register {
+  string username = 1;
+  string password = 2;
+  Gender gender = 3;
+  string referral_code = 4;
+  string email = 5;
+  string captcha_token = 6;
+  string locale = 10;
+}
+
+message Login {
+  string username = 1;
+  string password = 2;
+}
+
+message Resume {
+  string token = 1;
+}
+
+message Logout {
+}
+
+message StaffLogin {
+  string username = 1;
+  string password = 2;
+}
+
+message StaffResume {
+  string token = 1;
+}
+
+message DropTestAccess {
+  string token = 1;
+}
+
+message AuthOk {
+  string token = 1;
+  uint64 account_id = 2;
+  string username = 3;
+  Role role = 4;
+  uint64 server_time_ms = 5;
+  bool has_email = 6;
+  bool email_verified = 7;
+  string email_hint = 8;
+  bool email_service = 9;
+}
+
+message LogoutOk {
+}
+
+message SetEmail {
+  string email = 1;
+  string locale = 2;
+}
+
+message SetEmailResult {
+  string email_hint = 1;
+}
+
+message ResendEmailCode {
+  string locale = 1;
+}
+
+message ResendEmailCodeResult {
+}
+
+message VerifyEmail {
+  string code = 1;
+}
+
+message VerifyEmailResult {
+}
+
+message Ping {
+  uint64 client_time_ms = 1;
+}
+
+message Pong {
+  uint64 client_time_ms = 1;
+  uint64 server_time_ms = 2;
+  uint32 online = 3;
+}
+
+message SessionEnded {
+  string code = 1;
+  map<string, string> params = 2;
+}
+

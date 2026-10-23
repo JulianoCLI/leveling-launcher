@@ -1,0 +1,322 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum TrainingMode {
+  TRAINING_MODE_UNSPECIFIED = 0;
+  TRAINING_MODE_AUTO = 1;
+  TRAINING_MODE_FREE = 2;
+}
+
+enum TrainingSourceKind {
+  TRAINING_SOURCE_KIND_UNSPECIFIED = 0;
+  TRAINING_SOURCE_KIND_BASIC = 1;
+  TRAINING_SOURCE_KIND_SKILL = 2;
+  TRAINING_SOURCE_KIND_SHADOW = 3;
+  TRAINING_SOURCE_KIND_DOT = 4;
+  TRAINING_SOURCE_KIND_REFLECT = 5;
+}
+
+enum TrainingDamageType {
+  TRAINING_DAMAGE_TYPE_UNSPECIFIED = 0;
+  TRAINING_DAMAGE_TYPE_PHYSICAL = 1;
+  TRAINING_DAMAGE_TYPE_MAGIC = 2;
+  TRAINING_DAMAGE_TYPE_EFFECT = 3;
+}
+
+message TrainingPreset {
+  string id = 1;
+  string name = 2;
+  string monster_id = 3;
+  bool boss = 4;
+}
+
+message TrainingConfig {
+  bool enabled = 1;
+  repeated TrainingPreset presets = 2;
+  repeated uint32 durations = 3;
+  uint32 max_summoned = 4;
+  uint32 max_per_summon = 5;
+  uint32 summon_cooldown_ms = 6;
+  uint32 dummy_max_level = 7;
+  uint32 dummy_max_defense = 8;
+  uint32 dummy_slots = 9;
+  uint32 ranked_secs = 10;
+  string ranked_preset = 11;
+  string lobby_scene = 12;
+  string room_scene = 13;
+  string group_room_scene = 14;
+  uint32 free_max_secs = 15;
+}
+
+message TrainingMonster {
+  string monster_id = 1;
+  uint32 max_level = 2;
+  bool boss = 3;
+}
+
+message TrainingSource {
+  string key = 1;
+  TrainingSourceKind kind = 2;
+  string ref = 3;
+  TrainingDamageType damage_type = 4;
+  double damage = 5;
+  uint32 hits = 6;
+  uint32 crits = 7;
+  uint32 misses = 8;
+  double max_hit = 9;
+  bool max_hit_crit = 10;
+  double crit_damage = 11;
+  uint32 casts = 12;
+}
+
+message TrainingMeter {
+  bool running = 1;
+  uint32 elapsed_ms = 2;
+  uint32 duration_ms = 3;
+  double total = 4;
+  double dps_avg = 5;
+  double dps_now = 6;
+  double dps_peak = 7;
+  uint32 hits = 8;
+  uint32 crits = 9;
+  uint32 misses = 10;
+  double crit_damage = 11;
+  repeated TrainingSource sources = 12;
+  repeated float series = 13;
+  double physical = 14;
+  double magic = 15;
+  double effect = 16;
+  double taken = 17;
+  uint32 hits_taken = 18;
+  uint32 dodged = 19;
+  double absorbed = 20;
+  double healed = 21;
+  double mana_spent = 22;
+  uint32 kills = 23;
+  uint32 refills = 24;
+  uint32 deaths = 25;
+  uint32 window_secs = 26;
+  int64 started_at_ms = 27;
+  uint32 session = 28;
+  TrainingMode mode = 29;
+  bool auto_skills = 30;
+  bool group = 31;
+}
+
+message TrainingGroupMember {
+  uint64 account_id = 1;
+  string name = 2;
+  string class_id = 3;
+  uint32 level = 4;
+  double total = 5;
+  double dps = 6;
+  double share = 7;
+  uint32 hits = 8;
+  uint32 crits = 9;
+  double crit_damage = 10;
+  repeated TrainingSource sources = 11;
+  TrainingMode mode = 12;
+}
+
+message TrainingGroupMeter {
+  bool running = 1;
+  uint32 elapsed_ms = 2;
+  uint32 duration_ms = 3;
+  double total = 4;
+  double dps = 5;
+  repeated TrainingGroupMember members = 6;
+  repeated float series = 7;
+  uint32 session = 8;
+  int64 at_ms = 9;
+}
+
+message TrainingPartyRoom {
+  bool open = 1;
+  uint64 party_id = 2;
+  string opener = 3;
+}
+
+message TrainingDummy {
+  uint32 slot = 1;
+  string preset = 2;
+  uint32 level = 3;
+  double defense = 4;
+  bool defense_custom = 5;
+  double max_hp = 6;
+  bool real_hp = 7;
+  bool boss = 8;
+  uint32 entity = 9;
+  double accuracy = 10;
+}
+
+message TrainingRoom {
+  repeated TrainingDummy dummies = 1;
+  uint32 summoned_alive = 2;
+  uint32 summon_ready_in_ms = 3;
+  bool running = 4;
+  uint32 duration_ms = 5;
+  bool group = 6;
+  TrainingMode mode = 7;
+  bool auto_skills = 8;
+  bool leader = 9;
+  uint32 hunters = 10;
+  bool group_running = 11;
+  bool no_cooldown = 12;
+}
+
+message TrainingResult {
+  TrainingMeter meter = 1;
+  bool ranked = 2;
+  string class_id = 3;
+  uint32 level = 4;
+  int64 at_ms = 5;
+  string preset = 6;
+}
+
+message TrainingRankEntry {
+  uint32 position = 1;
+  uint64 account_id = 2;
+  string name = 3;
+  string class_id = 4;
+  uint32 level = 5;
+  double dps = 6;
+  double total = 7;
+  int64 at_ms = 8;
+  string skin_id = 9;
+  HunterAppearance appearance = 10;
+  uint32 hunter_rank = 11;
+  int64 guild_id = 12;
+  string guild_tag = 13;
+}
+
+message TrainingRanking {
+  string class_id = 1;
+  repeated TrainingRankEntry entries = 2;
+  TrainingRankEntry mine = 3;
+  bool overall = 4;
+}
+
+message TrainingOverview {
+  TrainingConfig config = 1;
+  repeated TrainingMonster monsters = 2;
+  repeated TrainingResult last = 3;
+  TrainingRanking ranking = 4;
+  bool in_room = 5;
+  bool in_lobby = 6;
+  bool in_party = 7;
+  bool dev = 8;
+  repeated TrainingMonster dev_monsters = 9;
+}
+
+message TrainingOverviewRequest {
+}
+
+message TrainingEnter {
+  bool group = 1;
+}
+
+message TrainingLeave {
+  bool to_city = 1;
+}
+
+message TrainingConfigure {
+  uint32 slot = 1;
+  string preset = 2;
+  uint32 level = 3;
+  double defense = 4;
+  bool real_hp = 5;
+  bool boss = 6;
+}
+
+message TrainingSummon {
+  string monster_id = 1;
+  uint32 count = 2;
+  uint32 level = 3;
+  bool champion = 4;
+  bool dev = 5;
+  bool shadow = 6;
+}
+
+message TrainingClearSummons {
+}
+
+message TrainingStart {
+  uint32 seconds = 1;
+  TrainingMode mode = 2;
+  bool auto_skills = 3;
+}
+
+message TrainingSetMode {
+  TrainingMode mode = 1;
+  bool auto_skills = 2;
+}
+
+message TrainingMoveDummy {
+  uint32 slot = 1;
+  bool reset = 2;
+}
+
+message TrainingClearRoom {
+}
+
+message TrainingNoCooldown {
+  bool on = 1;
+}
+
+message TrainingStop {
+}
+
+message TrainingReset {
+}
+
+message TrainingRankingRequest {
+  string class_id = 1;
+  bool overall = 2;
+}
+
+message TrainingRequest {
+
+  oneof op {
+    TrainingOverviewRequest overview = 1;
+    TrainingEnter enter = 2;
+    TrainingLeave leave = 3;
+    TrainingConfigure configure = 4;
+    TrainingSummon summon = 5;
+    TrainingClearSummons clear_summons = 6;
+    TrainingStart start = 7;
+    TrainingStop stop = 8;
+    TrainingReset reset = 9;
+    TrainingRankingRequest ranking = 10;
+    TrainingSetMode set_mode = 11;
+    TrainingMoveDummy move_dummy = 12;
+    TrainingClearRoom clear_room = 13;
+    TrainingNoCooldown no_cooldown = 14;
+  }
+}
+
+message TrainingOk {
+}
+
+message TrainingResponse {
+
+  oneof result {
+    TrainingOverview overview = 1;
+    TrainingOk ok = 2;
+    TrainingRanking ranking = 3;
+  }
+}
+
+message TrainingPush {
+
+  oneof event {
+    TrainingMeter meter = 1;
+    TrainingRoom room = 2;
+    TrainingResult result = 3;
+    TrainingGroupMeter group_meter = 4;
+    TrainingGroupMeter group_result = 5;
+    TrainingPartyRoom party_room = 6;
+  }
+}
+

@@ -1,0 +1,36 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+message DiscordLinkState {
+  bool enabled = 1;
+  bool linked = 2;
+  string discord_name = 3;
+  int64 linked_at = 4;
+  string code = 5;
+  int64 code_expires_at = 6;
+}
+
+message DiscordStateRequest {
+}
+
+message DiscordCreateCode {
+}
+
+message DiscordUnlink {
+}
+
+message DiscordRequest {
+
+  oneof op {
+    DiscordStateRequest state = 1;
+    DiscordCreateCode create_code = 2;
+    DiscordUnlink unlink = 3;
+  }
+}
+
+message DiscordResponse {
+  DiscordLinkState state = 1;
+}
+

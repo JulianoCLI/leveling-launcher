@@ -1,0 +1,417 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum ShadowTeamAction {
+  SHADOW_TEAM_ACTION_UNSPECIFIED = 0;
+  SHADOW_TEAM_ACTION_ADD = 1;
+  SHADOW_TEAM_ACTION_REMOVE = 2;
+  SHADOW_TEAM_ACTION_SWAP = 3;
+  SHADOW_TEAM_ACTION_MOVE = 4;
+  SHADOW_TEAM_ACTION_BEST = 5;
+}
+
+enum ShadowSort {
+  SHADOW_SORT_UNSPECIFIED = 0;
+  SHADOW_SORT_RECENT = 1;
+  SHADOW_SORT_OLDEST = 2;
+  SHADOW_SORT_LEVEL_DESC = 3;
+  SHADOW_SORT_LEVEL_ASC = 4;
+  SHADOW_SORT_NAME_ASC = 5;
+  SHADOW_SORT_NAME_DESC = 6;
+  SHADOW_SORT_RANK_DESC = 7;
+  SHADOW_SORT_RANK_ASC = 8;
+  SHADOW_SORT_POWER_DESC = 9;
+  SHADOW_SORT_POWER_ASC = 10;
+  SHADOW_SORT_POTENTIAL_DESC = 11;
+  SHADOW_SORT_POTENTIAL_ASC = 12;
+}
+
+message ShadowCombatStats {
+  double atk = 1;
+  double def = 2;
+  double max_hp = 3;
+  double attack_cooldown = 4;
+  double power = 5;
+  double accuracy = 6;
+  double crit_chance = 7;
+  double crit_mult = 8;
+}
+
+message ShadowCommandBonus {
+  double damage = 1;
+  double hp = 2;
+  double speed = 3;
+  double crown = 4;
+}
+
+message Shadow {
+  uint64 uid = 1;
+  string rank = 2;
+  string monster_id = 3;
+  string name = 4;
+  uint32 level = 5;
+  uint64 xp = 6;
+  uint64 xp_to_next = 7;
+  uint32 hp = 8;
+  uint32 max_hp = 9;
+  bool dead = 10;
+  repeated uint32 potential = 12;
+  uint32 potential_total = 13;
+  string quality = 14;
+  string specialization = 15;
+  bool awakened = 16;
+  bool favorite = 17;
+  repeated uint64 equipment = 18;
+  uint32 team_slot = 19;
+  int64 created_at_ms = 20;
+  ShadowCombatStats stats = 21;
+  uint32 level_cap = 23;
+  string profile = 26;
+  uint32 gear_slots = 27;
+  uint32 skills_unlocked = 38;
+  double next_rank_power = 29;
+  double team_bonus = 30;
+  ShadowCombatStats fielded = 34;
+  ShadowCommandBonus command = 35;
+  string team_gate = 36;
+  repeated double potential_effect = 37;
+  bool champion = 43;
+  uint32 expedition = 44;
+}
+
+message ShadowTeam {
+  repeated Shadow members = 1;
+  uint32 max_size = 2;
+  uint32 army_size = 3;
+  uint32 army_capacity = 4;
+  uint32 evolvable = 10;
+  repeated string species = 11;
+}
+
+message AriseResult {
+  bool success = 1;
+  string monster_id = 2;
+  bool premium = 3;
+  bool free_essence = 4;
+  Shadow shadow = 5;
+  string rank = 7;
+  bool awakened = 8;
+  uint32 attempts = 11;
+  bool new_species = 13;
+  uint64 gold_fee = 16;
+  uint32 species_count = 17;
+}
+
+message ShadowCapture {
+  uint32 entity = 1;
+  bool premium = 2;
+}
+
+message ShadowCaptureResult {
+  AriseResult result = 1;
+}
+
+message ShadowSetTeam {
+  ShadowTeamAction action = 1;
+  uint64 uid = 2;
+  uint32 slot = 3;
+  uint64 swap_out_uid = 4;
+}
+
+message ShadowSetTeamResult {
+  ShadowTeam team = 1;
+}
+
+message ShadowDissolve {
+  repeated uint64 uids = 1;
+}
+
+message ShadowDissolveResult {
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    REASON_IN_TEAM = 1;
+    REASON_FAVORITE = 2;
+    REASON_NOT_FOUND = 3;
+  }
+
+  message Protected {
+    uint64 uid = 1;
+    ShadowDissolveResult.Reason reason = 2;
+  }
+
+  repeated uint64 dissolved = 1;
+  repeated ShadowDissolveResult.Protected protected_shadows = 2;
+  uint32 army_size = 3;
+}
+
+message ShadowFavorite {
+  uint64 uid = 1;
+  bool favorite = 2;
+}
+
+message ShadowFavoriteResult {
+  uint64 uid = 1;
+  bool favorite = 2;
+}
+
+message ShadowEquip {
+  uint64 shadow_uid = 1;
+  uint64 item_uid = 2;
+}
+
+message ShadowEquipResult {
+  Shadow shadow = 1;
+}
+
+message ShadowEquipBest {
+  uint64 shadow_uid = 1;
+}
+
+message ShadowEquipBestResult {
+  Shadow shadow = 1;
+  uint32 changed = 2;
+}
+
+message ShadowUnequip {
+  uint64 shadow_uid = 1;
+  uint64 item_uid = 2;
+}
+
+message ShadowUnequipResult {
+  Shadow shadow = 1;
+}
+
+message ShadowGearOptions {
+  uint64 shadow_uid = 1;
+  EquipSlot slot = 2;
+}
+
+message ShadowGearOption {
+  uint64 item_uid = 1;
+  ShadowCombatStats delta = 2;
+  bool worn_by_hunter = 3;
+  uint64 worn_by_shadow = 4;
+  string refusal = 5;
+  ItemInstance item = 6;
+}
+
+message ShadowGearOptionsResult {
+  uint64 shadow_uid = 1;
+  EquipSlot slot = 2;
+  repeated ShadowGearOption options = 3;
+  uint64 worn = 4;
+  repeated ItemInstance worn_items = 5;
+}
+
+message ShadowFusionStep {
+  string monster_id = 1;
+  string from = 2;
+  string to = 3;
+  uint32 fusions = 4;
+  uint64 gold = 5;
+}
+
+message ShadowFusionPlan {
+  repeated ShadowFusionStep steps = 1;
+  uint64 gold = 2;
+  string stop = 3;
+  string stop_rank = 4;
+  uint64 stop_gold = 5;
+  uint32 missing = 6;
+}
+
+message ShadowEvolve {
+  string monster_id = 1;
+  uint64 base_uid = 2;
+  bool preview = 3;
+  string plan_key = 4;
+}
+
+message ShadowFusionPreview {
+  string from = 1;
+  string to = 2;
+  Shadow base = 3;
+  repeated Shadow consumed = 4;
+  uint64 gold = 5;
+  repeated uint64 better = 6;
+}
+
+message ShadowEvolveResult {
+  ShadowFusionPlan done = 1;
+  repeated uint64 consumed = 2;
+  repeated Shadow evolved = 3;
+  bool automatic = 4;
+  uint32 army_size = 5;
+  bool preview = 6;
+  repeated ShadowFusionPreview fusions = 7;
+  string plan_key = 8;
+}
+
+message ShadowSpeciesList {
+}
+
+message ShadowSpecies {
+  string monster_id = 1;
+  repeated uint32 counts = 2;
+  repeated uint32 team_slots = 3;
+  uint32 awakened = 4;
+  uint32 favorites = 5;
+  uint64 best_uid = 6;
+  string best_rank = 7;
+  double best_power = 8;
+  ShadowFusionPlan plan = 9;
+}
+
+message ShadowSpeciesPage {
+  repeated ShadowSpecies species = 1;
+  uint32 army_size = 2;
+  uint32 army_capacity = 3;
+  ShadowFusionPlan all = 4;
+}
+
+message ShadowFilter {
+  string search = 1;
+  string rank = 2;
+  BoolFilter in_team = 3;
+  BoolFilter favorite = 4;
+  string quality = 5;
+  string specialization = 6;
+  BoolFilter awakened = 7;
+  string monster = 11;
+  BoolFilter geared = 12;
+  bool expedition = 13;
+}
+
+message ShadowList {
+  uint32 page = 1;
+  uint32 page_size = 2;
+  ShadowFilter filter = 3;
+  ShadowSort sort = 4;
+}
+
+message ShadowPage {
+  repeated Shadow shadows = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 pages = 4;
+  uint32 page_size = 5;
+  uint32 army_total = 6;
+}
+
+message ShadowDelta {
+  repeated Shadow updated = 1;
+  repeated uint64 removed = 2;
+}
+
+message ExpeditionDestination {
+  string gate = 1;
+  string difficulty = 2;
+  uint32 level = 3;
+  uint32 unlock_level = 4;
+  bool unlocked = 5;
+}
+
+message ExpeditionCandidate {
+  Shadow shadow = 1;
+  double power = 2;
+}
+
+message ExpeditionActive {
+  uint32 id = 1;
+  string gate = 2;
+  string difficulty = 3;
+  uint32 minutes = 4;
+  int64 started_at_ms = 5;
+  int64 ends_at_ms = 6;
+  double power = 7;
+  double recommended = 8;
+  double chance = 9;
+  repeated Shadow shadows = 11;
+  bool ready = 12;
+}
+
+message ExpeditionPanel {
+  bool enabled = 1;
+  repeated ExpeditionDestination destinations = 2;
+  repeated uint32 durations = 3;
+  repeated uint32 vip_durations = 4;
+  uint32 slots = 5;
+  uint32 squad_max = 6;
+  bool vip = 7;
+  repeated ExpeditionActive active = 8;
+  repeated ExpeditionCandidate candidates = 9;
+  uint32 collected = 11;
+  uint32 succeeded = 12;
+  int64 now_ms = 13;
+  uint32 vip_slots = 14;
+  uint32 level_extra_slot = 15;
+  uint32 squad_max_vip = 16;
+  bool dev_tools = 18;
+  uint32 access = 19;
+  bool sending_open = 20;
+  uint32 min_level = 21;
+}
+
+message ExpeditionPlan {
+  double power = 1;
+  double recommended = 2;
+  double ratio = 3;
+  double chance = 4;
+  double base_chance = 5;
+  uint32 minutes_real = 11;
+  double stones = 22;
+  uint32 potions = 15;
+  double find_chance = 16;
+  double fail_share = 17;
+  string refusal = 20;
+  double min_ratio = 21;
+}
+
+message ExpeditionReport {
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OUTCOME_SUCCESS = 1;
+    OUTCOME_FOUND = 2;
+    OUTCOME_FAILED = 3;
+  }
+
+  uint32 id = 1;
+  string gate = 2;
+  string difficulty = 3;
+  uint32 minutes = 4;
+  ExpeditionReport.Outcome outcome = 5;
+  uint32 potions = 8;
+  uint32 revives = 9;
+  uint32 stones = 13;
+  repeated Shadow shadows = 10;
+}
+
+message ExpeditionSend {
+  string gate = 1;
+  string difficulty = 2;
+  uint32 minutes = 3;
+  repeated uint64 uids = 4;
+  bool simulate = 5;
+}
+
+message ExpeditionRequest {
+
+  oneof op {
+    bool panel = 1;
+    ExpeditionSend send = 2;
+    uint32 collect = 3;
+    uint32 cancel = 4;
+    bool collect_all = 6;
+    bool finish_now = 7;
+  }
+}
+
+message ExpeditionResult {
+  ExpeditionPanel panel = 1;
+  ExpeditionPlan plan = 2;
+  repeated ExpeditionReport reports = 3;
+  uint32 sent_id = 4;
+}
+

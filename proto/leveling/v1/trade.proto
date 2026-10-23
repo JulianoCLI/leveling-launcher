@@ -1,0 +1,158 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum TradeCandidateKind {
+  TRADE_CANDIDATE_KIND_UNSPECIFIED = 0;
+  TRADE_CANDIDATE_KIND_ITEMS = 1;
+  TRADE_CANDIDATE_KIND_SHADOWS = 2;
+}
+
+message TradeInvite {
+  uint64 account = 1;
+  string name = 2;
+}
+
+message TradeRespond {
+  uint64 from = 1;
+  bool accept = 2;
+}
+
+message TradeOfferItem {
+  uint64 uid = 1;
+  uint32 qty = 2;
+}
+
+message TradeSetOffer {
+  repeated TradeOfferItem items = 1;
+  repeated uint64 shadows = 2;
+  uint64 gold = 3;
+}
+
+message TradeLock {
+  bool locked = 1;
+}
+
+message TradeConfirm {
+  bool confirmed = 1;
+}
+
+message TradeCancel {
+}
+
+message TradeGetState {
+}
+
+message TradeCandidates {
+  TradeCandidateKind kind = 1;
+  uint32 page = 2;
+  uint32 page_size = 3;
+  InventoryFilter item_filter = 4;
+  InventorySort item_sort = 5;
+  ShadowFilter shadow_filter = 6;
+  ShadowSort shadow_sort = 7;
+}
+
+message TradeRequest {
+
+  oneof op {
+    TradeInvite invite = 1;
+    TradeRespond respond = 2;
+    TradeSetOffer set_offer = 3;
+    TradeLock lock = 4;
+    TradeConfirm confirm = 5;
+    TradeCancel cancel = 6;
+    TradeGetState get_state = 7;
+    TradeCandidates candidates = 8;
+  }
+}
+
+message TradeSide {
+  uint64 account = 1;
+  string name = 2;
+  repeated ItemInstance items = 3;
+  repeated Shadow shadows = 4;
+  uint64 gold = 5;
+  bool locked = 6;
+  bool confirmed = 7;
+}
+
+message TradeState {
+  uint64 id = 1;
+  TradeSide me = 2;
+  TradeSide partner = 3;
+  uint32 version = 4;
+  int64 expires_at_ms = 5;
+  bool settling = 6;
+}
+
+message TradeInviteSent {
+  uint64 account = 1;
+  string name = 2;
+  int64 expires_at_ms = 3;
+}
+
+message TradeCandidatesPage {
+  TradeCandidateKind kind = 1;
+  repeated ItemInstance items = 2;
+  repeated Shadow shadows = 3;
+  uint32 total = 4;
+  uint32 page = 5;
+  uint32 page_size = 6;
+}
+
+message TradeIdle {
+}
+
+message TradeResponse {
+
+  oneof result {
+    TradeInviteSent invite_sent = 1;
+    TradeState state = 2;
+    TradeCandidatesPage candidates = 3;
+    TradeIdle idle = 4;
+  }
+}
+
+message TradeInvited {
+  uint64 from = 1;
+  string name = 2;
+  int64 expires_at_ms = 3;
+}
+
+message TradeClosed {
+  uint64 id = 1;
+  string code = 2;
+  map<string, string> params = 3;
+}
+
+message TradeCompleted {
+  uint64 id = 1;
+  string partner = 2;
+  uint32 received_items = 3;
+  uint32 received_shadows = 4;
+  uint64 received_gold = 5;
+  uint32 given_items = 6;
+  uint32 given_shadows = 7;
+  uint64 given_gold = 8;
+  bool mailed = 9;
+  int64 held_until_ms = 10;
+}
+
+message TradeDeclined {
+  uint64 by = 1;
+  string name = 2;
+}
+
+message TradePush {
+
+  oneof event {
+    TradeInvited invited = 1;
+    TradeState state = 2;
+    TradeClosed closed = 3;
+    TradeCompleted completed = 4;
+    TradeDeclined declined = 5;
+  }
+}
+

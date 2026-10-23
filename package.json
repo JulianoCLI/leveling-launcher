@@ -1,0 +1,32 @@
+{
+  "name": "leveling-launcher",
+  "version": "1.0.0",
+  "description": "Launcher multi-conta para Leveling Idle 2D, com monitor headless somente leitura da caçada.",
+  "main": "main.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "proto": "node tools/leveling-extract-proto.js",
+    "test": "node --test test/leveling-proto.test.cjs test/leveling-headless.test.cjs test/leveling-refill.test.cjs test/leveling-credentials.test.cjs test/hud-metrics.test.cjs test/leveling-panel.test.cjs test/account-preload.test.cjs",
+    "test:proto": "node --test test/leveling-proto.test.cjs",
+    "test:headless": "node --test test/leveling-headless.test.cjs",
+    "test:refill": "node --test test/leveling-refill.test.cjs",
+    "test:creds": "node --test test/leveling-credentials.test.cjs",
+    "test:ui": "electron test/shell-electron.test.cjs",
+    "test:mem": "electron test/mem-monitor.test.cjs",
+    "mem:bench": "node tools/mem-bench.js",
+    "mem:report": "node tools/mem-report.js"
+  },
+  "keywords": [
+    "leveling-idle",
+    "electron",
+    "launcher",
+    "headless"
+  ],
+  "devDependencies": {
+    "electron": "^43.1.1"
+  },
+  "dependencies": {
+    "protobufjs": "8.8.1"
+  }
+}

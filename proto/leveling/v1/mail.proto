@@ -1,0 +1,109 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+message MailEntry {
+  uint64 id = 1;
+  string kind = 2;
+  string sender = 3;
+  string subject_key = 4;
+  map<string, string> params = 5;
+  repeated ItemInstance items = 6;
+  repeated Shadow shadows = 7;
+  uint64 gold = 8;
+  uint64 diamonds = 9;
+  int64 created_at_ms = 10;
+  int64 expires_at_ms = 11;
+  int64 claimed_at_ms = 12;
+  int64 held_until_ms = 13;
+}
+
+message MailList {
+  uint32 page = 1;
+  uint32 page_size = 2;
+}
+
+message MailClaim {
+  uint64 id = 1;
+}
+
+message MailClaimAll {
+}
+
+message MailDelete {
+  repeated uint64 ids = 1;
+}
+
+message MailRequest {
+
+  oneof op {
+    MailList list = 1;
+    MailClaim claim = 2;
+    MailClaimAll claim_all = 3;
+    MailDelete delete = 4;
+  }
+}
+
+message MailPage {
+  repeated MailEntry entries = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 page_size = 4;
+  uint32 unclaimed = 5;
+}
+
+message MailClaimResult {
+  repeated uint64 claimed = 1;
+  repeated MailEntry partial = 2;
+  uint64 gold = 3;
+  uint64 diamonds = 4;
+  uint32 items = 5;
+  uint32 shadows = 6;
+  bool bag_full = 7;
+  uint32 unclaimed = 8;
+  uint32 boost_hours = 9;
+  bool bless = 10;
+  bool bless_pending = 11;
+  uint32 vip_days = 12;
+}
+
+message MailDeleted {
+  repeated uint64 ids = 1;
+  uint32 unclaimed = 2;
+}
+
+message MailResponse {
+
+  oneof result {
+    MailPage page = 1;
+    MailClaimResult claimed = 2;
+    MailDeleted deleted = 3;
+  }
+}
+
+message MailArrived {
+  uint64 id = 1;
+  string kind = 2;
+  string sender = 3;
+  string subject_key = 4;
+  map<string, string> params = 5;
+  uint64 gold = 6;
+  uint64 diamonds = 7;
+  uint32 items = 8;
+  uint32 shadows = 9;
+  uint32 unclaimed = 10;
+}
+
+message MailCount {
+  uint32 unclaimed = 1;
+}
+
+message MailPush {
+
+  oneof event {
+    MailArrived arrived = 1;
+    MailCount count = 2;
+  }
+}
+

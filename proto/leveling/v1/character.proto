@@ -1,0 +1,364 @@
+// Gerado por tools/leveling-extract-proto.js — não editar à mão.
+syntax = "proto3";
+
+package leveling.v1;
+
+enum RespecCost {
+  RESPEC_COST_UNSPECIFIED = 0;
+  RESPEC_COST_FREE = 1;
+  RESPEC_COST_TOKEN = 2;
+  RESPEC_COST_CRYSTAL = 3;
+}
+
+enum LootAction {
+  LOOT_ACTION_UNSPECIFIED = 0;
+  LOOT_ACTION_KEEP = 1;
+  LOOT_ACTION_SELL = 2;
+  LOOT_ACTION_DISMANTLE = 3;
+  LOOT_ACTION_LIST = 4;
+}
+
+message MedalEarned {
+  string id = 1;
+  int64 at_ms = 2;
+}
+
+message Identity {
+  string name = 1;
+  Gender gender = 2;
+  string skin_id = 3;
+  repeated string owned_skins = 4;
+  string aura_id = 5;
+  string class_id = 6;
+  bool class_change_available = 7;
+  bool aura_unlocked = 8;
+  uint32 hunter_rank = 9;
+  repeated EquipSlot hidden_visuals = 10;
+  bool hide_gear_stats = 11;
+  repeated MedalEarned medals = 12;
+  string medal_id = 13;
+  string title_id = 14;
+  string frame_id = 15;
+  string background_id = 16;
+  repeated string owned_cosmetics = 17;
+  repeated MedalEarned trophies = 18;
+  repeated string owned_looks = 19;
+  repeated GearLook worn_looks = 20;
+  map<string, uint32> cosmetic_variants = 21;
+  HunterAppearance appearance = 22;
+  repeated string owned_hair_styles = 23;
+  repeated string ring_modes = 24;
+  bool appearance_free_save = 25;
+  repeated string pack_fx_off = 26;
+  repeated string owned_chromas = 27;
+  repeated LookChroma look_chromas = 28;
+}
+
+message LookChroma {
+  string look_id = 1;
+  string chroma_id = 2;
+}
+
+message SetLookChroma {
+  string look_id = 1;
+  string chroma_id = 2;
+}
+
+message BuyChroma {
+  string chroma_id = 1;
+}
+
+message ChromaResult {
+  repeated string owned_chromas = 1;
+  repeated LookChroma look_chromas = 2;
+  uint64 diamonds_spent = 3;
+}
+
+message GearLook {
+  EquipSlot slot = 1;
+  string look_id = 2;
+}
+
+message SetGearLook {
+  EquipSlot slot = 1;
+  string look_id = 2;
+}
+
+message SetGearLookResult {
+  repeated string owned_looks = 1;
+  repeated GearLook worn_looks = 2;
+}
+
+message SetGearPrivacy {
+  repeated EquipSlot hidden_visuals = 1;
+  bool hide_stats = 2;
+}
+
+message SetGearPrivacyResult {
+  repeated EquipSlot hidden_visuals = 1;
+  bool hide_stats = 2;
+}
+
+message Progress {
+  uint32 level = 1;
+  uint64 xp = 2;
+  uint64 xp_to_next = 3;
+  uint32 hp = 4;
+  uint32 mana = 5;
+  uint64 authority_milli = 6;
+  uint64 banked_xp = 7;
+  uint32 level_cap = 8;
+  bool promotion_locked = 9;
+}
+
+message Wallet {
+  uint64 gold = 1;
+  uint64 diamonds = 2;
+}
+
+message Points {
+  uint32 stat_points = 1;
+  uint32 talent_points = 2;
+  uint32 shadow_talent_points = 3;
+  uint32 ambition_talent_points = 4;
+}
+
+message StatsState {
+  repeated StatAmount allocated = 1;
+  repeated StatAmount class_base = 2;
+  repeated StatAmount total = 3;
+  StatSources sources = 4;
+  RespecCost respec_cost = 7;
+  uint32 free_respecs = 8;
+  uint32 free_respec_below_level = 9;
+  repeated StatAmount from_items = 10;
+}
+
+message StatSources {
+  double equip_atk = 1;
+  double equip_def = 2;
+  double equip_hp = 3;
+  map<string, double> gems = 4;
+  SetBonusTotals sets = 5;
+  repeated string active_sets = 6;
+  map<string, double> talents = 7;
+  CodexBonus codex = 8;
+  map<string, double> affixes = 9;
+}
+
+message SetBonusTotals {
+  double attack = 1;
+  double defense = 2;
+  double life = 3;
+  double crit = 4;
+  double crit_mult = 5;
+  double penetration = 6;
+  double pen_flat = 7;
+  double speed = 8;
+}
+
+message CodexBonus {
+  double life = 1;
+  double attack = 2;
+  double defense = 3;
+  double drop = 4;
+  double exp = 5;
+}
+
+message CodexProgress {
+  uint64 done = 1;
+  uint64 total = 2;
+}
+
+message CodexState {
+  message Equipment {
+    repeated string rarities = 1;
+    uint32 highest_enchant = 2;
+  }
+
+  map<string, uint64> monsters = 1;
+  uint64 total_kills = 2;
+  map<string, uint64> items = 3;
+  map<string, CodexState.Equipment> equipment = 4;
+  uint32 highest_enchant = 5;
+  repeated uint32 claimed_rewards = 6;
+  repeated string completed_collections = 7;
+  CodexProgress progress_monsters = 8;
+  CodexProgress progress_loots = 9;
+  CodexProgress progress_equipment = 10;
+  CodexProgress progress_enhancement = 11;
+  CodexProgress progress_collections = 12;
+  CodexProgress progress_overall = 13;
+  CodexBonus bonus = 14;
+  uint64 talent_points_earned = 15;
+}
+
+message DerivedStats {
+  double atk = 1;
+  double atk_mag = 2;
+  double phys_power = 3;
+  double mag_power = 4;
+  double def = 5;
+  double res_mag = 6;
+  double max_hp = 7;
+  double max_mana = 8;
+  double attack_cooldown = 9;
+  double dodge = 10;
+  double accuracy = 11;
+  double crit = 12;
+  double crit_mult = 13;
+  double penetration = 14;
+  double pen_flat = 15;
+  double move_speed = 16;
+  double attack_range = 17;
+  double power = 18;
+  double mana_regen = 19;
+  map<string, uint32> skill_costs = 20;
+  double life_steal = 21;
+  double mana_siphon = 22;
+  double phys_reduction = 23;
+  double mag_reduction = 24;
+  double hp_regen = 25;
+  double cooldown_mult = 26;
+  double elite_damage = 27;
+  double potion_mult = 29;
+  double mana_cost_cut = 30;
+  double shadow_damage = 31;
+  double shadow_hp = 32;
+}
+
+message RewardMultipliers {
+  double xp = 1;
+  double gold = 2;
+  double drop = 3;
+  double capture = 4;
+  double xp_cap = 7;
+}
+
+message TimedBoosts {
+  int64 vip_until_ms = 1;
+  int64 exp_boost_until_ms = 2;
+  int64 drop_boost_until_ms = 3;
+  string bless_id = 4;
+  int64 exp_boost_paused_ms = 5;
+  int64 drop_boost_paused_ms = 6;
+  int64 capture_boost_until_ms = 7;
+  int64 capture_boost_paused_ms = 8;
+  int64 give_until_ms = 9;
+}
+
+message Consumables {
+  TierCounts hp_potions = 1;
+  TierCounts mana_potions = 2;
+  TierCounts revives = 3;
+  uint32 shadow_potions = 4;
+  uint32 shadow_revives = 5;
+}
+
+message AutoPotion {
+  PotionTier tier = 1;
+  float threshold = 2;
+  bool fallback = 3;
+  bool best_fit = 4;
+}
+
+message LootRule {
+  string rarity = 1;
+  LootAction action = 2;
+}
+
+message Automation {
+  bool auto_continue = 2;
+  bool auto_arise = 5;
+  bool auto_chest = 6;
+  AutoPotion hp_potion = 7;
+  AutoPotion mana_potion = 8;
+  bool auto_shadow_potion = 9;
+  string essence_pref = 14;
+  bool shadow_own_target = 15;
+  bool auto_shadow_revive = 16;
+  repeated LootRule loot_rules = 17;
+  bool keep_own_class = 18;
+  bool auto_enchant = 19;
+  bool auto_repair = 21;
+  bool auto_evolve = 22;
+  uint64 evolve_reserve = 23;
+  repeated string skill_order = 24;
+  bool skill_order_strict = 25;
+  bool auto_revive = 26;
+  PremiumEssenceFilter premium_filter = 27;
+}
+
+message PremiumEssenceFilter {
+  bool selective = 1;
+  bool golden = 2;
+  bool strong = 3;
+  bool awakened = 4;
+  string min_rank = 5;
+}
+
+message EconomyState {
+  double stone_index = 1;
+  double gold_index = 2;
+  double dust_index = 3;
+  int64 day = 4;
+}
+
+message TalentsState {
+  message Entry {
+    string node_id = 1;
+    uint32 level = 2;
+  }
+
+  repeated TalentsState.Entry nodes = 1;
+}
+
+message CharacterState {
+  uint64 account_id = 1;
+  Identity identity = 2;
+  Progress progress = 3;
+  Wallet wallet = 4;
+  Points points = 5;
+  StatsState stats = 6;
+  DerivedStats derived = 7;
+  RewardMultipliers multipliers = 8;
+  TimedBoosts boosts = 9;
+  Consumables consumables = 10;
+  Automation automation = 11;
+  Equipment equipment = 12;
+  TalentsState talents = 13;
+  HuntPrefs hunt = 14;
+  ShadowTeam shadow_team = 16;
+  InventorySummary inventory = 17;
+  int64 created_at_ms = 18;
+  CodexState codex = 19;
+  MissionsState missions = 21;
+  CollectionsState collections = 23;
+  EconomyState economy = 24;
+}
+
+message CharacterPatch {
+  Identity identity = 1;
+  Progress progress = 2;
+  Wallet wallet = 3;
+  Points points = 4;
+  StatsState stats = 5;
+  DerivedStats derived = 6;
+  RewardMultipliers multipliers = 7;
+  TimedBoosts boosts = 8;
+  Consumables consumables = 9;
+  Automation automation = 10;
+  Equipment equipment = 11;
+  TalentsState talents = 12;
+  HuntPrefs hunt = 13;
+  ShadowTeam shadow_team = 14;
+  InventorySummary inventory = 15;
+  CodexState codex = 16;
+  CodexKills codex_kills = 17;
+  EconomyState economy = 19;
+}
+
+message CodexKills {
+  map<string, uint64> monsters = 1;
+}
+
