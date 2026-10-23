@@ -90,6 +90,11 @@ handoff normal, não como erro, e nunca reconecta por cima.
 
 ## Uso
 
+No Windows, dois cliques em **`iniciar.bat`**. Ele instala as dependências na
+primeira vez e abre o launcher nas seguintes.
+
+Pela linha de comando, em qualquer sistema:
+
 ```
 npm install
 npm start
