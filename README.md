@@ -100,6 +100,12 @@ npm install
 npm start
 ```
 
+Em outra máquina, o repositório **não traz** o `node_modules`: é o `npm install`
+que baixa tudo, e o Electron vem num passo separado que antivírus, proxy e
+firewall de empresa costumam bloquear. Quando isso acontece o `npm install`
+termina sem erro e mesmo assim falta o programa — o `iniciar.bat` detecta e
+explica, em vez de deixar o Windows reclamar de um `.exe` inexistente.
+
 Em **👤 Contas**, salve usuário e senha de cada painel. As senhas ficam
 criptografadas com o `safeStorage` do sistema, em `userData`, e nunca voltam para
 a interface — o renderer só recebe `hasPassword`/`hasToken`. O token de sessão é
