@@ -271,6 +271,22 @@ test('session.replaced é explicado como handoff, não como falha', async () => 
   assert.equal(field(c, 'user').disabled, false, 'os campos voltam a ser editáveis');
 });
 
+test('queda de sessão mostra reconexão, não monitor desligado', async () => {
+  // O bug: a queda era exibida como encerramento, sugerindo que o usuário
+  // precisava reativar o monitor — quando ele volta sozinho.
+  const api = makeApi();
+  const { card } = load(api);
+  await tick();
+
+  api.handlers.status({ index: 0, status: 'connected' });
+  api.handlers.ended({ index: 0, code: 'session.timeout', handoff: false });
+
+  const c = card(0);
+  assert.match(field(c, 'meta').textContent, /reconectando/i);
+  assert.equal(field(c, 'pill').textContent, 'Reconectando');
+  assert.equal(field(c, 'user').disabled, true, 'o monitor continua com a conta');
+});
+
 test('telemetria da caçada aparece na linha de detalhe', async () => {
   const api = makeApi();
   const { card } = load(api);

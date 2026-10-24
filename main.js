@@ -307,7 +307,9 @@ levelingHeadlessManager.on('update', ({ index, state }) => {
   if (!flushTimer) flushTimer = setTimeout(flushUpdates, UPDATE_FLUSH_MS);
 });
 levelingHeadlessManager.on('status', ({ index, status, error }) => broadcast('leveling:status', { index, status, error }));
-levelingHeadlessManager.on('ended', ({ index, code }) => broadcast('leveling:ended', { index, code }));
+// `handoff` distingue a conta ter assumido em outro lugar (a WebView volta) de
+// uma queda de sessão (o monitor reconecta sozinho e a WebView fica fora).
+levelingHeadlessManager.on('ended', ({ index, code, handoff }) => broadcast('leveling:ended', { index, code, handoff }));
 levelingHeadlessManager.on('death', ({ index, death }) => broadcast('leveling:death', { index, death }));
 levelingHeadlessManager.on('arise', data => broadcast('leveling:arise', data));
 levelingHeadlessManager.on('refill', data => broadcast('leveling:refill', data));

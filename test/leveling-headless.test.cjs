@@ -313,6 +313,7 @@ test('session.replaced encerra o monitor e proíbe reconexão', async () => {
 
   assert.equal(ended.length, 1);
   assert.equal(ended[0].code, 'session.replaced');
+  assert.equal(ended[0].handoff, true, 'a conta assumiu em outro lugar');
   assert.equal(client.autoReconnect, false, 'reconectar brigaria com a sessão que assumiu');
 
   ws.close(1001);
@@ -320,6 +321,73 @@ test('session.replaced encerra o monitor e proíbe reconexão', async () => {
   assert.equal(client.reconnectTimer, null, 'não deve haver reconexão agendada');
 
   client.disconnect();
+});
+
+test('queda de sessão reconecta em vez de encerrar o monitor', async () => {
+  // O bug: qualquer `session_ended` era tratado como handoff, então uma sessão
+  // expirada depois de horas desligava o monitor e devolvia a conta ao jogo.
+  const client = makeClient({ autoReconnect: true });
+  client.connect();
+  await sleep(10);
+  const ws = MockWebSocket.last;
+  ws.reply('login', 'auth_ok', { token: 'tok-vivo', account_id: 1 });
+  await sleep(5);
+
+  const ended = [];
+  client.on('ended', e => ended.push(e));
+
+  ws.push('session_ended', { code: 'session.timeout' });
+  await sleep(5);
+
+  assert.equal(ended.length, 1);
+  assert.equal(ended[0].handoff, false, 'ninguém assumiu a conta: é queda');
+  assert.equal(client.endedReason, null, 'a reconexão não pode ficar bloqueada');
+  assert.equal(client.autoReconnect, true);
+  assert.equal(client.token, 'tok-vivo', 'a sessão morreu, a credencial não');
+  assert.ok(client.reconnectTimer, 'a volta tem de estar agendada');
+  assert.equal(client.status, 'reconnecting');
+
+  client.disconnect();
+});
+
+test('o monitor volta por resume depois de uma queda de sessão', async () => {
+  const client = makeClient({ autoReconnect: true });
+  client.connect();
+  await sleep(10);
+  const primeiro = MockWebSocket.last;
+  primeiro.reply('login', 'auth_ok', { token: 'tok-vivo', account_id: 1 });
+  await sleep(5);
+
+  // O login bem-sucedido reseta o backoff para 2 s; a suíte não espera por ele.
+  client.reconnectDelay = 5;
+
+  primeiro.push('session_ended', { code: 'session.idle' });
+  await sleep(40);
+
+  const segundo = MockWebSocket.last;
+  assert.notEqual(segundo, primeiro, 'um socket novo tem de ter sido aberto');
+  assert.deepEqual(segundo.sent[0].resume, { token: 'tok-vivo' },
+    'volta por resume, que não gasta tentativa de login');
+
+  client.disconnect();
+});
+
+test('o manager mantém a conta registrada numa queda de sessão', async () => {
+  const manager = new LevelingHeadlessManager({ WebSocket: MockWebSocket });
+  manager.start(3, { username: 'u', password: 'p', autoReconnect: true });
+  await sleep(10);
+
+  const ws = MockWebSocket.last;
+  ws.reply('login', 'auth_ok', { token: 't', account_id: 9 });
+  await sleep(5);
+
+  ws.push('session_ended', { code: 'session.timeout' });
+  await sleep(5);
+
+  assert.ok(manager.getClient(3), 'desmontar o cliente tiraria a conta do modo monitor');
+  assert.equal(manager.getStatus(3).ended, undefined, 'a sessão caiu, não encerrou');
+
+  manager.stopAll();
 });
 
 test('o manager encerra a conta quando a sessão é substituída', async () => {
@@ -385,6 +453,48 @@ test('ratelimit.login espera longo em vez de desistir da conta', async () => {
   assert.equal(client.endedReason, null, 'a credencial pode estar certa; não encerrar a conta');
   assert.ok(client.reconnectTimer, 'deve haver nova tentativa agendada');
   assert.equal(client.reconnectDelay, RATELIMIT_RETRY_MS, 'o teto normal não encurta a espera');
+
+  client.disconnect();
+});
+
+test('falha de autenticação transitória reconecta em vez de desistir', async () => {
+  // O bug: só ratelimit reconectava, então qualquer outro código — manutenção,
+  // erro interno, duas contas colidindo na mesma rota — matava o monitor e
+  // exigia reativar a conta à mão.
+  const client = makeClient({ autoReconnect: true });
+  client.connect();
+  await sleep(10);
+
+  const ws = MockWebSocket.last;
+  ws.reply('login', 'error', { code: 'session.multi_account_ip' });
+  await sleep(10);
+
+  assert.equal(client.endedReason, null, 'a falha passa; não encerrar a conta');
+  assert.equal(client.autoReconnect, true);
+  assert.equal(client.lastError, 'session.multi_account_ip');
+  assert.ok(client.reconnectTimer, 'deve haver nova tentativa agendada');
+
+  client.disconnect();
+});
+
+test('autenticação sem resposta fecha o socket e reagenda', async () => {
+  // O bug: o `catch` do `onopen` só anotava o erro. O monitor ficava pendurado
+  // com o socket aberto, sem ping, sem painel e sem reconexão — parado para
+  // sempre depois de um `resume` que o servidor nunca respondeu.
+  const client = makeClient({ autoReconnect: true, requestTimeoutMs: 20 });
+  client.connect();
+  await sleep(10);
+
+  const ws = MockWebSocket.last;
+  assert.ok(ws.sent.some(m => m.login), 'o login saiu');
+
+  // Ninguém responde: o request expira.
+  await sleep(40);
+
+  assert.equal(ws.readyState, 3, 'o socket meio morto tem de ser fechado');
+  assert.equal(client.endedReason, null);
+  assert.ok(client.reconnectTimer, 'a volta tem de estar agendada');
+  assert.match(client.lastError, /timeout/);
 
   client.disconnect();
 });

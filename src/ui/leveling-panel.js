@@ -51,6 +51,18 @@
     return ERROR_TEXT[code] || code;
   }
 
+  /** Códigos em que a conta assumiu alhures, e o monitor cedeu de vez. */
+  const HANDOFF_CODES = new Set(['session.replaced', 'session.duplicate']);
+
+  /**
+   * O encerramento foi handoff? O processo principal informa em `handoff`; o
+   * código é o fallback para quem ainda não manda o campo. A distinção importa
+   * porque só o handoff desliga o monitor — uma queda de sessão reconecta.
+   */
+  function isHandoff(code, handoff) {
+    return handoff === undefined ? HANDOFF_CODES.has(code) : !!handoff;
+  }
+
   function emptyAccount() {
     return {
       username: '',
@@ -61,6 +73,8 @@
       status: 'disconnected',
       error: '',
       ended: '',
+      /** O encerramento foi a conta assumir alhures, e não uma queda? */
+      endedHandoff: false,
       state: null
     };
   }
@@ -141,7 +155,10 @@
           acc.status = status || 'disconnected';
           acc.error = error || '';
           // Status novo invalida o motivo do encerramento anterior.
-          if (status === 'connecting' || status === 'connected') acc.ended = '';
+          if (status === 'connecting' || status === 'connected') {
+            acc.ended = '';
+            acc.endedHandoff = false;
+          }
           this.paint(index);
         });
       }
@@ -157,11 +174,14 @@
       }
 
       if (typeof api.onLevelingEnded === 'function') {
-        api.onLevelingEnded(({ index, code }) => {
+        api.onLevelingEnded(({ index, code, handoff }) => {
           const acc = this.accounts[index];
           if (!acc) return;
           acc.ended = code || '';
-          acc.status = 'disconnected';
+          // Queda de sessão não desliga o monitor: ele reconecta sozinho, e
+          // mostrar "Desligado" sugeria que o usuário precisava reativar.
+          acc.endedHandoff = isHandoff(code, handoff);
+          acc.status = acc.endedHandoff ? 'disconnected' : 'reconnecting';
           this.paint(index);
         });
       }
@@ -215,7 +235,10 @@
           if (!status || !acc) continue;
           acc.status = status.status || 'disconnected';
           acc.error = status.error || '';
+          // `ended` do principal só vem preenchido no handoff: uma queda de
+          // sessão não encerra o monitor, ela aparece como `reconnecting`.
           acc.ended = status.ended || '';
+          acc.endedHandoff = !!status.ended;
           acc.state = status.state || null;
           this.paint(i);
         } catch {
@@ -321,9 +344,9 @@
         return;
       }
       if (acc.ended) {
-        meta.textContent = acc.ended === 'session.replaced' || acc.ended === 'session.duplicate'
+        meta.textContent = acc.endedHandoff
           ? 'Sessão assumida em outro lugar — a conta voltou para o navegador.'
-          : `Sessão encerrada: ${describeError(acc.ended)}`;
+          : `Sessão caiu (${describeError(acc.ended)}) — reconectando…`;
         return;
       }
 
@@ -426,6 +449,7 @@
         acc.status = 'disconnected';
         acc.error = '';
         acc.ended = '';
+        acc.endedHandoff = false;
         acc.state = null;
         this.paint(index);
         this.say(`Conta ${index + 1}: monitor desligado. A conta pode voltar para o navegador.`);
@@ -434,6 +458,7 @@
 
       if (typeof api.levelingStart !== 'function') return;
       acc.ended = '';
+      acc.endedHandoff = false;
       acc.error = '';
       try {
         const result = await api.levelingStart(index);

@@ -62,10 +62,22 @@
           }
         },
 
-        setEnded(code) {
-          el.foot.textContent = code === 'session.replaced' || code === 'session.duplicate'
+        /**
+         * @param {boolean} [handoff] a conta assumiu em outro lugar. Sem isso,
+         *   uma queda de sessão parecia encerramento definitivo, quando o
+         *   monitor está só reconectando.
+         */
+        setEnded(code, handoff) {
+          if (!code) {
+            el.foot.textContent = '';
+            return;
+          }
+          const assumida = handoff === undefined
+            ? code === 'session.replaced' || code === 'session.duplicate'
+            : !!handoff;
+          el.foot.textContent = assumida
             ? 'Sessão assumida em outro lugar — a conta voltou para o jogo.'
-            : (code ? 'Sessão encerrada: ' + code : '');
+            : `Sessão caiu (${code}) — reconectando…`;
         },
 
         /** Atualiza identidade, HP, alerta e colunas a partir do estado bruto. */

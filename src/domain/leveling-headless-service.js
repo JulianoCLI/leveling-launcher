@@ -43,8 +43,10 @@
  *
  * O servidor aceita uma sessão por conta e substitui a anterior, então ativar
  * o headless derruba a aba do jogo e vice-versa — é o mecanismo de troca de
- * modo. Por isso `session_ended` nunca reconecta: significa que a conta
- * assumiu em outro lugar.
+ * modo. Por isso `session_ended` com código de substituição nunca reconecta:
+ * significa que a conta assumiu em outro lugar. Os outros códigos são queda de
+ * sessão e reconectam normalmente; confundir os dois fazia o monitor desistir
+ * sozinho depois de horas.
  */
 
 'use strict';
@@ -148,11 +150,43 @@ const IGNORED_PUSHES = new Set([
   'inventory_page', 'fight_rules'
 ]);
 
-/** Códigos de `session_ended` que significam "outra sessão assumiu". */
+/**
+ * Códigos de `session_ended` que significam "outra sessão assumiu". Só estes
+ * são handoff deliberado — a conta foi para a WebView ou para outra instância,
+ * e brigar pela sessão só derrubaria o usuário de onde ele está.
+ *
+ * Qualquer outro código é queda: expiração de sessão, reinício do servidor,
+ * ociosidade. Tratá-los como handoff fazia o monitor desistir sozinho depois de
+ * horas e a conta voltar ao modo normal sem ninguém ter pedido.
+ */
 const REPLACED_CODES = new Set(['session.replaced', 'session.duplicate']);
+
+/** O encerramento foi a conta assumindo em outro lugar, e não uma queda? */
+function isHandoff(code) {
+  return REPLACED_CODES.has(code);
+}
 
 /** Falha de autenticação por limite de tentativas, não por credencial ruim. */
 const RATELIMIT_CODES = new Set(['ratelimit.login', 'ratelimit.auth']);
+
+/**
+ * Recusas de autenticação em que insistir não serve para nada: a credencial
+ * está errada ou a conta não pode entrar. Tentar de novo só geraria ratelimit,
+ * então a conta é encerrada e o usuário tem de agir.
+ *
+ * Lista fechada de propósito. Qualquer outro código é tratado como falha
+ * transitória e reconecta — manutenção do servidor, erro interno, um
+ * `session.multi_account_ip` por duas contas saírem juntas pela mesma rota.
+ * O contrário (desistir de tudo que não fosse ratelimit) matava o monitor
+ * sozinho e exigia reativar a conta à mão.
+ */
+const FATAL_AUTH_CODES = new Set([
+  'account.invalid_credentials',
+  'account.not_found',
+  'account.banned',
+  'account.suspended',
+  'auth.invalid_credentials'
+]);
 
 /**
  * Rota de saída da conta. O servidor recusa várias contas vindo do mesmo IP
@@ -388,8 +422,14 @@ class LevelingHeadlessClient extends EventEmitter {
     ws.onopen = () => {
       if (this.ws !== ws) return;
       this.authenticate().catch(err => {
-        this.lastError = err.message;
-        this.emit('status', { index: this.index, status: 'error', error: err.message });
+        // O `request` da autenticação rejeita por timeout ou socket fechado.
+        // Só anotar o erro deixava o monitor pendurado para sempre: socket
+        // aberto, sem ping, sem painel e sem reconexão agendada. Fechar e
+        // reagendar é o que faz a conta voltar sozinha.
+        if (this.ws !== ws) return;
+        this.fail(err.message);
+        this.close();
+        this.scheduleReconnect();
       });
     };
 
@@ -432,17 +472,30 @@ class LevelingHeadlessClient extends EventEmitter {
       }
 
       if (useResume) {
-        // Token velho: cai para credenciais, se houver.
+        // Token velho: cai para credenciais, se houver. O token é descartado de
+        // qualquer forma — ele não serve mais, e guardá-lo faria toda
+        // reconexão seguinte gastar um `resume` que já se sabe recusado.
         this.token = '';
         this.emit('token', { index: this.index, token: '' });
         if (this.username && this.password) return this.authenticate();
       }
 
-      // Credencial inválida de fato: insistir só geraria ratelimit.
-      this.endedReason = code;
-      this.autoReconnect = false;
+      // Credencial errada ou conta impedida: insistir só geraria ratelimit, e
+      // nenhuma espera resolve. A conta é encerrada e o usuário tem de agir.
+      if (FATAL_AUTH_CODES.has(code)) {
+        this.endedReason = code;
+        this.autoReconnect = false;
+        this.fail(code);
+        this.close();
+        return;
+      }
+
+      // Qualquer outro código é tratado como transitório: manutenção, erro
+      // interno, colisão de IP entre duas contas. Desistir aqui era o que
+      // derrubava o monitor sozinho por uma falha que passa.
       this.fail(code);
       this.close();
+      this.scheduleReconnect();
       return;
     }
 
@@ -735,14 +788,46 @@ class LevelingHeadlessClient extends EventEmitter {
     }
   }
 
+  /**
+   * Fim de sessão anunciado pelo servidor. Dois casos muito diferentes vêm no
+   * mesmo pacote, e separá-los é o que mantém o monitor de pé:
+   *
+   *   handoff  a conta assumiu no navegador ou em outra instância. Ceder é a
+   *            única resposta certa: reconectar derrubaria o usuário de onde
+   *            ele está, e é assim que o botão de ligar/desligar funciona.
+   *   queda    sessão expirada, servidor reiniciado, ociosidade. A conta não
+   *            está em uso em nenhum outro lugar, então o lugar é do monitor e
+   *            ele reconecta pelo backoff normal.
+   *
+   * Marcar `endedReason` nos dois casos era o bug: ele bloqueia
+   * `scheduleReconnect`, e o manager desmontava o cliente. Depois de algumas
+   * horas qualquer queda de sessão devolvia a conta ao modo normal.
+   */
   onSessionEnded(value) {
     const code = value.code || 'session.ended';
-    this.endedReason = code;
-    if (REPLACED_CODES.has(code)) {
-      // A conta entrou pelo navegador ou por outra instância: ceder o lugar.
+    const handoff = isHandoff(code);
+
+    if (handoff) {
+      this.endedReason = code;
       this.autoReconnect = false;
+    } else {
+      // O socket desta sessão já não vale. Fechar aqui em vez de esperar o
+      // `onclose` do servidor: ele pode nunca chegar, e um socket meio morto
+      // deixaria o monitor parado sem painel nem reconexão. `close()` zera
+      // `this.ws`, o que faz o `onclose` tardio ser ignorado — então o reagendar
+      // é explícito. O token é preservado: a sessão morreu, a credencial não.
+      this.lastError = code;
+      this.close();
+      this.setStatus('disconnected');
+      this.scheduleReconnect();
     }
-    this.emit('ended', { index: this.index, code, params: value.params || {} });
+
+    this.emit('ended', {
+      index: this.index,
+      code,
+      handoff,
+      params: value.params || {}
+    });
     return false;
   }
 
@@ -1709,8 +1794,13 @@ class LevelingHeadlessManager extends EventEmitter {
     for (const event of ['update', 'status', 'error', 'ended', 'death', 'notice', 'token', 'arise', 'refill', 'hunts']) {
       client.on(event, data => this.emit(event, data));
     }
-    // Sessão substituída encerra o monitor: a conta está sendo usada alhures.
-    client.on('ended', () => this.stop(accountIndex));
+    // Só a sessão substituída encerra o monitor: a conta está sendo usada
+    // alhures. Uma queda de sessão não é motivo para desmontar o cliente — ele
+    // tem token e backoff para voltar sozinho, e desmontar aqui era o que fazia
+    // a conta sair do modo monitor depois de horas rodando.
+    client.on('ended', ({ handoff }) => {
+      if (handoff) this.stop(accountIndex);
+    });
 
     client.connect();
     return client;
@@ -1872,9 +1962,12 @@ module.exports = {
   WS_URL,
   ORIGIN,
   proxyDispatcher,
+  isHandoff,
+  REPLACED_CODES,
   IGNORED_CASES,
   IGNORED_PUSHES,
   RATELIMIT_CODES,
+  FATAL_AUTH_CODES,
   RATELIMIT_RETRY_MS,
   REFILL_INTERVAL_MS,
   REFILL_BACKOFF_MS,

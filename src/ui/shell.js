@@ -29,6 +29,13 @@
   const api = window.pokeAPI;
   const ACTIVE = new Set(['connecting', 'connected', 'reconnecting']);
 
+  /**
+   * Fim de sessão em que a conta assumiu em outro lugar — a WebView volta. Os
+   * outros códigos são queda: o monitor reconecta sozinho, e recriar a WebView
+   * nesses casos tirava a conta do modo monitor depois de horas rodando.
+   */
+  const HANDOFF_CODES = new Set(['session.replaced', 'session.duplicate']);
+
   const grid = document.getElementById('grid');
   const tabsEl = document.getElementById('tabs');
   /** Os quatro painéis da grade; `account` diz a qual conta cada um aponta. */
@@ -438,14 +445,27 @@
 
     api.onLevelingUpdate(({ index, state }) => renderState(index, state));
 
-    api.onLevelingEnded(({ index, code }) => {
+    api.onLevelingEnded(({ index, code, handoff }) => {
       const entry = stateOf(index);
-      entry.status = 'disconnected';
       entry.pending = null;
-      panelOf(index)?.hud.setEnded(code);
+      // O processo principal informa `handoff`; o código é o fallback.
+      const assumida = handoff === undefined ? HANDOFF_CODES.has(code) : !!handoff;
+      panelOf(index)?.hud.setEnded(code, assumida);
+
+      // Só o handoff devolve a conta ao navegador: ela assumiu em outro lugar e
+      // o monitor cedeu de vez. Numa queda de sessão o monitor reconecta
+      // sozinho, e criar a WebView aqui faria o renderer brigar pela sessão —
+      // era isto que tirava a conta do modo monitor depois de horas.
+      if (assumida) {
+        entry.status = 'disconnected';
+        paintPanel(index);
+        loadGame(index);
+        return;
+      }
+
+      // Reconectando: o status real chega pelo `onLevelingStatus` seguinte.
+      entry.status = 'reconnecting';
       paintPanel(index);
-      // `session.replaced` é o handoff normal: a conta volta para a WebView.
-      loadGame(index);
     });
 
     // Compras do auto-refill. O modal pode estar fechado; `PioRefill` só guarda
