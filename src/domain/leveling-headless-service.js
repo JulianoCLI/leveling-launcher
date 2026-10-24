@@ -10,6 +10,8 @@
  *   `login` / `resume`   autenticar
  *   `ping`               manter o elo vivo
  *   `party_request{get}` leitura inicial do grupo
+ *   `party_request{create|invite|answer|leave|disband}`
+ *                        montar o grupo das contas da aba, a pedido do usuário
  *   `buy_consumable`     repor poções e revives
  *   `buy_essence`        repor essência
  *   `travel`             ir à cidade onde a loja existe
@@ -23,6 +25,11 @@
  * Repor consumível obriga a viagem completa — cerca de 3,3 s fora da caçada,
  * só quando falta estoque. `start_hunt` nunca escolhe caçada: devolve
  * exatamente o `gate_id`/`tier_min`/`difficulty` que o monitor leu na entrada.
+ *
+ * Os `party_request` de escrita só saem quando o usuário clica em montar o
+ * grupo, nunca por conta própria. Eles exigem o mesmo `start_hunt` de retorno:
+ * medido, `leave` manda a conta para a cidade (`party.left.to_city`), e um
+ * `start_hunt` do líder puxa o grupo todo de volta (`party.follow.pulled`).
  *
  * Continua proibido: `leave_hunt`, `set_automation`, `use_consumable`,
  * `revive`, e qualquer `start_hunt` que não seja o retorno à caçada original.
@@ -38,6 +45,7 @@
 const EventEmitter = require('events');
 const { getCodec } = require('./leveling-codec');
 const refill = require('./leveling-refill');
+const party = require('./leveling-party');
 
 const WS_URL = 'wss://game.levelingidle2d.com.br:8443/ws';
 const ORIGIN = 'https://levelingidle2d.com.br';
@@ -237,6 +245,12 @@ class LevelingHeadlessClient extends EventEmitter {
     this.sceneNpcs = [];
     /** Viagem que não chegou ao `start_hunt`; o próximo login resgata. */
     this.tripInterrupted = false;
+    /**
+     * Montagem de grupo em curso. Abre as esperas por `party_push`, que fora
+     * disso não são aguardadas por ninguém: o fluxo normal do painel só reage
+     * ao push quando ele chega.
+     */
+    this.partyBusy = false;
 
     this.sessionStartTime = 0;
     this.state = this.initialState(options);
@@ -571,8 +585,9 @@ class LevelingHeadlessClient extends EventEmitter {
 
     const changed = this.reduce(packet);
     // O ciclo de refill espera pacotes em vez de dormir. Acordar depois do
-    // `reduce` garante que quem esperava já lê o estado novo.
-    if (this.trip) this.wake(packet.caseName, packet.value);
+    // `reduce` garante que quem esperava já lê o estado novo. A montagem de
+    // grupo usa o mesmo mecanismo, esperando o `party_push` do convite.
+    if (this.trip || this.partyBusy) this.wake(packet.caseName, packet.value);
     if (changed) this.emitUpdate();
   }
 
@@ -1350,6 +1365,100 @@ class LevelingHeadlessClient extends EventEmitter {
     if (cost) this.state.gold = Math.max(0, this.state.gold - cost);
   }
 
+  // ------------------------------------------------------------------- grupo
+
+  /**
+   * Operação de grupo. Medido: o servidor responde `party_response` com o
+   * estado novo, ou `error` com um código (`party.exists`, `party.none`,
+   * `party.notLeader`). Devolver o estado com `errorCode` anexado deixa o
+   * chamador decidir, sem precisar distinguir `throw` de recusa do servidor.
+   */
+  async partyRequest(op, value = {}) {
+    const res = await this.request('party_request', { [op]: value });
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'party.failed' };
+    }
+    const state = (res.value && res.value.state) || null;
+    // O push chega junto e já reduz; aplicar aqui também mantém o estado certo
+    // quando a resposta vem antes do push.
+    if (state && this.applyParty(state)) this.emitUpdate();
+    return state || {};
+  }
+
+  partyGet() {
+    return this.partyRequest('get', {});
+  }
+
+  /**
+   * Cria o grupo. `settings.privacy` tem de ser o número do enum: medido, o
+   * `verify` do codec recusa o nome com `enum value expected`.
+   */
+  partyCreate(settings) {
+    return this.partyRequest('create', { settings });
+  }
+
+  partyInvite(name) {
+    return this.partyRequest('invite', { name: String(name || '') });
+  }
+
+  /** Aceita (ou recusa) o convite de uma conta. `fromAccount` é o id do líder. */
+  partyAnswer(fromAccount, accept) {
+    return this.partyRequest('answer', {
+      from_account: Number(fromAccount) || 0,
+      accept: !!accept
+    });
+  }
+
+  /**
+   * Sai do grupo. Medido: isto **tira a conta da caçada** e a manda para a
+   * cidade (`notice{party.left.to_city}`); quem chama precisa devolvê-la.
+   */
+  partyLeave() {
+    return this.partyRequest('leave', {});
+  }
+
+  partyDisband() {
+    return this.partyRequest('disband', {});
+  }
+
+  /**
+   * Espera o convite de `fromAccount` chegar. `party_push` carrega vários
+   * eventos no mesmo case, então filtra até achar o convite ou estourar o
+   * prazo — o convidado não pode responder antes de o convite existir.
+   */
+  async waitForInvite(fromAccount, timeoutMs = 8000) {
+    const alvo = String(fromAccount);
+    const limite = Date.now() + timeoutMs;
+    while (Date.now() < limite) {
+      const push = await this.waitFor('party_push', Math.max(0, limite - Date.now()));
+      if (!push) return null;
+      const invite = push.invite;
+      if (invite && String(invite.from_account) === alvo) return invite;
+    }
+    return null;
+  }
+
+  /**
+   * Devolve a conta à caçada do bilhete. É o que puxa o grupo inteiro: medido,
+   * os membros recebem `party.follow.pulled` e entram na cena em ~150 ms.
+   */
+  async startHunt(ticket) {
+    const res = await this.request('start_hunt', {
+      gate_id: ticket.gate_id,
+      tier_min: Number(ticket.tier_min) || 0,
+      difficulty: ticket.difficulty || ''
+    });
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'hunt.failed' };
+    }
+    return res.value || {};
+  }
+
+  /** A caçada lida na entrada, ou `null` se a conta não estava caçando. */
+  getHuntTicket() {
+    return this.huntTicket ? { ...this.huntTicket } : null;
+  }
+
   // ------------------------------------------------------------------- saída
 
   setStatus(status) {
@@ -1456,6 +1565,8 @@ class LevelingHeadlessManager extends EventEmitter {
     this.clientOptions = options;
     /** Auto-refill: uma configuração para todas as contas, não por conta. */
     this.refillConfig = refill.normalizeConfig(options.refillConfig);
+    /** Montagem de grupo em curso; uma por vez em todo o launcher. */
+    this.partyBusy = false;
   }
 
   /** Aplica a configuração de refill nos monitores já em execução. */
@@ -1512,6 +1623,45 @@ class LevelingHeadlessManager extends EventEmitter {
     const client = this.getClient(accountIndex);
     return !!client && client.status === 'connected';
   }
+
+  /**
+   * Monta um grupo com as contas indicadas, na ordem recebida: a primeira vira
+   * líder. Só entram contas com monitor conectado — a conta que está na WebView
+   * do jogo não tem socket aqui, e o servidor aceita uma sessão por conta.
+   *
+   * Uma montagem por vez: as etapas são encadeadas por push, e duas em paralelo
+   * leriam os pushes uma da outra.
+   */
+  async assembleParty(indexes) {
+    if (this.partyBusy) return { ok: false, error: 'party.busy', members: [] };
+
+    const clients = [];
+    const skipped = [];
+    for (const index of indexes || []) {
+      const client = this.getClient(index);
+      if (client && client.status === 'connected') clients.push(client);
+      else skipped.push(index);
+    }
+
+    if (clients.length < 2) {
+      return { ok: false, error: 'party.needTwo', members: [], skipped };
+    }
+
+    this.partyBusy = true;
+    for (const client of clients) client.partyBusy = true;
+    try {
+      const result = await party.assembleParty(clients, step => this.emit('party:step', step));
+      return { ...result, skipped };
+    } catch (err) {
+      return { ok: false, error: err.message, members: [], skipped };
+    } finally {
+      for (const client of clients) {
+        client.partyBusy = false;
+        client.clearWaiters();
+      }
+      this.partyBusy = false;
+    }
+  }
 }
 
 const levelingHeadlessManager = new LevelingHeadlessManager();
@@ -1533,3 +1683,4 @@ module.exports = {
   TRIP_CASES,
   NPC_REACH
 };
+

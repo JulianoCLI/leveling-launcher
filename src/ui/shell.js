@@ -25,6 +25,7 @@
 
   const PER_TAB = 4;
   const MAX_TABS = 16;
+  const LAYOUTS = ['split', 'focus', 'solo', 'cols', 'rows'];
   const api = window.pokeAPI;
   const ACTIVE = new Set(['connecting', 'connected', 'reconnecting']);
 
@@ -46,8 +47,11 @@
    */
   const tabPrefs = t => {
     const list = prefs.tabPrefs || (prefs.tabPrefs = []);
-    if (!list[t]) list[t] = { panels: PER_TAB, bootMonitor: false };
-    return list[t];
+    if (!list[t]) list[t] = { panels: PER_TAB, bootMonitor: false, layout: 'split', focus: 0 };
+    const tab = list[t];
+    if (!LAYOUTS.includes(tab.layout)) tab.layout = 'split';
+    if (!(tab.focus >= 0)) tab.focus = 0;
+    return tab;
   };
 
   /** Grava a preferência da aba atual sem mexer nas outras. */
@@ -94,6 +98,7 @@
         <div class="panel-head">
           <span class="panel-title" data-role="title">Conta ${i + 1}</span>
           <span class="panel-who" data-role="who"></span>
+          <button type="button" data-role="focus" title="Destacar este painel (tela cheia ou painel grande)">⤢</button>
           <button type="button" data-role="reload" title="Recarregar o jogo neste painel">⟳</button>
           <button type="button" data-role="headless" title="Monitor somente leitura da caçada">Monitor</button>
         </div>
@@ -119,6 +124,8 @@
       };
       panel.toggle.onclick = () => toggleHeadless(panel.account);
       root.querySelector('[data-role="reload"]').onclick = () => reloadGame(panel.account);
+      panel.focusBtn = root.querySelector('[data-role="focus"]');
+      panel.focusBtn.onclick = () => focusPanel(panel.slot);
       panels.push(panel);
     }
   }
@@ -175,6 +182,8 @@
     if (count) count.value = String(tab.panels);
     const bootMonitor = document.getElementById('bootMonitorBtn');
     if (bootMonitor) bootMonitor.classList.toggle('is-on', !!tab.bootMonitor);
+    const layout = document.getElementById('layoutMode');
+    if (layout) layout.value = tab.layout;
 
     applyPanelCount(tab.panels);
     if (window.PioLeveling && window.PioLeveling.setTab) window.PioLeveling.setTab(activeTab);
@@ -263,6 +272,50 @@
       if (shown) loadGame(panel.account);
       else unloadGame(panel.account);
     });
+    applyLayout();
+  }
+
+  // --------------------------------------------------------------- arranjos
+
+  /**
+   * Arruma os painéis já visíveis. Nunca mexe em quantos existem nem descarta
+   * WebView: `solo` tira os outros painéis da vista, mas eles continuam
+   * montados — o jogo segue rodando de fundo, que é o ponto do modo.
+   *
+   * `focus` com menos de dois painéis não tem faixa lateral para preencher, e
+   * `solo` com um painel só já é a tela inteira: nos dois casos vira `split`.
+   */
+  function applyLayout() {
+    const tab = tabPrefs(activeTab);
+    const total = Math.min(PER_TAB, Math.max(1, +tab.panels || PER_TAB));
+    const focus = Math.min(total - 1, Math.max(0, +tab.focus || 0));
+    const mode = total < 2 && (tab.layout === 'focus' || tab.layout === 'solo') ? 'split' : tab.layout;
+
+    grid.dataset.layout = mode;
+    panels.forEach((panel, i) => {
+      const shown = i < total;
+      panel.root.classList.toggle('is-focus', shown && mode === 'focus' && i === focus);
+      panel.root.classList.toggle('is-bg', shown && mode === 'solo' && i !== focus);
+      panel.focusBtn.classList.toggle('is-on', shown && i === focus && mode !== 'split');
+      panel.focusBtn.hidden = mode === 'split' || mode === 'cols' || mode === 'rows';
+    });
+  }
+
+  /**
+   * Clique no ⤢. Em `split`, `cols` e `rows` o botão não aparece, então isto só
+   * chega vindo de `focus`/`solo`: escolhe quem é o painel grande.
+   */
+  async function focusPanel(slot) {
+    const tab = tabPrefs(activeTab);
+    if (tab.focus === slot) return;
+    await saveTabPrefs({ focus: slot });
+    applyLayout();
+  }
+
+  async function setLayout(mode) {
+    if (!LAYOUTS.includes(mode)) return;
+    await saveTabPrefs({ layout: mode });
+    applyLayout();
   }
 
   // ------------------------------------------------------------------ headless
@@ -365,6 +418,12 @@
       api.onLevelingRefill(data => window.PioRefill?.report(data));
     }
 
+    // Etapas da montagem de grupo: ela passa por várias contas e leva alguns
+    // segundos, então o botão narra em vez de só ficar desabilitado.
+    if (api.onLevelingPartyStep) {
+      api.onLevelingPartyStep(step => setPartyStatus(partyText(step), true));
+    }
+
     if (api.onWindowVisible) api.onWindowVisible(onVisibilityChange);
   }
 
@@ -407,6 +466,96 @@
     refillOverlay.classList.remove('show');
   }
 
+  // ------------------------------------------------------------------- grupo
+
+  /**
+   * Textos das etapas e das recusas da montagem de grupo. Os códigos de erro
+   * vêm do servidor, medidos nas sondas de `tools/party-*-probe.js`.
+   */
+  const PARTY_TEXT = {
+    'party.reading': () => 'Lendo o grupo atual…',
+    'party.leaving': s => `${s.name || 'conta'} saindo do grupo antigo…`,
+    'party.disbanding': s => `${s.name || 'conta'} desfazendo o grupo antigo…`,
+    'party.creating': s => `${s.name || 'conta'} criando o grupo…`,
+    'party.created': s => `Grupo criado${s.partyCode ? ' (código ' + s.partyCode + ')' : ''}.`,
+    'party.inviting': s => `Convidando ${s.name || 'conta'}…`,
+    'party.joined': s => `${s.name || 'conta'} entrou.`,
+    'party.pulling': s => `Puxando o grupo para a caçada${s.gateId ? ' em ' + s.gateId : ''}…`
+  };
+
+  const PARTY_ERROR = {
+    'party.busy': 'Já existe uma montagem de grupo em andamento.',
+    'party.needTwo': 'Precisa de pelo menos duas contas desta aba em modo monitor.',
+    'party.noHuntTicket': 'Grupo montado, mas a conta líder não estava em caçada: o grupo ficou na cidade. Inicie a caçada na líder.',
+    'party.inviteNotReceived': 'o convite não chegou',
+    'party.exists': 'a conta já está em outro grupo',
+    'party.full': 'o grupo já está cheio',
+    'party.none': 'a conta não está em grupo'
+  };
+
+  const partyText = step => {
+    const fn = PARTY_TEXT[step.code];
+    return fn ? fn(step) : step.code;
+  };
+
+  /** Mostra o andamento no próprio botão: é onde o usuário está olhando. */
+  function setPartyStatus(text, busy) {
+    const button = document.getElementById('partyBtn');
+    if (!button) return;
+    button.classList.toggle('is-on', !!busy);
+    button.disabled = !!busy;
+    button.title = text || button.dataset.title || '';
+  }
+
+  /**
+   * Monta o grupo com as contas da aba atual que já têm monitor ativo. A conta
+   * na WebView do jogo não entra: o launcher não tem socket dela, porque o
+   * servidor aceita uma sessão por conta.
+   */
+  async function assembleParty() {
+    const elegiveis = panels
+      .filter(panel => !panel.root.hidden && ACTIVE.has(stateOf(panel.account).status))
+      .map(panel => panel.account);
+
+    if (elegiveis.length < 2) {
+      setPartyStatus(PARTY_ERROR['party.needTwo'], false);
+      window.alert(PARTY_ERROR['party.needTwo']);
+      return;
+    }
+
+    setPartyStatus('Montando o grupo…', true);
+    try {
+      const result = await api.levelingAssembleParty(elegiveis);
+      if (!result) throw new Error('sem resposta do processo principal');
+
+      if (!result.partyId) {
+        const motivo = PARTY_ERROR[result.error] || result.error || 'falhou';
+        setPartyStatus('Grupo não foi criado: ' + motivo, false);
+        window.alert('Não foi possível criar o grupo: ' + motivo);
+        return;
+      }
+
+      const partes = [`Grupo de ${result.size} contas criado.`];
+      if (result.code) partes.push(`Código: ${result.code}.`);
+      if (result.failed && result.failed.length) {
+        partes.push('Ficaram de fora: ' + result.failed
+          .map(f => `${f.name} (${PARTY_ERROR[f.error] || f.error})`)
+          .join(', ') + '.');
+      }
+      if (result.huntError) {
+        partes.push(PARTY_ERROR[result.huntError] ||
+          `A volta à caçada falhou (${result.huntError}): confira se as contas saíram da cidade.`);
+      }
+
+      const texto = partes.join(' ');
+      setPartyStatus(texto, false);
+      if (result.failed?.length || result.huntError) window.alert(texto);
+    } catch (e) {
+      report('party', e);
+      setPartyStatus('Erro ao montar o grupo.', false);
+    }
+  }
+
   function wireTitlebar() {
     document.getElementById('appVer').textContent = api.appVersion ? 'v' + api.appVersion : '';
 
@@ -416,6 +565,14 @@
     overlay.onclick = e => { if (e.target === overlay) closeAccounts(); };
     const refillBtn = document.getElementById('refillBtn');
     if (refillBtn) refillBtn.onclick = openRefill;
+
+    const partyBtn = document.getElementById('partyBtn');
+    if (partyBtn) {
+      // O título original volta junto com o botão: as mensagens de etapa o
+      // sobrescrevem enquanto a montagem corre.
+      partyBtn.dataset.title = partyBtn.title;
+      partyBtn.onclick = () => assembleParty().catch(e => report('party', e));
+    }
     if (refillOverlay) {
       document.getElementById('refillCloseBtn').onclick = closeRefill;
       document.getElementById('refillClose').onclick = closeRefill;
@@ -450,6 +607,9 @@
       applyPanelCount(count.value);
       await saveTabPrefs({ panels: +count.value });
     };
+
+    const layout = document.getElementById('layoutMode');
+    if (layout) layout.onchange = () => setLayout(layout.value).catch(e => report('layout', e));
 
     const add = document.getElementById('tabAdd');
     if (add) add.onclick = () => setTabCount(tabs + 1).catch(e => report('tabs', e));
@@ -543,10 +703,14 @@
     selectTab,
     setTabCount,
     applyPanelCount,
+    applyLayout,
+    setLayout,
+    focusPanel,
     openAccounts,
     closeAccounts,
     toggleHeadless,
     startMonitors,
+    assembleParty,
     loadGame,
     unloadGame
   };

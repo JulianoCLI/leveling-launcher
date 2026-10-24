@@ -33,6 +33,17 @@ const ACCOUNTS_PER_TAB = 4;
 const ACCOUNTS = ACCOUNTS_PER_TAB;
 const MAX_TABS = 16;
 /**
+ * Arranjos da grade, por aba:
+ *
+ *   split — o de sempre: células iguais, uma por painel;
+ *   focus — um painel grande e os outros em faixa menor ao lado;
+ *   solo  — um painel ocupando a aba inteira. Os outros continuam vivos,
+ *           só não são pintados: é a diferença entre esconder e descarregar;
+ *   cols  — todos lado a lado em colunas;
+ *   rows  — todos empilhados em linhas.
+ */
+const LAYOUTS = ['split', 'focus', 'solo', 'cols', 'rows'];
+/**
  * A raiz do site é a página de divulgação, com um botão que navega até o jogo.
  * O launcher entra direto em `/jogar`: é lá que o cliente roda e que o token
  * salvo em `localStorage` vira sessão, sem passar pela tela inicial.
@@ -131,9 +142,14 @@ function normalizePrefs(raw) {
   const herdado = Array.isArray(raw.tabPrefs) ? raw.tabPrefs : [];
   raw.tabPrefs = Array.from({ length: raw.tabs }, (_, t) => {
     const tab = herdado[t] || {};
+    const panels = Math.min(ACCOUNTS_PER_TAB, Math.max(1, +tab.panels || +raw.panels || ACCOUNTS_PER_TAB));
     return {
-      panels: Math.min(ACCOUNTS_PER_TAB, Math.max(1, +tab.panels || +raw.panels || ACCOUNTS_PER_TAB)),
-      bootMonitor: tab.bootMonitor === undefined ? !!raw.bootMonitor : !!tab.bootMonitor
+      panels,
+      bootMonitor: tab.bootMonitor === undefined ? !!raw.bootMonitor : !!tab.bootMonitor,
+      /** Arranjo da grade. `split` é o de sempre; os outros vieram depois. */
+      layout: LAYOUTS.includes(tab.layout) ? tab.layout : 'split',
+      /** Painel grande em `focus` e único visível em `solo`. */
+      focus: Math.min(panels - 1, Math.max(0, +tab.focus || 0))
     };
   });
 
@@ -384,6 +400,26 @@ ipcMain.handle('leveling:creds:clear', (event, index) => {
   const ok = levelingCredentials.clear(index);
   return { ok, status: levelingCredentials.getPublicStatus() };
 });
+
+/**
+ * Monta o grupo com as contas da aba. Só entram as que já têm monitor ativo: a
+ * conta na WebView do jogo não tem socket no processo principal, e o servidor
+ * aceita uma sessão por conta, então o launcher não pode falar por ela.
+ */
+ipcMain.handle('leveling:party:assemble', async (event, indexes) => {
+  launcherOnly(event);
+  const lista = (Array.isArray(indexes) ? indexes : [])
+    .map(i => Number(i))
+    .filter(i => Number.isInteger(i) && i >= 0 && i < accountCount);
+
+  const result = await levelingHeadlessManager.assembleParty(lista);
+  if (!result.ok) logErro('party', `aba ${lista.join(',')}: ${result.error || result.huntError || 'falhou'}`);
+  return result;
+});
+
+// A montagem leva alguns segundos e passa por várias contas; narrar cada etapa
+// é o que impede o botão de parecer travado.
+levelingHeadlessManager.on('party:step', step => broadcast('leveling:party-step', step));
 
 ipcMain.handle('leveling:refill:get', event => {
   launcherOnly(event);
@@ -650,4 +686,4 @@ app.on('before-quit', () => {
   }
 });
 
-module.exports = { GAME_URL, ACCOUNTS, ACCOUNTS_PER_TAB, MAX_TABS };
+module.exports = { GAME_URL, ACCOUNTS, ACCOUNTS_PER_TAB, MAX_TABS, LAYOUTS };

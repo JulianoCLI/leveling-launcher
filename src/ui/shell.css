@@ -110,7 +110,10 @@ body {
   color: #fff;
 }
 
-#panelCount {
+/* Sem `no-drag` o clique nestes seletores é capturado pela região de arrasto da
+   barra de título e o menu nunca abre. */
+#panelCount,
+#layoutMode {
   -webkit-app-region: no-drag;
   background: var(--color-surface-1);
   color: var(--color-text-primary);
@@ -177,6 +180,7 @@ body {
 /* -------------------------------------------------------------------- painéis */
 
 #grid {
+  position: relative;
   height: calc(100% - var(--titlebar-h) - var(--tabbar-h));
   display: grid;
   gap: 4px;
@@ -199,6 +203,74 @@ body {
 #grid[data-panels="4"] {
   grid-template-columns: 1fr 1fr;
   grid-template-rows: 1fr 1fr;
+}
+
+/* --------------------------------------------------------------- arranjos */
+
+/* Colunas e linhas valem para qualquer contagem: `auto-fit` sobre painéis
+   visíveis evita ter de escrever uma regra por número. */
+#grid[data-layout="cols"] {
+  grid-template-columns: none;
+  grid-template-rows: 1fr;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+}
+
+#grid[data-layout="rows"] {
+  grid-template-columns: 1fr;
+  grid-template-rows: none;
+  grid-auto-flow: row;
+  grid-auto-rows: 1fr;
+}
+
+/* Um painel grande à esquerda e os demais numa coluna estreita à direita. A
+   contagem de linhas não cabe num `calc()` dentro de `repeat()`, então vem de
+   regras por número de painéis logo abaixo. Com menos de dois visíveis não há
+   faixa lateral para preencher, e o shell cai para `split`. */
+#grid[data-layout="focus"] {
+  grid-template-columns: 3fr 1fr;
+  grid-auto-flow: row;
+}
+
+#grid[data-layout="focus"][data-panels="2"] {
+  grid-template-rows: 1fr;
+}
+
+#grid[data-layout="focus"][data-panels="3"] {
+  grid-template-rows: 1fr 1fr;
+}
+
+#grid[data-layout="focus"][data-panels="4"] {
+  grid-template-rows: repeat(3, 1fr);
+}
+
+#grid[data-layout="focus"] .panel.is-focus {
+  grid-column: 1;
+  grid-row: 1 / -1;
+}
+
+/* Sem fixar a coluna, o posicionamento automático tentaria a primeira coluna,
+   que é a do painel grande, e os menores desceriam para fora da grade. */
+#grid[data-layout="focus"] .panel:not(.is-focus) {
+  grid-column: 2;
+}
+
+#grid[data-layout="solo"] {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+
+/* O painel de fundo continua montado — a WebView viva, o monitor conectado —
+   e só sai da vista. Descarregá-lo aqui seria derrubar a conta, que é
+   exatamente o oposto de "rodar de fundo".
+   O tamanho é mantido de propósito: encolher a WebView para um ponto faria o
+   jogo reagir ao novo viewport e voltar torto quando o painel reaparecesse. */
+.panel.is-bg {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
 }
 
 /* `display: flex` sobrepõe o atributo `hidden`, então o painel escondido

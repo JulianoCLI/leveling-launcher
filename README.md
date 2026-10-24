@@ -81,6 +81,35 @@ preço real é **aprendido**: a primeira compra de um item é de **uma unidade**
 o `gold_cost` que volta é o que orça o lote seguinte, no mesmo balcão. Sem isso
 a reserva de ouro seria furada por um fator de cinco.
 
+## Criar PT
+
+**👥 Criar PT** monta um grupo com as contas da aba atual que estão **em modo
+monitor**. A conta aberta na WebView do jogo fica de fora: o launcher não tem
+socket dela, porque o servidor aceita uma sessão por conta.
+
+O primeiro painel da aba vira líder. O grupo nasce **fechado**
+(`PARTY_PRIVACY_CLOSED`), já que são contas do mesmo dono — aberto deixaria
+estranhos ocuparem uma das quatro vagas.
+
+A ordem é medida contra o servidor, não suposta:
+
+1. lê o grupo atual de cada conta, e guarda o **bilhete de caçada do líder**
+   antes de mexer em qualquer coisa;
+2. os membros saem do grupo antigo, o líder desfaz o dele — `create` é recusado
+   com a conta já em grupo;
+3. o líder cria o grupo; a resposta já traz o código de convite;
+4. convida uma conta por vez, e cada convidada responde só depois de o convite
+   chegar nela;
+5. o líder manda `start_hunt` com o bilhete do passo 1, e **o grupo inteiro é
+   puxado** para a caçada dele (`party.follow.pulled`, ~150 ms).
+
+O passo 5 não é enfeite: sair do grupo **tira a conta da caçada e a manda para a
+cidade** (`party.left.to_city`), e entrar num grupo novo não a devolve. Se o
+líder não estava caçando, não há bilhete, e o launcher **avisa** em vez de
+deixar as contas paradas na cidade em silêncio.
+
+O botão narra cada etapa enquanto corre, e uma montagem roda por vez.
+
 ## Sessão única
 
 O servidor aceita uma sessão por conta e substitui a anterior. Então as duas

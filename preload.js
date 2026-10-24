@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   levelingClearCreds: (index) => ipcRenderer.invoke('leveling:creds:clear', index),
   levelingSetProxy: (index, proxy) => ipcRenderer.invoke('leveling:proxy:set', index, proxy),
 
+  // Grupo: monta uma PT com as contas da aba que já estão em modo monitor.
+  levelingAssembleParty: (indexes) => ipcRenderer.invoke('leveling:party:assemble', indexes),
+  onLevelingPartyStep: (cb) => ipcRenderer.on('leveling:party-step', (_e, data) => cb(data)),
+
   // Auto-refill: uma configuração para todas as contas, sem índice.
   levelingGetRefill: () => ipcRenderer.invoke('leveling:refill:get'),
   levelingSetRefill: (config) => ipcRenderer.invoke('leveling:refill:set', config),
