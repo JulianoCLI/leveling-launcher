@@ -182,6 +182,21 @@ test('isLeader só aceita o membro marcado como líder', () => {
   assert.equal(isLeader({}, '12920'), false);
 });
 
+test('isLeader também lê o estado reduzido do painel', () => {
+  // `applyParty` guarda `id`/`accountId`, não `party_id`/`account_id`. Ler só a
+  // forma do servidor fazia esta função dizer "não é líder" para a líder, e a
+  // troca de caçada em grupo então mandava `start_hunt` para cada membro.
+  const painel = {
+    id: '11611',
+    members: [
+      { accountId: '12920', leader: true },
+      { accountId: '12927', leader: false }
+    ]
+  };
+  assert.equal(isLeader(painel, '12920'), true);
+  assert.equal(isLeader(painel, '12927'), false);
+});
+
 test('menos de duas contas não monta grupo', async () => {
   const { clients } = quatro();
   const result = await assembleParty(clients.slice(0, 1));

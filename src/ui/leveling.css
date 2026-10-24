@@ -453,3 +453,364 @@
   color: #0b0f14;
   font-weight: 600;
 }
+
+/* ------------------------------------------- modal da troca de caçada ---
+   Mesmas classes compartilhadas dos outros dois (`lv-head`, `hint`,
+   `lv-warn`, `lv-status-bar`); só o que é próprio do seletor de mapa tem
+   regra nova. */
+
+#huntOverlay {
+  background: rgba(0, 0, 0, .72);
+  backdrop-filter: blur(4px);
+  position: fixed;
+  inset: 0;
+  /* Acima dos outros dois: ele é aberto por cima deles. */
+  z-index: 1420;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+#huntOverlay.show {
+  display: flex;
+}
+
+#huntModal {
+  /* Mais largo que os outros dois: a lista tem quatro colunas e os nomes de
+     portal são longos. */
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 36px);
+  padding: 22px 24px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, .5);
+  color-scheme: var(--theme-color-scheme);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+#huntModal .lv-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+#huntModal .lv-head h2 {
+  color: var(--color-text-primary);
+  font-size: 21px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-weight: 700;
+}
+
+#huntModal .lv-icon {
+  font-size: 20px;
+}
+
+#huntModal .hint {
+  color: var(--color-text-secondary);
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+#huntModal .lv-close {
+  background: transparent;
+  border: 0;
+  color: var(--color-text-secondary);
+  width: 34px;
+  height: 34px;
+  font-size: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  transition: background .15s ease, color .15s ease;
+}
+
+#huntModal .lv-close:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+#huntModal .lv-warn {
+  background: rgba(230, 170, 50, .14);
+  border: 1px solid rgba(230, 170, 50, .3);
+  color: #ffd27a;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  margin-bottom: 12px;
+}
+
+/* O corpo rola; cabeçalho, avisos e ações ficam fixos. */
+#huntModal #huntBody {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding-right: 4px;
+}
+
+/* Um filtro só: portal e faixa viraram linha da lista. */
+#huntModal .hu-pickers {
+  display: grid;
+  grid-template-columns: minmax(0, 220px);
+  gap: 10px;
+}
+
+#huntModal .hu-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  min-width: 0;
+}
+
+#huntModal .hu-field select {
+  background: var(--color-surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--color-text-primary);
+  border-radius: 7px;
+  padding: 6px 7px;
+  font-size: 12px;
+  font-family: inherit;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+#huntModal .hu-field select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+/* A lista de caçadas, com os níveis de todas as linhas à vista: escolher exige
+   comparar, e comparar exige ver junto. */
+#huntModal .hu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 12px 0 4px;
+}
+
+#huntModal .hu-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px 104px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+}
+
+#huntModal .hu-row:hover {
+  background: var(--color-surface-hover);
+}
+
+#huntModal .hu-row.is-on {
+  background: var(--color-surface-1);
+  border-color: var(--color-accent);
+}
+
+/* Acima do nível da conta mais baixa marcada, ou faixa ainda não liberada: a
+   linha fica avisada, nunca escondida — quem decide é o servidor. */
+#huntModal .hu-row.is-low .hu-col-min {
+  color: #ffd27a;
+}
+
+#huntModal .hu-row.is-low .hu-col-name small {
+  color: #ffd27a;
+}
+
+/* Cabeçalho da lista: mesma grade das linhas, sem interação. */
+#huntModal .hu-row-head {
+  cursor: default;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--color-text-secondary);
+  font-weight: 700;
+  padding-bottom: 2px;
+}
+
+#huntModal .hu-row-head:hover {
+  background: transparent;
+}
+
+#huntModal .hu-col-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+#huntModal .hu-col-name b {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#huntModal .hu-col-name small {
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+}
+
+#huntModal .hu-col-min,
+#huntModal .hu-col-rec {
+  font-weight: 700;
+}
+
+#huntModal .hu-col-rec {
+  color: var(--color-accent);
+}
+
+#huntModal .hu-col-boss {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#huntModal .hu-warn {
+  margin: 8px 0 0;
+  padding: 8px 11px;
+  border-radius: 9px;
+  background: rgba(230, 170, 50, .14);
+  border: 1px solid rgba(230, 170, 50, .3);
+  color: #ffd27a;
+  font-size: 11.5px;
+}
+
+#huntModal .hu-group {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--color-text-secondary);
+  margin: 14px 0 6px;
+  font-weight: 700;
+}
+
+#huntModal .hu-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#huntModal .hu-target {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#huntModal .hu-target:hover {
+  background: var(--color-surface-hover);
+}
+
+/* Sem monitor a conta não pode ser trocada daqui; continua na lista para não
+   parecer que ela deixou de existir. */
+#huntModal .hu-target.is-off {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+#huntModal .hu-target.is-low {
+  border-color: rgba(230, 170, 50, .35);
+}
+
+#huntModal .hu-target-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#huntModal .hu-target-level {
+  color: var(--color-accent);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+#huntModal .hu-target-hunt,
+#huntModal .hu-target-note {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#huntModal .hu-target.is-low .hu-target-note {
+  color: #ffd27a;
+}
+
+#huntModal .lv-status-bar {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  min-height: 16px;
+}
+
+#huntModal .lv-status-bar.is-error {
+  color: #ff9b89;
+}
+
+#huntModal .modal-actions button.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #0b0f14;
+  font-weight: 600;
+}
+
+#huntModal .modal-actions button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 560px) {
+  #huntModal .hu-pickers {
+    grid-template-columns: 1fr;
+  }
+
+  /* O chefe é o primeiro a sair: é contexto, não critério de escolha. */
+  #huntModal .hu-row {
+    grid-template-columns: minmax(0, 1fr) 56px 72px;
+  }
+
+  #huntModal .hu-col-boss {
+    display: none;
+  }
+
+  #huntModal .hu-target {
+    grid-template-columns: auto 1fr auto;
+  }
+
+  #huntModal .hu-target-hunt,
+  #huntModal .hu-target-note {
+    grid-column: 2 / -1;
+  }
+}
+

@@ -66,6 +66,48 @@ ipcMain.handle('leveling:stop', (_e, index) => {
   return { ok: true };
 });
 
+/**
+ * Catálogo de caçadas como o principal o devolve: portais, dificuldades e as
+ * faixas por portal. É dele que saem os níveis exigido e recomendado.
+ */
+const huntCatalog = {
+  gates: [
+    { id: 'portal-azul', sceneId: 'cena-azul', name: 'Portal Azul', icon: '', minLevel: 1 },
+    { id: 'castelo-demonios', sceneId: 'cena-castelo', name: 'Castelo', icon: '', minLevel: 30 }
+  ],
+  difficulties: [
+    { id: 'normal', name: 'Normal', reqLevel: 0, levelOffset: 0, rewardMult: 1, dropMult: 1, statusMult: 1 },
+    { id: 'dificil', name: 'Difícil', reqLevel: 40, levelOffset: 0, rewardMult: 1.5, dropMult: 1.3, statusMult: 2 }
+  ],
+  tiers: {
+    'portal-azul': [
+      { min: 1, max: 10, bossId: '', comingSoon: false, areas: { normal: { level: 8, requiredLevel: 1 } } }
+    ],
+    'castelo-demonios': [
+      {
+        min: 36, max: 45, bossId: 'lorde-demonio', comingSoon: false,
+        areas: { normal: { level: 42, requiredLevel: 30 }, dificil: { level: 52, requiredLevel: 45 } }
+      }
+    ]
+  }
+};
+
+const huntSwitches = [];
+ipcMain.handle('leveling:hunts:get', () => ({ catalog: huntCatalog }));
+ipcMain.handle('leveling:hunt:set', (_e, indexes, ticket) => {
+  huntSwitches.push({ indexes, ticket });
+  return {
+    ok: true,
+    gateId: ticket.gate_id,
+    tierMin: ticket.tier_min,
+    difficulty: ticket.difficulty,
+    changed: indexes.map(index => ({ index, name: 'conta' + index })),
+    pulled: [],
+    failed: [],
+    skipped: []
+  };
+});
+
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 let win;
 const read = code => win.webContents.executeJavaScript(code);
@@ -195,6 +237,103 @@ app.whenReady().then(async () => {
   win.webContents.send('window:visible', true);
   await pause(150);
   assert.equal(await read('window.__painted || 0'), 1, 'Returning must flush the last known state once');
+
+  // 8.5. Troca de caçada sem desligar o monitor. O nível da conta e o mapa
+  // atual vêm do mesmo `leveling:update` que pinta o HUD.
+  win.webContents.send('leveling:update', [{
+    index: 0,
+    state: {
+      game: 'leveling-idle', name: 'desjunior', level: 41,
+      hunt: { gateId: 'castelo-demonios', tierMin: 36, difficulty: 'normal' }, a: {}
+    }
+  }]);
+  await pause(150);
+
+  // Botão do painel: uma conta só na lista.
+  await read('window.PioShell.openHunt([0])');
+  await pause(300);
+  assert.equal(await read('document.getElementById("huntOverlay").classList.contains("show")'), true,
+    'Panel button must open the hunt picker');
+  assert.equal(await read('document.querySelectorAll("#huntBody [data-target]").length'), 1,
+    'Opening from the panel must scope the picker to that account');
+
+  // Um filtro só: portal e faixa são linha da lista, não seletor.
+  assert.equal(await read('document.querySelectorAll("#huntBody select").length'), 1,
+    'The picker must offer the difficulty filter and nothing else');
+  assert.equal(await read('!!document.querySelector("#huntBody [data-role=\'gate\']")'), false,
+    'Gate must be a row, not a select');
+  assert.equal(await read('!!document.querySelector("#huntBody [data-role=\'tier\']")'), false,
+    'Tier must be a row, not a select');
+
+  // A lista mostra toda faixa de todo portal, com os níveis de cada uma: é o
+  // que permite comparar sem abrir uma combinação de cada vez.
+  const rows = await read(`[...document.querySelectorAll('#huntBody .hu-row[data-gate]')]
+    .map(r => r.textContent.replace(/\\s+/g, ' ').trim())`);
+  assert.equal(rows.length, 2, 'Every tier of every gate must be a row: ' + rows.join(' | '));
+  // Ordem de progressão: o portal de nível 1 primeiro.
+  assert.match(rows[0], /Portal Azul tier 1–10 1 8/,
+    'Required and recommended levels must show on every row: ' + rows[0]);
+  // Exigido 30 é o do portal, acima do da dificuldade e da área.
+  assert.match(rows[1], /Castelo tier 36–45 30 42/,
+    'Required level must be the strictest of the three: ' + rows[1]);
+
+  // A caçada lida da conta é a linha marcada de saída.
+  assert.equal(await read('window.PioHunt.choice.gateId'), 'castelo-demonios');
+  assert.equal(await read('document.querySelector("#huntModal .hu-row.is-on").dataset.tier'), '36');
+
+  // Dificuldade mais pesada: a área exige 45, acima do portal e da dificuldade,
+  // e o portal azul some porque não declara essa dificuldade.
+  await read(`(() => {
+    const select = document.querySelector('#huntBody [data-role="difficulty"]');
+    select.value = 'dificil';
+    select.onchange();
+    return true;
+  })()`);
+  await pause(150);
+  const hard = await read(`[...document.querySelectorAll('#huntBody .hu-row[data-gate]')]
+    .map(r => r.textContent.replace(/\\s+/g, ' ').trim())`);
+  assert.equal(hard.length, 1, 'Tiers without the chosen difficulty must leave the list: ' + hard.join(' | '));
+  assert.match(hard[0], /Castelo tier 36–45 · precisa de 45 45 52/,
+    'The difficulty must recompute both levels: ' + hard[0]);
+  // Nível 41 contra 45 exigido: linha e conta ficam avisadas, não escondidas.
+  assert.equal(await read('document.querySelector("#huntModal .hu-row[data-gate]").classList.contains("is-low")'), true,
+    'A hunt above the account level must be flagged');
+  assert.equal(await read('document.querySelector("#huntModal .hu-target").classList.contains("is-low")'), true,
+    'An account below the required level must be flagged');
+
+  // Voltar para normal e escolher pela lista: um clique, sem cascata.
+  await read(`(() => {
+    const select = document.querySelector('#huntBody [data-role="difficulty"]');
+    select.value = 'normal';
+    select.onchange();
+    return true;
+  })()`);
+  await pause(150);
+  await read('document.querySelector(\'#huntBody .hu-row[data-gate="portal-azul"]\').click()');
+  await pause(150);
+  assert.equal(await read('window.PioHunt.choice.tierMin'), 1, 'Clicking a row must pick its gate and tier');
+  assert.equal(await read('document.querySelector("#huntModal .hu-row.is-on").dataset.gate'), 'portal-azul');
+
+  await read('document.getElementById("huntApply").click()');
+  await pause(300);
+  assert.deepEqual(huntSwitches, [{
+    indexes: [0],
+    ticket: { gate_id: 'portal-azul', tier_min: 1, difficulty: 'normal' }
+  }], 'Applying must send exactly the chosen hunt for the chosen accounts');
+
+  // Botão da titlebar: a aba inteira, com as contas sem monitor desabilitadas.
+  await read('window.PioShell.closeHunt()');
+  await read('document.getElementById("huntBtn").click()');
+  await pause(300);
+  assert.equal(await read('document.querySelectorAll("#huntBody [data-target]").length'), 4,
+    'The titlebar button must list every account of the tab');
+  assert.equal(await read('document.querySelectorAll("#huntBody [data-target]:checked").length'), 1,
+    'Only the accounts in monitor mode may start selected');
+  assert.equal(await read('document.querySelectorAll("#huntBody [data-target]:disabled").length'), 3,
+    'Accounts without a monitor must stay visible but disabled');
+
+  await read('window.PioShell.closeHunt()');
+  assert.equal(await read('document.getElementById("huntOverlay").classList.contains("show")'), false);
 
   // 9. Desligar devolve o painel para a WebView do jogo.
   await read('window.PioShell.toggleHeadless(0)');

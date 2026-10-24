@@ -36,6 +36,9 @@
     <button id="partyBtn"
       title="Monta um grupo com as contas desta aba que estão em modo monitor. A primeira vira líder e puxa as outras para a caçada dela.">👥
       Criar PT</button>
+    <button id="huntBtn"
+      title="Troca a caçada das contas em modo monitor, sem desligar o monitor. Dá para trocar uma conta só ou várias juntas.">🗺️
+      Caçada</button>
     <button id="reloadAll" title="Recarrega a página do jogo em todos os painéis">⟳ Atualizar</button>
     <button id="bootMonitorBtn"
       title="Esta aba abre já em modo monitor, sem carregar o jogo nos painéis (consumo mínimo)">🔋 Monitor no
@@ -130,10 +133,37 @@
     </div>
   </div>
 
+  <!-- Modal de caçada: escolhe o mapa e aplica nas contas marcadas -->
+  <div id="huntOverlay" style="display:none">
+    <div id="huntModal" role="dialog" aria-labelledby="huntTitle" aria-modal="true">
+      <div class="lv-head">
+        <h2><span class="lv-icon" aria-hidden="true">🗺️</span><span id="huntTitle">Trocar de caçada</span></h2>
+        <button type="button" class="lv-close" id="huntCloseBtn" aria-label="Fechar">&times;</button>
+      </div>
+      <p class="hint">Troca o mapa <b>sem desligar o modo monitor</b>. A lista vem do servidor: <b>exigido</b> é o
+        nível mínimo para entrar, <b>recomendado</b> é o nível dos monstros de lá. A dificuldade recalcula os dois em
+        toda a lista.</p>
+
+      <div class="lv-warn">
+        ⚠️ Contas em grupo: só o <b>líder</b> recebe a troca, e o servidor puxa o grupo inteiro para a caçada nova.
+      </div>
+
+      <div id="huntBody"></div>
+
+      <div class="lv-status-bar" id="huntStatusBar" role="status" aria-live="polite"></div>
+
+      <div class="modal-actions">
+        <button type="button" id="huntApply" class="primary" disabled>Trocar a caçada</button>
+        <button type="button" id="huntClose">Fechar</button>
+      </div>
+    </div>
+  </div>
+
   <script src="src/ui/hud-metrics.js"></script>
   <script src="src/ui/leveling-hud.js"></script>
   <script src="src/ui/leveling-panel.js"></script>
   <script src="src/ui/leveling-refill-ui.js"></script>
+  <script src="src/ui/leveling-hunt-ui.js"></script>
   <script src="src/ui/shell.js"></script>
 </body>
 

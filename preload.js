@@ -29,6 +29,14 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   levelingAssembleParty: (indexes) => ipcRenderer.invoke('leveling:party:assemble', indexes),
   onLevelingPartyStep: (cb) => ipcRenderer.on('leveling:party-step', (_e, data) => cb(data)),
 
+  // Troca de caçada sem sair do modo monitor. `indexes` aceita uma conta só ou
+  // várias: é a mesma operação, e é a interface que decide o escopo.
+  levelingGetHunts: () => ipcRenderer.invoke('leveling:hunts:get'),
+  levelingSetHunt: (indexes, ticket) => ipcRenderer.invoke('leveling:hunt:set', indexes, ticket),
+  // O catálogo só existe depois do primeiro login; avisar preenche um seletor
+  // que já estava aberto sem a lista.
+  onLevelingHunts: (cb) => ipcRenderer.on('leveling:hunts', (_e, data) => cb(data)),
+
   // Auto-refill: uma configuração para todas as contas, sem índice.
   levelingGetRefill: () => ipcRenderer.invoke('leveling:refill:get'),
   levelingSetRefill: (config) => ipcRenderer.invoke('leveling:refill:set', config),

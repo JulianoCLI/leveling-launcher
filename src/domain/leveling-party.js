@@ -65,10 +65,22 @@ function hasParty(state) {
   return !!id && id !== '0';
 }
 
-/** A conta é a líder do grupo em que está? Só ela pode convidar e desfazer. */
+/**
+ * A conta é a líder do grupo em que está? Só ela pode convidar e desfazer.
+ *
+ * Aceita as duas formas do mesmo dado, pelo mesmo motivo de `hasParty`:
+ * `account_id`, como o servidor manda, e `accountId`, como `applyParty` guarda
+ * no estado do painel. Ler só a primeira fazia esta função dizer "não é líder"
+ * para a líder, sempre que recebia o estado reduzido.
+ */
 function isLeader(state, accountId) {
   if (!hasParty(state) || accountId == null) return false;
-  return (state.members || []).some(m => m.leader && String(m.account_id) === String(accountId));
+  const alvo = String(accountId);
+  return (state.members || []).some(m => {
+    if (!m || !m.leader) return false;
+    const id = m.account_id != null ? m.account_id : m.accountId;
+    return String(id) === alvo;
+  });
 }
 
 /**

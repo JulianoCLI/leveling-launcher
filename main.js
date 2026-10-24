@@ -421,6 +421,69 @@ ipcMain.handle('leveling:party:assemble', async (event, indexes) => {
 // é o que impede o botão de parecer travado.
 levelingHeadlessManager.on('party:step', step => broadcast('leveling:party-step', step));
 
+/**
+ * Cópia em disco da lista de portais. O `content_catalog` chega **uma vez, no
+ * login** e não pode ser pedido de novo: sem este arquivo, um monitor que já
+ * estava conectado quando o launcher abriu deixaria o seletor de caçada vazio
+ * até a conta relogar, que é o que ele estava justamente evitando.
+ *
+ * São alguns kilobytes — o 1 MB do catálogo não é guardado em lugar nenhum.
+ */
+const HUNTS_FILE = () => path.join(app.getPath('userData'), 'hunts.json');
+
+function readHuntsFile() {
+  try {
+    return JSON.parse(fs.readFileSync(HUNTS_FILE(), 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Portais, faixas e dificuldades para o seletor de caçada. A cópia de disco
+ * atende a primeira abertura; a primeira conta a logar a substitui pela lista
+ * do servidor, que pode ter portal novo.
+ */
+ipcMain.handle('leveling:hunts:get', event => {
+  launcherOnly(event);
+  const salvo = levelingHeadlessManager.getHuntCatalog() || readHuntsFile();
+  if (salvo) levelingHeadlessManager.setHuntCatalog(salvo);
+  return { catalog: levelingHeadlessManager.getHuntCatalog() };
+});
+
+// O catálogo chega uma vez, no primeiro login: avisar é o que preenche um
+// seletor que já estava aberto sem a lista, e gravar é o que faz a próxima
+// abertura do launcher já ter a lista antes de qualquer login.
+levelingHeadlessManager.on('hunts', ({ catalog }) => {
+  try {
+    fs.writeFileSync(HUNTS_FILE(), JSON.stringify(catalog));
+  } catch (e) {
+    logErro('hunts', e.message);
+  }
+  broadcast('leveling:hunts', { catalog });
+});
+
+/**
+ * Troca a caçada das contas indicadas sem desligar o monitor. Uma conta só ou
+ * várias juntas: a diferença está apenas na lista que a interface manda.
+ *
+ * É a única escolha de caçada que o launcher faz, e sempre por clique: o
+ * monitor nunca troca de mapa por conta própria.
+ */
+ipcMain.handle('leveling:hunt:set', async (event, indexes, ticket) => {
+  launcherOnly(event);
+  const lista = (Array.isArray(indexes) ? indexes : [indexes])
+    .map(i => Number(i))
+    .filter(i => Number.isInteger(i) && i >= 0 && i < accountCount);
+
+  const result = await levelingHeadlessManager.setHunt(lista, ticket);
+  if (!result.ok) {
+    const motivo = result.error || (result.failed || []).map(f => f.error).join(',') || 'falhou';
+    logErro('hunt', `contas ${lista.join(',')}: ${motivo}`);
+  }
+  return result;
+});
+
 ipcMain.handle('leveling:refill:get', event => {
   launcherOnly(event);
   return { config: readPrefs().refill, items: levelingRefill.ITEMS };

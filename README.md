@@ -22,18 +22,19 @@ sair dele é fechada:
 | `travel` | ir à cidade onde a loja existe (auto-refill) |
 | `move_to` | chegar ao balcão (auto-refill) |
 | `interact` | abrir a loja no NPC (auto-refill) |
-| `start_hunt` | voltar à caçada que a conta já estava fazendo (auto-refill) |
+| `start_hunt` | voltar à caçada que a conta já estava fazendo (auto-refill), ou trocar de caçada quando o usuário escolhe outra (🗺️ Caçada) |
 
 Os quatro últimos existem porque o servidor **não vende à distância**: medido
 contra ele, `buy_consumable` numa cena de caçada responde `shop.npcRequired`, e
 `interact` sem o personagem ter andado até o NPC é ignorado em silêncio. Repor
 obriga a viagem completa.
 
-Ele **nunca** manda `leave_hunt`, `set_automation`, `use_consumable`, `revive`,
-nem um `start_hunt` que não seja o retorno à caçada original — o monitor não
-escolhe caçada, só devolve a conta à que ela já estava fazendo. Comprar
-reabastece o que a automação do servidor gasta sozinha; agir no jogo significa
-desligar o monitor e voltar para a WebView.
+Ele **nunca** manda `leave_hunt`, `set_automation`, `use_consumable` nem
+`revive`. O monitor também **não escolhe caçada por conta própria**: o
+`start_hunt` do refill devolve a conta exatamente à caçada que ela já estava
+fazendo, e a única escolha de mapa que sai daqui é a do botão 🗺️ **Caçada**, por
+clique do usuário. Comprar reabastece o que a automação do servidor gasta
+sozinha; o resto significa desligar o monitor e voltar para a WebView.
 
 Morte na caçada aparece no HUD como aviso. O `auto_revive` do servidor resolve.
 
@@ -80,6 +81,92 @@ Então o catálogo serve só para saber que o item existe e qual é o `min_level
 preço real é **aprendido**: a primeira compra de um item é de **uma unidade**, e
 o `gold_cost` que volta é o que orça o lote seguinte, no mesmo balcão. Sem isso
 a reserva de ouro seria furada por um fator de cinco.
+
+## Trocar de caçada
+
+**🗺️ Caçada** troca o mapa **sem desligar o monitor** — antes era a única coisa
+que obrigava a voltar para a WebView: desligar, esperar o renderer subir, trocar
+no jogo e ligar de novo.
+
+O botão existe em dois lugares, e abre a mesma tela: o 🗺️ do cabeçalho de um
+painel traz **só aquela conta** na lista; o da barra de título traz **a aba
+inteira**, com caixa de seleção por conta. Trocar uma ou trocar oito é a mesma
+operação; o que muda é a lista marcada.
+
+A lista de portais vem do `content_catalog` do **servidor**, não de uma tabela
+do launcher: portal novo no jogo aparece aqui sem alterar nada. Ele é lido uma
+vez e compartilhado por todas as contas (é conteúdo do jogo, não da conta), então
+só o primeiro login paga a leitura de mais de 1 MB; do objeto inteiro sobram
+alguns kilobytes.
+
+O catálogo chega **uma vez, no login**, e não dá para pedir de novo. Por isso os
+poucos kilobytes ficam salvos em `hunts.json`: sem eles, um monitor que já estava
+conectado quando o launcher abriu deixaria o seletor vazio até a conta relogar —
+exatamente o que o botão existe para evitar. A cópia salva abre a tela cheia; a
+primeira conta a logar a substitui pela lista do servidor, que pode ter portal
+novo. Na primeiríssima vez, sem nenhum login anterior, a tela diz que a lista
+ainda não existe em vez de mostrar um seletor vazio.
+
+### Uma lista, um filtro
+
+A tela é uma **lista** de caçadas — uma linha por faixa de cada portal, em ordem
+de progressão, com o nível exigido e o recomendado de **todas** à vista. Escolher
+exige comparar, e comparar exige ver junto: três seletores em cascata (portal,
+faixa, dificuldade) obrigavam a abrir uma combinação por vez só para descobrir o
+nível dela.
+
+O **único filtro** é a dificuldade, e ela é filtro por um motivo: recalcula o
+nível de toda a lista e esconde as faixas que não a oferecem. Repetir cada caçada
+uma vez por dificuldade triplicaria a lista sem acrescentar escolha nenhuma.
+
+Linha acima do nível da conta mais baixa marcada fica avisada (`precisa de 45`),
+nunca escondida — quem decide é o servidor. Marcar outra conta recalcula os
+avisos, porque o nível de referência é o da conta mais baixa: é ela que vai ser
+recusada primeiro.
+
+### Os níveis
+
+Três coisas barram uma caçada **ao mesmo tempo**, e o servidor cobra as três:
+
+| Campo | O que exige |
+| --- | --- |
+| `GateDef.min_level` | nível para o portal existir |
+| `DifficultyDef.req_level` | nível para aquela dificuldade |
+| `TierDef.Area.required_level` | nível para a faixa **naquela** dificuldade |
+
+Então o **nível exigido** mostrado é o **maior dos três** — mostrar só o do
+portal faria a tela prometer entrada em um mapa que o servidor recusa. O **nível
+recomendado** é o dos monstros da área (`TierDef.Area.level`): é ele que diz se
+a conta sobrevive lá, não a permissão de entrar. Sem área declarada, o topo da
+faixa é a aproximação.
+
+A tela mostra também a faixa de tier, os multiplicadores de recompensa e drop da
+dificuldade, e o chefe. Cada conta aparece com o **nível dela** e o mapa atual, e
+é marcada quando está abaixo do exigido — marcada, não escondida: quem decide é o
+servidor, e o catálogo pode estar atrasado em relação a ele. Faixa `coming_soon`
+fica visível e avisada, porque saber que ela existe é informação.
+
+### Em grupo, só o líder recebe
+
+Medido: `start_hunt` do líder **puxa o grupo inteiro** (`party.follow.pulled`).
+Mandar a troca também para cada membro seria redundante e, chegando antes do
+arrasto, poderia espalhar o grupo por cenas diferentes. Então para cada grupo
+representado na seleção só o líder recebe o pedido, e os membros aparecem no
+resultado como puxados. Um grupo cujo líder ficou **fora** da seleção é a
+exceção: aí cada membro pede por si, senão ninguém sairia do mapa antigo.
+
+### O que a troca garante
+
+- `leave_hunt` continua proibido: medido, `start_hunt` numa conta já caçando
+  troca de mapa direto, e o servidor tira a conta da cena anterior sozinho.
+  `leave_hunt` só a mandaria para a cidade no meio da troca.
+- O **bilhete de volta** passa a ser o mapa novo, e só **depois** de o servidor
+  aceitar. Sem isso o refill seguinte devolveria a conta ao mapa antigo; com uma
+  troca recusada, o bilhete antigo é o certo — a conta não saiu do lugar.
+- Conta comprando na cidade recusa a troca (`hunt.refillBusy`): o `start_hunt`
+  de volta do refill a desfaria segundos depois, sem explicação.
+- Conta sem monitor fica na lista, desabilitada. O launcher não tem socket dela;
+  a troca se faz no próprio jogo.
 
 ## Criar PT
 
@@ -170,7 +257,8 @@ salvas e voltam intactas se a aba for recriada.
 ## Testes
 
 ```
-npm test         # 77 testes: proto, codec, headless, credenciais, HUD, modal
+npm test         # 154 testes: proto, codec, headless, refill, caçadas, grupo,
+                 #             credenciais, HUD, modal
 npm run test:ui  # shell no DOM real do Electron
 ```
 

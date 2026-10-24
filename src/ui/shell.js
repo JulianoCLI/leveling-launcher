@@ -71,7 +71,14 @@
   const stateOf = index => {
     let entry = accountState.get(index);
     if (!entry) {
-      entry = { status: 'disconnected', error: '', pending: null, name: '' };
+      // `level`, `hunt` e `party` existem para o seletor de caçada: ele precisa
+      // confrontar o nível da conta com o exigido pelo mapa e saber quem é
+      // líder de grupo. São guardados aqui porque o painel pode estar numa aba
+      // escondida, sem HUD pintado.
+      entry = {
+        status: 'disconnected', error: '', pending: null, name: '',
+        level: 0, hunt: null, party: null
+      };
       accountState.set(index, entry);
     }
     return entry;
@@ -100,6 +107,7 @@
           <span class="panel-who" data-role="who"></span>
           <button type="button" data-role="focus" title="Destacar este painel (tela cheia ou painel grande)">⤢</button>
           <button type="button" data-role="reload" title="Recarregar o jogo neste painel">⟳</button>
+          <button type="button" data-role="hunt" title="Trocar a caçada desta conta sem desligar o monitor">🗺️</button>
           <button type="button" data-role="headless" title="Monitor somente leitura da caçada">Monitor</button>
         </div>
         <div class="panel-body" data-role="body">
@@ -124,6 +132,10 @@
       };
       panel.toggle.onclick = () => toggleHeadless(panel.account);
       root.querySelector('[data-role="reload"]').onclick = () => reloadGame(panel.account);
+      // Troca de caçada desta conta só. O mesmo modal da aba, com uma conta na
+      // lista: o escopo é a seleção, não dois fluxos diferentes.
+      panel.huntBtn = root.querySelector('[data-role="hunt"]');
+      panel.huntBtn.onclick = () => openHunt([panel.account]);
       panel.focusBtn = root.querySelector('[data-role="focus"]');
       panel.focusBtn.onclick = () => focusPanel(panel.slot);
       panels.push(panel);
@@ -328,7 +340,26 @@
     panel.root.classList.toggle('is-headless', active);
     panel.toggle.textContent = active ? 'Desligar' : 'Monitor';
     panel.toggle.classList.toggle('is-on', active);
+    // Sem monitor o launcher não tem socket da conta: a troca de caçada se faz
+    // no próprio jogo, na WebView.
+    if (panel.huntBtn) {
+      panel.huntBtn.disabled = !active;
+      panel.huntBtn.title = active
+        ? 'Trocar a caçada desta conta sem desligar o monitor'
+        : 'Ligue o monitor para trocar a caçada daqui.';
+    }
     panel.hud.setStatus(entry.status, entry.error);
+  }
+
+  /**
+   * Papel da conta no grupo, do jeito que o seletor de caçada precisa: só o
+   * líder recebe a troca, porque é ele que arrasta o grupo inteiro.
+   */
+  function partyRole(state) {
+    const party = state && state.party;
+    if (!party || !party.id) return { inParty: false, leader: false };
+    const self = (party.members || []).find(m => m.self);
+    return { inParty: true, leader: !!(self && self.leader) };
   }
 
   /**
@@ -340,6 +371,11 @@
     if (!state) return;
     const entry = stateOf(index);
     if (state.name) entry.name = state.name;
+    // Guardado mesmo sem painel visível: é o que o seletor de caçada lê para
+    // mostrar o nível da conta e o mapa em que ela está.
+    entry.level = +state.level || 0;
+    entry.hunt = state.hunt || null;
+    entry.party = partyRole(state);
 
     const panel = panelOf(index);
     if (!visible || !panel) {
@@ -466,6 +502,46 @@
     refillOverlay.classList.remove('show');
   }
 
+  const huntOverlay = document.getElementById('huntOverlay');
+  let huntReady = false;
+
+  /**
+   * Abre o seletor de caçada. `only` restringe a lista a uma conta — é o botão
+   * 🗺️ do painel; sem ele a lista é a aba inteira, que é o botão da titlebar.
+   *
+   * A lista inclui contas sem monitor, desabilitadas: esconder faria parecer
+   * que a conta não existe, quando o que falta é ligar o monitor nela.
+   */
+  function openHunt(only) {
+    if (!huntOverlay || !window.PioHunt) return;
+    if (!huntReady) {
+      huntReady = true;
+      window.PioHunt.init(api);
+    }
+
+    const alvos = panels
+      .filter(panel => !panel.root.hidden)
+      .filter(panel => !only || only.includes(panel.account))
+      .map(panel => {
+        const entry = stateOf(panel.account);
+        return {
+          index: panel.account,
+          name: entry.name,
+          level: entry.level,
+          status: entry.status,
+          hunt: entry.hunt,
+          party: entry.party
+        };
+      });
+
+    huntOverlay.classList.add('show');
+    window.PioHunt.open(alvos).catch(e => report('hunt', e));
+  }
+
+  function closeHunt() {
+    if (huntOverlay) huntOverlay.classList.remove('show');
+  }
+
   // ------------------------------------------------------------------- grupo
 
   /**
@@ -579,9 +655,23 @@
       refillOverlay.onclick = e => { if (e.target === refillOverlay) closeRefill(); };
     }
 
+    // Troca de caçada da aba inteira. O botão do painel abre o mesmo modal com
+    // uma conta só na lista.
+    const huntBtn = document.getElementById('huntBtn');
+    if (huntBtn) huntBtn.onclick = () => openHunt(null);
+    if (huntOverlay) {
+      document.getElementById('huntCloseBtn').onclick = closeHunt;
+      document.getElementById('huntClose').onclick = closeHunt;
+      huntOverlay.onclick = e => { if (e.target === huntOverlay) closeHunt(); };
+    }
+
     window.addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
-      if (refillOverlay && refillOverlay.classList.contains('show')) {
+      // Do mais recente para o mais antigo: o seletor de caçada abre por cima.
+      if (huntOverlay && huntOverlay.classList.contains('show')) {
+        e.preventDefault();
+        closeHunt();
+      } else if (refillOverlay && refillOverlay.classList.contains('show')) {
         e.preventDefault();
         closeRefill();
       } else if (overlay.classList.contains('show')) {
@@ -708,6 +798,8 @@
     focusPanel,
     openAccounts,
     closeAccounts,
+    openHunt,
+    closeHunt,
     toggleHeadless,
     startMonitors,
     assembleParty,

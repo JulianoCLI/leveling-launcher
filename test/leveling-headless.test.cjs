@@ -450,8 +450,9 @@ test('inventory_delta guarda só a ocupação da mochila', async () => {
   client.disconnect();
 });
 
-test('o catálogo de conteúdo não é desserializado', async () => {
-  // São mais de 1 MB por login; nada ali alimenta o painel da caçada.
+test('o catálogo de conteúdo não repinta o painel', async () => {
+  // São mais de 1 MB por login e nada ali é número da caçada: ele é lido para
+  // extrair preços e portais, nunca para atualizar o HUD.
   assert.ok(IGNORED_PUSHES.has('content_catalog'));
   assert.ok(IGNORED_PUSHES.has('shadow_delta'));
 
@@ -670,7 +671,9 @@ test('o estoque guarda as tiers separadas, além da soma do HUD', async () => {
   client.disconnect();
 });
 
-test('com o refill desligado o catálogo continua sem ser desserializado', async () => {
+test('com o refill desligado os preços do catálogo não são guardados', async () => {
+  // O catálogo é desserializado pelos portais, que a troca de caçada precisa,
+  // mas a tabela de preços só existe se o refill de fato for usar.
   const client = makeClient();
   client.connect();
   await sleep(10);
@@ -681,7 +684,7 @@ test('com o refill desligado o catálogo continua sem ser desserializado', async
   ws.push('content_catalog', catalogPush);
   await sleep(5);
 
-  assert.equal(client.catalog, null, 'mais de 1 MB não deve entrar sem motivo');
+  assert.equal(client.catalog, null, 'preço não interessa sem refill configurado');
   client.disconnect();
 });
 
@@ -1168,6 +1171,270 @@ test('o manager aplica a configuração nos monitores em execução', async () =
   manager.start(1, { username: 'u2', password: 'p2' });
   await sleep(10);
   assert.equal(manager.getClient(1).refillConfig.items.hpPequena.min, 10);
+
+  manager.stopAll();
+});
+
+// ------------------------------------------------------- troca de caçada
+
+/** Catálogo de conteúdo com os portais que o seletor de caçada oferece. */
+const huntPush = {
+  ...catalogPush,
+  gates: [
+    { id: 'castelo-demonios', scene_id: 'cena-castelo', name: 'Castelo', min_level: 30 },
+    { id: 'portal-azul', scene_id: 'cena-azul', name: 'Portal Azul', min_level: 1 }
+  ],
+  difficulties: [{ id: 'normal', name: 'Normal', req_level: 0 }],
+  tiers: [
+    { gate_id: 'portal-azul', min: 1, max: 10, areas: [{ difficulty: 'normal', level: 8, required_level: 1 }] },
+    { gate_id: 'castelo-demonios', min: 36, max: 45, areas: [{ difficulty: 'normal', level: 42, required_level: 30 }] }
+  ]
+};
+
+/** Conecta, autentica, entrega o catálogo e põe a conta numa caçada. */
+async function bootHunt(client, { catalog = huntPush } = {}) {
+  client.connect();
+  await sleep(10);
+  const ws = MockWebSocket.last;
+  ws.reply('login', 'auth_ok', { token: 't', account_id: 1, username: 'cacador' });
+  await sleep(5);
+  if (catalog) ws.push('content_catalog', catalog);
+  ws.push('scene_enter', { scene_id: 'cena-castelo', kind: 2, your_entity: 7, hunt: HUNT });
+  await sleep(5);
+  return ws;
+}
+
+const NOVA = { gate_id: 'portal-azul', tier_min: 1, difficulty: 'normal' };
+
+test('o catálogo de caçadas é lido mesmo com o refill desligado', async () => {
+  // A lista de portais é o que o seletor de caçada oferece: sem ela o usuário
+  // não teria para onde trocar, e ela só existe neste push.
+  const client = makeClient();
+  const vistos = [];
+  client.on('hunts', data => vistos.push(data));
+  await bootHunt(client);
+
+  const catalog = client.getHuntCatalog();
+  assert.deepEqual(catalog.gates.map(g => g.id), ['portal-azul', 'castelo-demonios']);
+  assert.deepEqual(catalog.tiers['castelo-demonios'].map(t => t.min), [36]);
+  assert.equal(vistos.length, 1, 'a interface precisa saber que a lista chegou');
+  assert.equal(vistos[0].index, 0);
+
+  client.disconnect();
+});
+
+test('a troca de caçada manda start_hunt e passa a ser o bilhete de volta', async () => {
+  const client = makeClient();
+  const ws = await bootHunt(client);
+
+  assert.deepEqual(client.getHuntTicket(), HUNT, 'o bilhete começa na caçada lida na entrada');
+
+  const troca = client.setHunt(NOVA);
+  const enviado = await waitSent(ws, 'start_hunt');
+  assert.deepEqual(enviado.start_hunt, { gate_id: 'portal-azul', tier_min: 1, difficulty: 'normal' });
+  // Medido: o servidor troca de mapa direto, sem `leave_hunt` antes.
+  assert.equal(sentCount(ws, 'leave_hunt'), 0, 'leave_hunt continua proibido');
+
+  ws.reply('start_hunt', 'start_hunt_result', { ...NOVA, scene_id: 'cena-azul' });
+  const result = await troca;
+
+  assert.equal(result.ok, true);
+  assert.equal(result.gateId, 'portal-azul');
+  assert.equal(result.sceneId, 'cena-azul');
+  // Sem isto o refill seguinte devolveria a conta ao mapa antigo.
+  assert.deepEqual(client.getHuntTicket(), NOVA);
+
+  client.disconnect();
+});
+
+test('troca recusada pelo servidor preserva o bilhete antigo', async () => {
+  // A conta continua no mapa em que estava: trocar o bilhete aqui faria o
+  // refill levá-la a um mapa onde ela nunca entrou.
+  const client = makeClient();
+  const ws = await bootHunt(client);
+
+  const troca = client.setHunt(NOVA);
+  await waitSent(ws, 'start_hunt');
+  ws.reply('start_hunt', 'error', { code: 'hunt.locked' });
+
+  const result = await troca;
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'hunt.locked');
+  assert.deepEqual(client.getHuntTicket(), HUNT);
+
+  client.disconnect();
+});
+
+test('a troca é recusada sem portal, desconectada e durante a compra', async () => {
+  const client = makeClient();
+  const ws = await bootHunt(client);
+
+  assert.deepEqual(await client.setHunt({ tier_min: 5 }), { ok: false, error: 'hunt.noGate' });
+
+  // Trocar no meio da ida à loja seria desfeito pelo `start_hunt` de volta.
+  client.refillBusy = true;
+  assert.deepEqual(await client.setHunt(NOVA), { ok: false, error: 'hunt.refillBusy' });
+  client.refillBusy = false;
+
+  const antes = sentCount(ws, 'start_hunt');
+  client.disconnect();
+  assert.deepEqual(await client.setHunt(NOVA), { ok: false, error: 'hunt.offline' });
+  assert.equal(sentCount(ws, 'start_hunt'), antes, 'nada deve sair com o monitor desligado');
+});
+
+test('o catálogo de caçadas é compartilhado entre as contas do manager', async () => {
+  // É conteúdo do jogo, igual para todas: a segunda conta não paga a leitura de
+  // mais de 1 MB.
+  const manager = new LevelingHeadlessManager({ WebSocket: MockWebSocket, autoReconnect: false });
+  manager.start(0, { username: 'u', password: 'p' });
+  await bootHunt(manager.getClient(0));
+
+  assert.ok(manager.getHuntCatalog(), 'a primeira conta preenche a lista');
+
+  manager.start(1, { username: 'u2', password: 'p2' });
+  const segunda = manager.getClient(1);
+  await sleep(10);
+  MockWebSocket.last.reply('login', 'auth_ok', { token: 't', account_id: 2 });
+  await sleep(5);
+
+  assert.equal(segunda.wantsCatalog(), false, 'a lista já existe: não vale desserializar de novo');
+  assert.equal(segunda.getHuntCatalog(), manager.getHuntCatalog());
+
+  manager.stopAll();
+});
+
+test('a lista salva em disco serve até a primeira conta logar', async () => {
+  // O `content_catalog` chega uma vez, no login, e não pode ser pedido de novo:
+  // sem semear, um monitor que já estava conectado deixaria o seletor vazio.
+  const manager = new LevelingHeadlessManager({ WebSocket: MockWebSocket, autoReconnect: false });
+  assert.equal(manager.getHuntCatalog(), null);
+
+  const salvo = { gates: [{ id: 'velho', name: 'Velho', minLevel: 1 }], difficulties: [], tiers: {} };
+  manager.setHuntCatalog(salvo);
+  assert.equal(manager.getHuntCatalog(), salvo, 'a cópia de disco abre o seletor cheio');
+  // Lixo não substitui uma lista boa.
+  manager.setHuntCatalog({ gates: [] });
+  assert.equal(manager.getHuntCatalog(), salvo);
+
+  // O servidor manda a lista de verdade: ela vence, porque pode ter portal novo.
+  manager.start(0, { username: 'u', password: 'p' });
+  await bootHunt(manager.getClient(0));
+  assert.deepEqual(manager.getHuntCatalog().gates.map(g => g.id), ['portal-azul', 'castelo-demonios']);
+
+  // E a partir daí a cópia de disco não pode mais sobrescrever o que foi lido.
+  manager.setHuntCatalog(salvo);
+  assert.equal(manager.getHuntCatalog().gates.length, 2, 'cópia velha não volta por cima da lida');
+
+  manager.stopAll();
+});
+
+test('o manager troca a caçada de várias contas de uma vez', async () => {
+  const manager = new LevelingHeadlessManager({ WebSocket: MockWebSocket, autoReconnect: false });
+  const sockets = [];
+  for (const index of [0, 1]) {
+    manager.start(index, { username: 'u' + index, password: 'p' });
+    sockets.push(await bootHunt(manager.getClient(index), { catalog: index === 0 ? huntPush : null }));
+  }
+
+  const troca = manager.setHunt([0, 1], NOVA);
+  // Em série: a segunda conta só recebe o pedido depois de a primeira responder.
+  await waitSent(sockets[0], 'start_hunt');
+  sockets[0].reply('start_hunt', 'start_hunt_result', { ...NOVA, scene_id: 'cena-azul' });
+  await waitSent(sockets[1], 'start_hunt');
+  sockets[1].reply('start_hunt', 'start_hunt_result', { ...NOVA, scene_id: 'cena-azul' });
+
+  const result = await troca;
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.changed.map(c => c.index), [0, 1]);
+  assert.deepEqual(result.failed, []);
+
+  manager.stopAll();
+});
+
+test('a conta sem monitor fica de fora da troca em lote', async () => {
+  const manager = new LevelingHeadlessManager({ WebSocket: MockWebSocket, autoReconnect: false });
+  manager.start(0, { username: 'u', password: 'p' });
+  const ws = await bootHunt(manager.getClient(0));
+
+  const troca = manager.setHunt([0, 3], NOVA);
+  await waitSent(ws, 'start_hunt');
+  ws.reply('start_hunt', 'start_hunt_result', { ...NOVA, scene_id: 'cena-azul' });
+
+  const result = await troca;
+  assert.deepEqual(result.changed.map(c => c.index), [0]);
+  assert.deepEqual(result.skipped, [3], 'a conta na WebView não tem socket aqui');
+
+  // Nenhuma conta ativa: nada sai no fio.
+  assert.equal((await manager.setHunt([3], NOVA)).error, 'hunt.noneActive');
+  assert.equal((await manager.setHunt([0], { tier_min: 1 })).error, 'hunt.noGate');
+
+  manager.stopAll();
+});
+
+test('em grupo só o líder recebe a troca; os membros são puxados', async () => {
+  // Medido na montagem de grupo: `start_hunt` do líder arrasta o grupo todo
+  // (`party.follow.pulled`). Mandar também para o membro seria redundante e
+  // poderia espalhar o grupo por cenas diferentes.
+  const manager = new LevelingHeadlessManager({ WebSocket: MockWebSocket, autoReconnect: false });
+  const sockets = [];
+  for (const index of [0, 1]) {
+    manager.start(index, { username: 'u' + index, password: 'p' });
+    sockets.push(await bootHunt(manager.getClient(index), { catalog: index === 0 ? huntPush : null }));
+  }
+
+  // Conta 0 é a líder do grupo 77; conta 1 é membro do mesmo grupo.
+  const membros = [
+    { account_id: 1, name: 'u0', leader: true },
+    { account_id: 2, name: 'u1', leader: false }
+  ];
+  manager.getClient(0).state.accountId = '1';
+  manager.getClient(1).state.accountId = '2';
+  sockets[0].push('party_push', { state: { party_id: 77, max_members: 4, members: membros } });
+  sockets[1].push('party_push', { state: { party_id: 77, max_members: 4, members: membros } });
+  await sleep(5);
+
+  const antesMembro = sentCount(sockets[1], 'start_hunt');
+  const troca = manager.setHunt([0, 1], NOVA);
+  await waitSent(sockets[0], 'start_hunt');
+  sockets[0].reply('start_hunt', 'start_hunt_result', { ...NOVA, scene_id: 'cena-azul' });
+
+  const result = await troca;
+  assert.deepEqual(result.changed.map(c => c.index), [0]);
+  assert.deepEqual(result.pulled.map(p => p.index), [1]);
+  assert.equal(sentCount(sockets[1], 'start_hunt'), antesMembro, 'o membro não manda start_hunt');
+  // O membro foi levado para o mapa novo: o bilhete dele precisa acompanhar,
+  // senão um refill o devolveria ao mapa antigo.
+  assert.deepEqual(manager.getClient(1).getHuntTicket(), NOVA);
+
+  manager.stopAll();
+});
+
+test('troca do líder recusada não muda o bilhete do membro puxado', async () => {
+  const manager = new LevelingHeadlessManager({ WebSocket: MockWebSocket, autoReconnect: false });
+  const sockets = [];
+  for (const index of [0, 1]) {
+    manager.start(index, { username: 'u' + index, password: 'p' });
+    sockets.push(await bootHunt(manager.getClient(index), { catalog: index === 0 ? huntPush : null }));
+  }
+
+  const membros = [
+    { account_id: 1, name: 'u0', leader: true },
+    { account_id: 2, name: 'u1', leader: false }
+  ];
+  manager.getClient(0).state.accountId = '1';
+  manager.getClient(1).state.accountId = '2';
+  for (const ws of sockets) ws.push('party_push', { state: { party_id: 77, max_members: 4, members: membros } });
+  await sleep(5);
+
+  const troca = manager.setHunt([0, 1], NOVA);
+  await waitSent(sockets[0], 'start_hunt');
+  sockets[0].reply('start_hunt', 'error', { code: 'hunt.locked' });
+
+  const result = await troca;
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.failed.map(f => f.error), ['hunt.locked']);
+  // Ninguém saiu do lugar, então o bilhete do membro continua o antigo.
+  assert.deepEqual(manager.getClient(1).getHuntTicket(), HUNT);
 
   manager.stopAll();
 });

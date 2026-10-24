@@ -17,22 +17,29 @@
  *   `travel`             ir à cidade onde a loja existe
  *   `move_to`            chegar ao balcão
  *   `interact`           abrir a loja no NPC
- *   `start_hunt`         voltar à caçada que a conta já estava fazendo
+ *   `start_hunt`         voltar à caçada que a conta já estava fazendo, ou
+ *                        trocar de caçada quando o usuário escolhe outra
  *
  * Os quatro últimos existem porque o servidor não vende à distância: medido
  * contra ele, `buy_consumable` numa cena de caçada responde `shop.npcRequired`,
  * e `interact` sem o personagem ter andado até o NPC é ignorado em silêncio.
  * Repor consumível obriga a viagem completa — cerca de 3,3 s fora da caçada,
- * só quando falta estoque. `start_hunt` nunca escolhe caçada: devolve
- * exatamente o `gate_id`/`tier_min`/`difficulty` que o monitor leu na entrada.
+ * só quando falta estoque. O `start_hunt` do refill nunca escolhe caçada:
+ * devolve exatamente o `gate_id`/`tier_min`/`difficulty` que o monitor leu.
  *
  * Os `party_request` de escrita só saem quando o usuário clica em montar o
  * grupo, nunca por conta própria. Eles exigem o mesmo `start_hunt` de retorno:
  * medido, `leave` manda a conta para a cidade (`party.left.to_city`), e um
  * `start_hunt` do líder puxa o grupo todo de volta (`party.follow.pulled`).
  *
- * Continua proibido: `leave_hunt`, `set_automation`, `use_consumable`,
- * `revive`, e qualquer `start_hunt` que não seja o retorno à caçada original.
+ * A troca de caçada é a única escolha de caçada que sai daqui, e só por pedido
+ * explícito: `setHunt()` existe para o usuário trocar de mapa sem desligar o
+ * monitor, que antes exigia voltar para a WebView. Ela passa a valer como novo
+ * bilhete de volta, senão o refill seguinte devolveria a conta ao mapa antigo.
+ * Nada aqui escolhe caçada por conta própria.
+ *
+ * Continua proibido: `leave_hunt`, `set_automation`, `use_consumable` e
+ * `revive`.
  *
  * O servidor aceita uma sessão por conta e substitui a anterior, então ativar
  * o headless derruba a aba do jogo e vice-versa — é o mecanismo de troca de
@@ -46,6 +53,7 @@ const EventEmitter = require('events');
 const { getCodec } = require('./leveling-codec');
 const refill = require('./leveling-refill');
 const party = require('./leveling-party');
+const hunts = require('./leveling-hunts');
 
 const WS_URL = 'wss://game.levelingidle2d.com.br:8443/ws';
 const ORIGIN = 'https://levelingidle2d.com.br';
@@ -125,8 +133,10 @@ const TRIP_CASES = new Set(['world_snapshot', 'npc_interaction']);
  * aqui por volume: o catálogo passa de 1 MB e a lista de sombras é grande,
  * enquanto nenhum dos dois alimenta um número da caçada.
  *
- * O catálogo é a única exceção condicional: com o auto-refill ligado ele é
- * lido **uma vez**, pelos preços dos consumíveis, e descartado em seguida.
+ * O catálogo é a única exceção condicional: ele é lido **uma vez**, e só
+ * quando algo precisa dele — os preços dos consumíveis, para o auto-refill, e a
+ * lista de portais, para a troca de caçada. O objeto de 1 MB é descartado em
+ * seguida; sobram alguns kilobytes.
  */
 const IGNORED_PUSHES = new Set([
   'social_push', 'guild_push', 'commerce_push', 'admin_push',
@@ -204,6 +214,17 @@ class LevelingHeadlessClient extends EventEmitter {
     this.refillConfig = refill.normalizeConfig(options.refillConfig);
     /** Preços extraídos do `content_catalog`; `null` até o primeiro login. */
     this.catalog = null;
+    /**
+     * Portais, faixas e dificuldades, para a troca de caçada. Sai do mesmo
+     * `content_catalog` e pelo mesmo motivo de `catalog`: o objeto de 1 MB é
+     * lido uma vez e descartado, e o que sobra são alguns kilobytes.
+     *
+     * Compartilhado entre contas, porque é conteúdo do jogo e não da conta: o
+     * primeiro login do launcher o preenche e os outros não pagam a leitura.
+     */
+    this.huntStore = options.huntStore || { value: null };
+    /** O catálogo já foi desserializado nesta sessão? Ele chega uma vez só. */
+    this.catalogRead = false;
     /** `InventorySummary.materials` cru, até o id da essência ser conhecido. */
     this.materials = null;
     this.refillAt = 0;
@@ -1071,23 +1092,55 @@ class LevelingHeadlessClient extends EventEmitter {
   // ----------------------------------------------------------------- refill
 
   /**
-   * Vale desserializar o catálogo? Só com o refill de fato configurado e antes
-   * da primeira leitura: são mais de 1 MB por login.
+   * Vale desserializar o catálogo? São mais de 1 MB por login, então só uma vez
+   * por sessão e só se algo de fato o usar: os preços, para o refill, ou a
+   * lista de portais, para a troca de caçada.
+   *
+   * A lista de portais é compartilhada entre as contas, então a segunda em
+   * diante não paga a leitura — só a primeira do launcher.
+   *
+   * A cópia salva em disco não dispensa a leitura: ela existe para o seletor
+   * abrir cheio antes de qualquer login, mas pode estar velha em relação ao
+   * jogo. Uma leitura por execução do launcher é o que a mantém em dia.
    */
   wantsCatalog() {
-    return !this.catalog && refill.isConfigured(this.refillConfig);
+    if (this.catalogRead) return false;
+    if (!this.catalog && refill.isConfigured(this.refillConfig)) return true;
+    return !this.huntStore.fresh;
   }
 
   /**
-   * Guarda só preços, níveis mínimos e o id da essência. O objeto grande sai de
-   * escopo aqui e nunca fica preso no cliente.
+   * Guarda só preços, níveis mínimos, o id da essência e o catálogo de
+   * caçadas. O objeto grande sai de escopo aqui e nunca fica preso no cliente.
    */
   applyCatalog(value) {
-    this.catalog = refill.readCatalog(value);
+    this.catalogRead = true;
+    // A tabela de preços só é guardada se o refill de fato for usá-la: ela é
+    // inútil com a reposição desligada, e o catálogo pode ter sido
+    // desserializado apenas pelos portais.
+    if (!this.catalog && refill.isConfigured(this.refillConfig)) {
+      this.catalog = refill.readCatalog(value);
+    }
+
+    const lido = hunts.readHuntCatalog(value);
+    if (hunts.hasHunts(lido)) {
+      this.huntStore.value = lido;
+      // Lido do servidor nesta execução: a cópia de disco pode ser substituída.
+      this.huntStore.fresh = true;
+      // Interessa à interface mesmo sem nenhuma mudança de estado da conta: é
+      // o que preenche a lista de mapas do seletor de caçada.
+      this.emit('hunts', { index: this.index, catalog: lido });
+    }
+
     // O saldo de essência só pode ser resolvido agora que o id dela é conhecido.
     const changed = this.applyMaterials({});
     this.maybeRefill();
     return changed;
+  }
+
+  /** O catálogo de caçadas conhecido, ou `null` antes do primeiro login. */
+  getHuntCatalog() {
+    return this.huntStore.value;
   }
 
   /** Troca a configuração em execução, sem derrubar a sessão. */
@@ -1459,6 +1512,42 @@ class LevelingHeadlessClient extends EventEmitter {
     return this.huntTicket ? { ...this.huntTicket } : null;
   }
 
+  /**
+   * Troca a caçada da conta, a pedido do usuário. É a única escolha de caçada
+   * que o monitor faz, e nunca por conta própria.
+   *
+   * Medido: `start_hunt` numa conta já caçando troca de mapa direto, sem
+   * `leave_hunt` antes — o servidor tira a conta da cena anterior sozinho. Por
+   * isso o `leave_hunt` continua fora da lista: ele mandaria a conta para a
+   * cidade no meio da troca, sem ganhar nada.
+   *
+   * O bilhete novo substitui o antigo **só depois** de o servidor aceitar: se a
+   * troca falhar, o refill seguinte tem de devolver a conta ao mapa em que ela
+   * de fato está, e não ao que o usuário tentou escolher.
+   */
+  async setHunt(ticket) {
+    const alvo = hunts.normalizeTicket(ticket);
+    if (!alvo) return { ok: false, error: 'hunt.noGate' };
+    if (this.status !== 'connected') return { ok: false, error: 'hunt.offline' };
+    // Trocar de mapa no meio da ida à loja faria o `finally` do refill devolver
+    // a conta ao mapa antigo logo depois, desfazendo a troca sem explicação.
+    if (this.refillBusy) return { ok: false, error: 'hunt.refillBusy' };
+
+    const resultado = await this.startHunt(alvo).catch(err => ({ errorCode: err.message }));
+    if (resultado && resultado.errorCode) {
+      return { ok: false, error: resultado.errorCode };
+    }
+
+    this.huntTicket = alvo;
+    return {
+      ok: true,
+      gateId: alvo.gate_id,
+      tierMin: alvo.tier_min,
+      difficulty: alvo.difficulty,
+      sceneId: (resultado && resultado.scene_id) || ''
+    };
+  }
+
   // ------------------------------------------------------------------- saída
 
   setStatus(status) {
@@ -1567,6 +1656,33 @@ class LevelingHeadlessManager extends EventEmitter {
     this.refillConfig = refill.normalizeConfig(options.refillConfig);
     /** Montagem de grupo em curso; uma por vez em todo o launcher. */
     this.partyBusy = false;
+    /**
+     * Catálogo de caçadas, uma cópia para o launcher todo: é conteúdo do jogo,
+     * igual para todas as contas. Guardar por conta multiplicaria a leitura de
+     * 1 MB por nada.
+     *
+     * `fresh` distingue a lista lida do servidor nesta execução da cópia que o
+     * launcher tinha salva de execuções anteriores: a salva serve para o
+     * seletor abrir cheio antes de qualquer login, mas não dispensa a leitura,
+     * porque o jogo pode ter ganhado portal novo desde então.
+     */
+    this.huntStore = { value: options.huntCatalog || null, fresh: false };
+  }
+
+  /** Portais, faixas e dificuldades, ou `null` antes do primeiro login. */
+  getHuntCatalog() {
+    return this.huntStore.value;
+  }
+
+  /**
+   * Semeia a lista com a cópia salva em disco, para o seletor de caçada abrir
+   * cheio antes de qualquer monitor conectar. Não marca `fresh`: a primeira
+   * conta a logar ainda vai ler o catálogo e substituir esta cópia.
+   */
+  setHuntCatalog(catalog) {
+    if (this.huntStore.fresh) return this.huntStore.value;
+    if (hunts.hasHunts(catalog)) this.huntStore.value = catalog;
+    return this.huntStore.value;
   }
 
   /** Aplica a configuração de refill nos monitores já em execução. */
@@ -1583,11 +1699,14 @@ class LevelingHeadlessManager extends EventEmitter {
       // A configuração de refill é uma só para todas as contas; o manager a
       // guarda para que um monitor iniciado depois já nasça com ela.
       refillConfig: this.refillConfig,
+      // O catálogo de caçadas é do jogo, não da conta: a primeira conta a logar
+      // o preenche e as outras já nascem com a lista pronta.
+      huntStore: this.huntStore,
       ...options
     });
     this.clients.set(accountIndex, client);
 
-    for (const event of ['update', 'status', 'error', 'ended', 'death', 'notice', 'token', 'arise', 'refill']) {
+    for (const event of ['update', 'status', 'error', 'ended', 'death', 'notice', 'token', 'arise', 'refill', 'hunts']) {
       client.on(event, data => this.emit(event, data));
     }
     // Sessão substituída encerra o monitor: a conta está sendo usada alhures.
@@ -1662,6 +1781,86 @@ class LevelingHeadlessManager extends EventEmitter {
       this.partyBusy = false;
     }
   }
+
+  /**
+   * Troca a caçada das contas indicadas, a pedido do usuário. Uma conta só ou a
+   * aba inteira: o caminho é o mesmo, porque o que muda é só o tamanho da lista.
+   *
+   * Contas em grupo não recebem a troca individualmente. Medido na montagem de
+   * grupo, `start_hunt` do líder arrasta o grupo todo (`party.follow.pulled`);
+   * mandar também para cada membro seria uma troca redundante que, chegando
+   * antes do arrasto, poderia espalhar o grupo por cenas diferentes. Então para
+   * cada grupo representado na lista só o líder recebe o pedido, e os membros
+   * aparecem no resultado como `pulled`.
+   */
+  async setHunt(indexes, ticket) {
+    const alvo = hunts.normalizeTicket(ticket);
+    if (!alvo) return { ok: false, error: 'hunt.noGate', changed: [], failed: [] };
+
+    const lista = [];
+    const skipped = [];
+    for (const index of indexes || []) {
+      const client = this.getClient(index);
+      if (client && client.status === 'connected') lista.push(client);
+      else skipped.push(index);
+    }
+    if (!lista.length) return { ok: false, error: 'hunt.noneActive', changed: [], failed: [], skipped };
+
+    // Quem é arrastado pelo líder do próprio grupo. Só conta o líder que está
+    // nesta mesma troca: um grupo cujo líder ficou de fora precisa que cada
+    // membro peça a troca por si, senão ninguém sairia do mapa antigo.
+    const lideres = new Map();
+    for (const client of lista) {
+      const estado = client.state.party;
+      if (!party.hasParty(estado)) continue;
+      if (!party.isLeader(estado, client.state.accountId)) continue;
+      lideres.set(String(estado.id), client);
+    }
+
+    const pedidos = [];
+    const pulled = [];
+    for (const client of lista) {
+      const estado = client.state.party;
+      const lider = party.hasParty(estado) ? lideres.get(String(estado.id)) : null;
+      if (lider && lider !== client) {
+        pulled.push({ index: client.index, name: client.state.name, leader: lider.index });
+        continue;
+      }
+      pedidos.push(client);
+    }
+
+    const changed = [];
+    const failed = [];
+    // Em série: cada `start_hunt` é um round-trip, e um líder arrastando o
+    // grupo gera uma rajada de `scene_enter` nas outras contas. Em paralelo as
+    // falhas ficariam sem ordem para relatar.
+    for (const client of pedidos) {
+      const result = await client.setHunt(alvo).catch(err => ({ ok: false, error: err.message }));
+      const entry = { index: client.index, name: client.state.name };
+      if (result && result.ok) changed.push(entry);
+      else failed.push({ ...entry, error: (result && result.error) || 'hunt.failed' });
+    }
+
+    // O bilhete dos arrastados passa a ser o novo mapa: o líder os levou para
+    // lá, e sem isto o refill de um membro o devolveria ao mapa antigo. Só vale
+    // se o líder de fato trocou — numa troca recusada o membro não saiu do lugar.
+    for (const membro of pulled) {
+      if (!changed.some(c => c.index === membro.leader)) continue;
+      const client = this.getClient(membro.index);
+      if (client) client.huntTicket = { ...alvo };
+    }
+
+    return {
+      ok: !!changed.length && !failed.length,
+      gateId: alvo.gate_id,
+      tierMin: alvo.tier_min,
+      difficulty: alvo.difficulty,
+      changed,
+      pulled,
+      failed,
+      skipped
+    };
+  }
 }
 
 const levelingHeadlessManager = new LevelingHeadlessManager();
@@ -1681,6 +1880,7 @@ module.exports = {
   REFILL_BACKOFF_MS,
   TRIP_TIMEOUT_MS,
   TRIP_CASES,
-  NPC_REACH
+  NPC_REACH,
+  hunts
 };
 
