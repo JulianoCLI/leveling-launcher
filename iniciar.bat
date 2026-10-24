@@ -44,6 +44,17 @@ if not exist "%ELECTRON%" (
   call npm install
 )
 
+rem Quem instalou antes do postinstall entrar no package.json ficou com o
+rem Electron sem o programa dentro. Baixar na hora e mais rapido que explicar.
+if not exist "%ELECTRON%" (
+  if exist "node_modules\electron\install.js" (
+    echo.
+    echo  Baixando o programa do Electron.
+    echo.
+    call node node_modules\electron\install.js
+  )
+)
+
 rem Conferir de novo, e nao so antes de instalar. O "npm install" pode terminar
 rem sem erro e mesmo assim nao deixar o binario no lugar: o Electron baixa num
 rem passo separado, que antivirus, proxy e firewall de empresa costumam cortar.
@@ -54,13 +65,14 @@ if not exist "%ELECTRON%" (
   echo  As dependencias nao ficaram completas: falta o programa do Electron em
   echo    %CD%\%ELECTRON%
   echo.
-  echo  O "npm install" baixa o Electron num passo a parte, que costuma ser
-  echo  bloqueado por antivirus, proxy ou firewall. Para tentar de novo:
+  echo  O Electron baixa num passo a parte do "npm install", que antivirus,
+  echo  proxy ou firewall de empresa costumam bloquear.
   echo.
-  echo    1. Apague a pasta node_modules
-  echo    2. Abra o Prompt de Comando nesta pasta
-  echo    3. Rode:  npm install
-  echo    4. Leia o que aparecer: o erro do download fica no fim
+  echo  Para tentar de novo:
+  echo.
+  echo    1. Abra o Prompt de Comando nesta pasta
+  echo    2. Rode:  node node_modules\electron\install.js
+  echo    3. Leia o que aparecer: o erro do download fica no fim
   echo.
   pause
   exit /b 1

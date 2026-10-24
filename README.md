@@ -100,11 +100,17 @@ npm install
 npm start
 ```
 
-Em outra máquina, o repositório **não traz** o `node_modules`: é o `npm install`
-que baixa tudo, e o Electron vem num passo separado que antivírus, proxy e
-firewall de empresa costumam bloquear. Quando isso acontece o `npm install`
-termina sem erro e mesmo assim falta o programa — o `iniciar.bat` detecta e
-explica, em vez de deixar o Windows reclamar de um `.exe` inexistente.
+O repositório **não traz** o `node_modules`: é o `npm install` que baixa tudo.
+
+O pacote `electron` do npm é só um invólucro — o programa de verdade são ~100 MB
+baixados à parte. As versões recentes **deixaram de fazer isso sozinhas** no
+`npm install`, então o `postinstall` deste projeto chama
+`node_modules/electron/install.js` na mão. Sem ele, a instalação termina sem
+erro nenhum e mesmo assim não há o que executar.
+
+Se o download for bloqueado (antivírus, proxy, firewall de empresa), o
+`iniciar.bat` detecta a falta e explica, em vez de deixar o Windows reclamar de
+um `.exe` inexistente.
 
 Em **👤 Contas**, salve usuário e senha de cada painel. As senhas ficam
 criptografadas com o `safeStorage` do sistema, em `userData`, e nunca voltam para
