@@ -88,8 +88,32 @@ class FakeClient {
     this.record('invite', name);
     if (this.failInvite === name) return { errorCode: 'party.full' };
     const alvo = (this.peers || []).find(p => p.state.name === name);
+
+    // Convite pendente de uma montagem anterior: o servidor recusa o novo até
+    // ele ser cancelado. É o `party.invite.already` que deixava contas de fora.
+    if (alvo && alvo.stuckInvite) return { errorCode: 'party.invite.already' };
+
     if (alvo && !alvo.noInvite) alvo.pendingInvite = { from_account: this.state.accountId };
     return {};
+  }
+
+  async partyInviteCancel(accountId) {
+    this.record('inviteCancel', String(accountId));
+    const alvo = (this.peers || []).find(p => String(p.state.accountId) === String(accountId));
+    if (alvo) alvo.stuckInvite = false;
+    return {};
+  }
+
+  async partyDecline(fromAccount) {
+    this.record('decline', String(fromAccount));
+    this.stuckInvite = false;
+    this.pendingInvite = null;
+    return {};
+  }
+
+  // Sem `record`: não é pacote, é limpeza local, e não entra na ordem medida.
+  forgetInvites() {
+    this.pendingInvite = null;
   }
 
   async waitForInvite(fromAccount, _timeoutMs) {
@@ -238,6 +262,47 @@ test('a ordem dos pacotes é a medida: ler, desfazer, criar, convidar, puxar', a
     // conferência final
     '0:get'
   ]);
+});
+
+test('convite pendente antigo é cancelado e refeito, não vira conta de fora', async () => {
+  // O erro que o usuário via: `party.invite.already` em três contas de uma vez,
+  // porque uma montagem anterior deixou convites pendentes no servidor. Eles
+  // não expiram na hora, e enquanto existirem todo `invite` novo é recusado —
+  // a PT era criada vazia.
+  const { clients, log } = quatro();
+  for (const c of clients.slice(1)) c.stuckInvite = true;
+
+  const result = await assembleParty(clients);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.failed, []);
+  assert.equal(result.size, 4);
+  assert.deepEqual(result.members.map(m => m.name), ['desjuli', 'muvinlax', 'sertralina20mg']);
+
+  // Cancelado dos dois lados antes de reconvidar: só do lado do líder o
+  // servidor ainda guardaria o convite no inbox do convidado.
+  const desjuli = ['0:invite:desjuli', '0:inviteCancel:12927', '1:decline:12920'];
+  assert.deepEqual(log.filter(l => desjuli.includes(l)), [
+    '0:invite:desjuli', '0:inviteCancel:12927', '1:decline:12920', '0:invite:desjuli'
+  ]);
+});
+
+test('convite que segue recusado depois do cancelamento vira falha reportada', async () => {
+  // O cancelamento é uma tentativa, não uma garantia: se o servidor continuar
+  // recusando, a conta tem de aparecer em `failed` em vez de sumir.
+  const { clients } = quatro();
+  clients[1].stuckInvite = true;
+  // O cancelamento não solta este convite: simula o servidor insistindo.
+  clients[0].partyInviteCancel = async () => ({});
+  clients[1].partyDecline = async () => ({});
+
+  const result = await assembleParty(clients);
+
+  assert.deepEqual(result.failed.map(f => [f.name, f.error]), [
+    ['desjuli', 'party.invite.already']
+  ]);
+  // As outras duas entram normalmente: uma recusa não derruba a montagem.
+  assert.deepEqual(result.members.map(m => m.name), ['muvinlax', 'sertralina20mg']);
 });
 
 test('o bilhete é lido antes de desfazer o grupo, e devolve a caçada original', async () => {

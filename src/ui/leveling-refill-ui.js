@@ -22,6 +22,7 @@
     hp: 'Poções de vida',
     mana: 'Poções de mana',
     revive: 'Revives',
+    shadow: 'Sombras',
     essence: 'Essência'
   };
 

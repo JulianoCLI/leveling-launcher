@@ -230,15 +230,66 @@ test('valores negativos ou inválidos não viram compra', () => {
   assert.deepEqual(plan({ stock: stock(), config: cfg, gold: 1e6, level: 50, catalog, learned }).orders, []);
 });
 
-test('os dez itens cobrem as três tiers de hp, mana e revive, mais essência', () => {
-  assert.equal(ITEMS.length, 10);
+test('os itens cobrem as tiers de hp, mana e revive, os de sombra e a essência', () => {
+  assert.equal(ITEMS.length, 12);
   const keys = ITEMS.map(i => i.key);
   assert.deepEqual(keys, [
     'hpPequena', 'hpMedia', 'hpGrande',
     'manaPequena', 'manaMedia', 'manaGrande',
     'revivePequena', 'reviveMedia', 'reviveGrande',
+    'shadowPotion', 'shadowRevive',
     'essence'
   ]);
+
+  // Sombras não têm tier: o pacote de compra sai sem o campo, e o estoque é um
+  // contador em vez de um grupo de tiers.
+  for (const key of ['shadowPotion', 'shadowRevive']) {
+    const item = ITEMS.find(i => i.key === key);
+    assert.equal(item.noTier, true);
+    assert.equal(item.tierNum, 0);
+  }
+});
+
+test('consumível de sombra compra pelo contador, sem tier no pacote', () => {
+  const catalog = readCatalog({
+    consumables: [
+      // Sem `tier`: proto3 omite o zero, e é assim que o item de sombra chega.
+      { kind: 'CONSUMABLE_KIND_SHADOW_POTION', price: 100, min_level: 10 }
+    ]
+  });
+  assert.deepEqual(catalog.prices['CONSUMABLE_KIND_SHADOW_POTION|POTION_TIER_UNSPECIFIED'],
+    { price: 100, minLevel: 10 });
+
+  const config = { enabled: true, items: { shadowPotion: { min: 5, target: 10 } } };
+  const { orders } = plan({
+    stock: { shadowPotions: 2 },
+    config,
+    gold: 100000,
+    level: 50,
+    catalog,
+    learned: { shadowPotion: 100 }
+  });
+
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].caseName, 'buy_consumable');
+  assert.deepEqual(orders[0].value, { kind: 4, qty: 8 });
+  assert.equal('tier' in orders[0].value, false);
+});
+
+test('sombra sem ConsumableDef pega o preço da oferta da loja', () => {
+  const catalog = readCatalog({
+    consumables: [],
+    shop: [
+      {
+        category: 'SHOP_CATEGORY_CONSUMABLE',
+        consumable: 'CONSUMABLE_KIND_SHADOW_REVIVE',
+        price: 600, qty: 3, min_level: 25
+      }
+    ]
+  });
+  // Preço por unidade, não por lote: é o que a reserva de ouro precisa orçar.
+  assert.deepEqual(catalog.prices['CONSUMABLE_KIND_SHADOW_REVIVE|POTION_TIER_UNSPECIFIED'],
+    { price: 200, minLevel: 25 });
 });
 
 test('readCatalog guarda só preço, nível, a oferta de essência e a cidade', () => {

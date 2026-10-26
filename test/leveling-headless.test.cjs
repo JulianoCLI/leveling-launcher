@@ -1481,6 +1481,50 @@ test('a conta sem monitor fica de fora da troca em lote', async () => {
   manager.stopAll();
 });
 
+test('o convite que chega antes da espera não se perde', async () => {
+  // A corrida que deixava contas de fora da PT: o `party_push{invite}` chega no
+  // convidado **antes** de o `party_response` do `invite` voltar ao líder, e
+  // `waitForInvite` só é chamado depois dessa resposta. Antes, o push caía num
+  // `wake` sem ouvintes e sumia; a conta falhava com `party.inviteNotReceived`
+  // e o convite pendente no servidor fazia a tentativa seguinte ser recusada.
+  const manager = new LevelingHeadlessManager({ WebSocket: MockWebSocket, autoReconnect: false });
+  manager.start(0, { username: 'u0', password: 'p' });
+  const ws = await bootHunt(manager.getClient(0));
+  const client = manager.getClient(0);
+
+  // Chega sem ninguém esperando por ele, e fora de qualquer montagem.
+  ws.push('party_push', { invite: { from_account: 12920, from_name: 'desjunior' } });
+  await sleep(5);
+
+  const invite = await client.waitForInvite(12920, 50);
+  assert.equal(invite.from_name, 'desjunior', 'o convite já recebido tem de ser achado');
+
+  // Convite de outro líder continua sem resposta: não vale qualquer um.
+  assert.equal(await client.waitForInvite(99999, 20), null);
+
+  // A montagem seguinte começa limpa, senão um convite velho seria aceito.
+  client.forgetInvites();
+  assert.equal(await client.waitForInvite(12920, 20), null);
+
+  manager.stopAll();
+});
+
+test('convite que chega pela caixa de entrada também é guardado', async () => {
+  const manager = new LevelingHeadlessManager({ WebSocket: MockWebSocket, autoReconnect: false });
+  manager.start(0, { username: 'u0', password: 'p' });
+  const ws = await bootHunt(manager.getClient(0));
+  const client = manager.getClient(0);
+
+  // O servidor remanda os pendentes em `inbox` em vez de um `invite` solto.
+  ws.push('party_push', { inbox: { invites: [{ from_account: 12927, from_name: 'desjuli' }] } });
+  await sleep(5);
+
+  const invite = await client.waitForInvite(12927, 50);
+  assert.equal(invite.from_name, 'desjuli');
+
+  manager.stopAll();
+});
+
 test('em grupo só o líder recebe a troca; os membros são puxados', async () => {
   // Medido na montagem de grupo: `start_hunt` do líder arrasta o grupo todo
   // (`party.follow.pulled`). Mandar também para o membro seria redundante e

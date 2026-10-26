@@ -35,6 +35,30 @@ const KINDS = [
 ];
 
 /**
+ * Consumíveis de sombra. Ficam fora de `KINDS` porque não têm tier: em
+ * `Consumables` eles são contadores inteiros (`shadow_potions`,
+ * `shadow_revives`), não `TierCounts`. `BuyConsumable.tier` é proto3, então o
+ * zero (`POTION_TIER_UNSPECIFIED`) é omitido no envio — que é exatamente o que
+ * um item sem tier precisa mandar.
+ */
+const SHADOW_KINDS = [
+  {
+    id: 'shadowPotion',
+    enum: 'CONSUMABLE_KIND_SHADOW_POTION',
+    num: 4,
+    stock: 'shadowPotions',
+    label: 'Poção de sombra'
+  },
+  {
+    id: 'shadowRevive',
+    enum: 'CONSUMABLE_KIND_SHADOW_REVIVE',
+    num: 5,
+    stock: 'shadowRevives',
+    label: 'Reviver de sombra'
+  }
+];
+
+/**
  * Itens configuráveis, na ordem em que o modal os mostra. `key` é o que fica
  * gravado em `prefs.json`, então mudar um nome aqui invalida a configuração do
  * usuário — vale manter.
@@ -54,6 +78,21 @@ for (const kind of KINDS) {
       tierNum: tier.num
     });
   }
+}
+for (const kind of SHADOW_KINDS) {
+  ITEMS.push({
+    key: kind.id,
+    label: kind.label,
+    group: 'shadow',
+    stockKey: kind.stock,
+    // Sem tier: o estoque é um contador só, e o `tier` do pacote fica no zero.
+    tierKey: null,
+    kindEnum: kind.enum,
+    tierEnum: 'POTION_TIER_UNSPECIFIED',
+    kindNum: kind.num,
+    tierNum: 0,
+    noTier: true
+  });
 }
 ITEMS.push({
   key: 'essence',
@@ -102,6 +141,8 @@ function isConfigured(config) {
 function stockOf(item, stock) {
   const safe = stock || {};
   if (item.essence) return int(safe.essence);
+  // Sombras são um contador só, sem tier: o valor está direto no estoque.
+  if (item.noTier) return int(safe[item.stockKey]);
   const group = safe[item.stockKey] || {};
   return int(group[item.tierKey]);
 }
@@ -218,7 +259,11 @@ function plan({ stock, config, gold = 0, level = 0, catalog, learned } = {}) {
       caseName: item.essence ? 'buy_essence' : 'buy_consumable',
       value: item.essence
         ? { qty }
-        : { kind: item.kindNum, tier: item.tierNum, qty }
+        // Sem tier o campo sai do pacote: mandar o zero explícito é o mesmo em
+        // proto3, mas omitir deixa claro que o item não tem tier.
+        : item.noTier
+          ? { kind: item.kindNum, qty }
+          : { kind: item.kindNum, tier: item.tierNum, qty }
     });
   }
 
@@ -237,10 +282,32 @@ function readCatalog(value) {
   // que é verdadeiro e passaria por uma checagem de presença.
   const named = v => typeof v === 'string' && v && !v.endsWith('_UNSPECIFIED');
   for (const def of Array.isArray(safe.consumables) ? safe.consumables : []) {
-    if (!def || !named(def.kind) || !named(def.tier)) continue;
-    prices[`${def.kind}|${def.tier}`] = {
+    if (!def || !named(def.kind)) continue;
+    // Poção e reviver de sombra não têm tier, e proto3 omite o zero: o `tier`
+    // chega ausente. Exigir um tier nomeado descartava justamente esses dois
+    // do catálogo, e sem preço eles nunca entrariam num plano de compra.
+    const tier = named(def.tier) ? def.tier : 'POTION_TIER_UNSPECIFIED';
+    prices[`${def.kind}|${tier}`] = {
       price: int(def.price),
       minLevel: int(def.min_level)
+    };
+  }
+
+  // Segunda fonte de preço: as ofertas da loja na categoria de consumível.
+  // `ConsumableDef` é a fonte primária, mas os consumíveis de sombra podem
+  // aparecer só aqui — eles são vendidos como oferta, e sem isto ficariam sem
+  // preço e nunca entrariam num plano. Só preenche o que falta, porque o
+  // `min_level` da oferta pode ser o da loja, não o do item.
+  for (const offer of Array.isArray(safe.shop) ? safe.shop : []) {
+    if (!offer || offer.category !== 'SHOP_CATEGORY_CONSUMABLE') continue;
+    if (!named(offer.consumable)) continue;
+    const tier = named(offer.tier) ? offer.tier : 'POTION_TIER_UNSPECIFIED';
+    const chave = `${offer.consumable}|${tier}`;
+    if (prices[chave]) continue;
+    const lote = int(offer.qty, 1) || 1;
+    prices[chave] = {
+      price: Math.ceil(int(offer.price) / lote),
+      minLevel: int(offer.min_level)
     };
   }
 

@@ -584,6 +584,7 @@
     'party.needTwo': 'Precisa de pelo menos duas contas desta aba em modo monitor.',
     'party.noHuntTicket': 'Grupo montado, mas a conta líder não estava em caçada: o grupo ficou na cidade. Inicie a caçada na líder.',
     'party.inviteNotReceived': 'o convite não chegou',
+    'party.invite.already': 'já havia um convite pendente que o servidor não soltou',
     'party.exists': 'a conta já está em outro grupo',
     'party.full': 'o grupo já está cheio',
     'party.none': 'a conta não está em grupo'

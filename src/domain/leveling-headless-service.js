@@ -306,6 +306,17 @@ class LevelingHeadlessClient extends EventEmitter {
      * ao push quando ele chega.
      */
     this.partyBusy = false;
+    /**
+     * Convites de grupo já recebidos, por id de quem convidou.
+     *
+     * Existe por causa de uma corrida medida: o `party_push{invite}` chega no
+     * convidado **antes** de o `party_response` do `invite` voltar para o
+     * líder. Como `waitForInvite` só é chamado depois dessa resposta, o push
+     * caía num `wake` sem ouvintes e sumia — a conta ficava de fora com
+     * `party.inviteNotReceived`, e o convite pendente que sobrava no servidor
+     * fazia a tentativa seguinte falhar com `party.invite.already`.
+     */
+    this.partyInvites = new Map();
 
     this.sessionStartTime = 0;
     this.state = this.initialState(options);
@@ -363,6 +374,9 @@ class LevelingHeadlessClient extends EventEmitter {
         hp: { pequena: 0, media: 0, grande: 0 },
         mana: { pequena: 0, media: 0, grande: 0 },
         revives: { pequena: 0, media: 0, grande: 0 },
+        // Consumíveis de sombra não têm tier no protocolo: são contadores.
+        shadowPotions: 0,
+        shadowRevives: 0,
         essence: 0
       },
       /** Último refill executado, para o HUD mostrar o que foi comprado. */
@@ -746,6 +760,9 @@ class LevelingHeadlessClient extends EventEmitter {
         return this.applyInventoryDelta(value);
 
       case 'party_push':
+        // O convite é guardado sempre, mesmo fora da montagem: ele chega antes
+        // da resposta que faz o convidado começar a esperar por ele.
+        this.rememberInvites(value);
         // `state` ausente num push de convite/medidor não significa sem grupo.
         return value.state ? this.applyParty(value.state) : false;
 
@@ -943,6 +960,11 @@ class LevelingHeadlessClient extends EventEmitter {
       for (const [tier, value] of Object.entries(tiers)) {
         if (stock[group][tier] !== value) { stock[group][tier] = value; changed = true; }
       }
+    }
+    // Sombras entram no `stock` como o contador que são: o refill lê daqui, e
+    // sem isto o planejador veria sempre zero e compraria sem parar.
+    for (const key of ['shadowPotions', 'shadowRevives']) {
+      if (stock[key] !== next[key]) { stock[key] = next[key]; changed = true; }
     }
     return changed;
   }
@@ -1488,7 +1510,14 @@ class LevelingHeadlessClient extends EventEmitter {
       this.state.stock.essence += Number(value.qty) || order.qty;
     } else {
       const item = refill.ITEMS.find(i => i.key === order.key);
-      if (item) {
+      if (item && item.noTier) {
+        // Sombras não têm tier: o estoque é o próprio contador, e é o mesmo
+        // número que o HUD mostra — não há soma de tiers para refazer.
+        const atual = Number(this.state.stock[item.stockKey]) || 0;
+        const novo = value.owned != null ? Number(value.owned) || 0 : atual + order.qty;
+        this.state.stock[item.stockKey] = novo;
+        this.state.potions[item.stockKey] = novo;
+      } else if (item) {
         const group = this.state.stock[item.stockKey];
         group[item.tierKey] = value.owned != null
           ? Number(value.owned) || 0
@@ -1559,21 +1588,54 @@ class LevelingHeadlessClient extends EventEmitter {
     return this.partyRequest('disband', {});
   }
 
+  /** Cancela o convite pendente para uma conta. Liberta `party.invite.already`. */
+  partyInviteCancel(accountId) {
+    return this.partyRequest('invite_cancel', { account_id: Number(accountId) || 0 });
+  }
+
+  /** Recusa um convite pendente, do lado de quem o recebeu. */
+  partyDecline(fromAccount) {
+    return this.partyAnswer(fromAccount, false);
+  }
+
   /**
-   * Espera o convite de `fromAccount` chegar. `party_push` carrega vários
-   * eventos no mesmo case, então filtra até achar o convite ou estourar o
-   * prazo — o convidado não pode responder antes de o convite existir.
+   * Guarda os convites que chegam por push. `party_push` carrega um evento por
+   * vez, e o convite vem solto (`invite`) ou dentro da caixa (`inbox.invites`)
+   * quando o servidor remanda os pendentes.
+   */
+  rememberInvites(value) {
+    const guardar = invite => {
+      if (!invite || invite.from_account == null) return;
+      this.partyInvites.set(String(invite.from_account), invite);
+    };
+    guardar(value.invite);
+    const inbox = value.inbox;
+    if (inbox && Array.isArray(inbox.invites)) inbox.invites.forEach(guardar);
+  }
+
+  /** Esquece os convites conhecidos; a montagem começa sem lixo da anterior. */
+  forgetInvites() {
+    this.partyInvites.clear();
+  }
+
+  /**
+   * Espera o convite de `fromAccount` chegar.
+   *
+   * Olha primeiro o que já chegou: medido, o push do convite costuma chegar no
+   * convidado **antes** de o `party_response` do `invite` voltar para o líder,
+   * e como esta espera só abre depois dessa resposta, esperar sem conferir o
+   * que já veio perdia o convite e deixava a conta de fora.
    */
   async waitForInvite(fromAccount, timeoutMs = 8000) {
     const alvo = String(fromAccount);
     const limite = Date.now() + timeoutMs;
-    while (Date.now() < limite) {
+    do {
+      const pronto = this.partyInvites.get(alvo);
+      if (pronto) return pronto;
       const push = await this.waitFor('party_push', Math.max(0, limite - Date.now()));
       if (!push) return null;
-      const invite = push.invite;
-      if (invite && String(invite.from_account) === alvo) return invite;
-    }
-    return null;
+    } while (Date.now() < limite);
+    return this.partyInvites.get(alvo) || null;
   }
 
   /**

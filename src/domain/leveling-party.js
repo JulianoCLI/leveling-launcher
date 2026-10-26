@@ -109,6 +109,9 @@ async function assembleParty(clients, onStep = () => {}) {
   // --------------------------------------------------- 1. ler o estado atual
   step('party.reading');
   for (const client of clients) {
+    // Convites de uma montagem anterior não valem para esta: guardá-los faria
+    // `waitForInvite` aceitar um convite velho e responder ao líder errado.
+    if (client.forgetInvites) client.forgetInvites();
     await client.partyGet().catch(() => null);
   }
 
@@ -160,7 +163,22 @@ async function assembleParty(clients, onStep = () => {}) {
   for (const client of members) {
     step('party.inviting', { index: client.index, name: client.state.name });
 
-    const convite = await leader.partyInvite(client.state.name).catch(err => ({ errorCode: err.message }));
+    let convite = await leader.partyInvite(client.state.name).catch(err => ({ errorCode: err.message }));
+
+    // `party.invite.already`: o servidor guarda um convite pendente para esta
+    // conta, de uma montagem anterior que não chegou ao `answer`. Ele não some
+    // sozinho antes de expirar, e enquanto existir todo `invite` novo é
+    // recusado — era isto que deixava as contas de fora da PT recém-criada.
+    //
+    // O convite velho é de um grupo que já não existe, então aceitá-lo não
+    // serve: ele é descartado dos dois lados e o convite é refeito.
+    if (convite && convite.errorCode === 'party.invite.already') {
+      await leader.partyInviteCancel(client.state.accountId).catch(() => null);
+      await client.partyDecline(leader.state.accountId).catch(() => null);
+      if (client.forgetInvites) client.forgetInvites();
+      convite = await leader.partyInvite(client.state.name).catch(err => ({ errorCode: err.message }));
+    }
+
     if (convite && convite.errorCode) {
       falharam.push({ index: client.index, name: client.state.name, error: convite.errorCode });
       continue;
