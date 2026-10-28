@@ -26,6 +26,22 @@ if errorlevel 1 (
 
 set "ELECTRON=node_modules\electron\dist\electron.exe"
 
+rem Pega as atualizacoes antes de abrir. Falha de rede, repositorio ausente ou
+rem alteracao local nao impedem o launcher de subir: segue com o que ja existe.
+where git >nul 2>&1
+if not errorlevel 1 (
+  if exist ".git" (
+    echo.
+    echo  Buscando atualizacoes.
+    call git pull --ff-only
+    if errorlevel 1 (
+      echo.
+      echo  Nao atualizei. Seguindo com a versao que esta na pasta.
+      echo.
+    )
+  )
+)
+
 where node >nul 2>&1
 if errorlevel 1 (
   echo.
