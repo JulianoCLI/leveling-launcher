@@ -25,6 +25,7 @@ const fs = require('fs');
 
 const { levelingHeadlessManager } = require('./src/domain/leveling-headless-service');
 const levelingRefill = require('./src/domain/leveling-refill');
+const marketDb = require('./src/domain/leveling-market-db');
 const { levelingCredentials } = require('./src/domain/leveling-credentials');
 const { createMemoryProbe, parseArgs: parseMemArgs } = require('./src/main/memory-probe');
 
@@ -317,6 +318,67 @@ levelingHeadlessManager.on('error', ({ index, error }) => logErro('headless', `c
 // Guardar o token permite reconectar por `resume`, que não gasta tentativa de login.
 levelingHeadlessManager.on('token', ({ index, token }) => levelingCredentials.setToken(index, token));
 
+// ----------------------------------------------------------------- mercado
+
+/**
+ * Banco do histórico de vendas. O servidor só mostra os últimos ~30 minutos de
+ * mercado e não dá como pedir mais; o que sai dessa janela desaparece. Este
+ * arquivo é o único lugar onde o histórico existe de verdade, e por isso ele
+ * só cresce — nada aqui é apagado por idade.
+ */
+const MARKET_FILE = () => path.join(app.getPath('userData'), marketDb.DB_FILE);
+
+let marketOpened = false;
+function market() {
+  const db = marketDb.getMarketDb(MARKET_FILE());
+  if (!marketOpened) {
+    marketOpened = true;
+    if (!db.open()) logErro('market', `banco indisponível: ${db.error}`);
+  }
+  return db;
+}
+
+/**
+ * O coletor é ligado assim que a primeira conta conecta e desligado quando a
+ * última sai. Deixá-lo correndo sem conta logada só geraria erro de minuto em
+ * minuto; e acioná-lo apenas quando a aba abre perderia justamente as vendas
+ * das horas em que o launcher ficou ligado sem ninguém olhando.
+ */
+levelingHeadlessManager.marketSink = sales => {
+  try {
+    return market().insertSales(sales);
+  } catch (e) {
+    logErro('market', e.message);
+    return 0;
+  }
+};
+
+function syncMarketPoll() {
+  const ativa = [...levelingHeadlessManager.clients.values()]
+    .some(c => c && c.status === 'connected');
+  if (ativa) levelingHeadlessManager.startMarketPoll();
+  else levelingHeadlessManager.stopMarketPoll();
+}
+
+levelingHeadlessManager.on('status', syncMarketPoll);
+levelingHeadlessManager.on('market', data => broadcast('leveling:market', data));
+
+/**
+ * Venda da própria conta. O feed público anonimiza vendedor e comprador, então
+ * esta é a única via que traz quem comprou. `MarketSold` não tem id de venda
+ * nem data: o `listing_id` serve de chave (um anúncio vende uma vez) e a hora
+ * é a da chegada do push, com erro de segundos.
+ */
+levelingHeadlessManager.on('market-sold', ({ index, sold }) => {
+  if (!sold) return;
+  try {
+    market().insertSales([{ ...sold, id: sold.listing_id, sold_at_ms: Date.now() }]);
+  } catch (e) {
+    logErro('market', e.message);
+  }
+  broadcast('leveling:market-sold', { index, sold });
+});
+
 // ------------------------------------------------------------------------- IPC
 
 /** Só o frame principal do launcher fala com estes canais. */
@@ -466,6 +528,34 @@ levelingHeadlessManager.on('hunts', ({ catalog }) => {
 });
 
 /**
+ * Cópia em disco da aparência do mercado: ícones, cores de raridade e sprites
+ * de monstro. Pelo mesmo motivo do arquivo de caçadas — o `content_catalog`
+ * chega uma vez no login e não pode ser pedido de novo —, e com um motivo a
+ * mais: sem esta cópia a tabela de preços abriria sem ícone nenhum e os
+ * pintaria só depois do próximo login, piscando.
+ *
+ * São ~30 KB recortados de 1 MB.
+ */
+const MARKET_CATALOG_FILE = () => path.join(app.getPath('userData'), 'market-catalog.json');
+
+function readMarketCatalogFile() {
+  try {
+    return JSON.parse(fs.readFileSync(MARKET_CATALOG_FILE(), 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+levelingHeadlessManager.on('market-catalog', ({ catalog }) => {
+  try {
+    fs.writeFileSync(MARKET_CATALOG_FILE(), JSON.stringify(catalog));
+  } catch (e) {
+    logErro('market', e.message);
+  }
+  broadcast('leveling:market-catalog', { catalog });
+});
+
+/**
  * Troca a caçada das contas indicadas sem desligar o monitor. Uma conta só ou
  * várias juntas: a diferença está apenas na lista que a interface manda.
  *
@@ -484,6 +574,144 @@ ipcMain.handle('leveling:hunt:set', async (event, indexes, ticket) => {
     logErro('hunt', `contas ${lista.join(',')}: ${motivo}`);
   }
   return result;
+});
+
+/**
+ * Resumo por item: quantas vendas, média, mediana, mínimo, máximo e o último
+ * preço praticado. É a visão que responde "quanto vale isto" a partir do que
+ * o launcher já acumulou.
+ */
+ipcMain.handle('leveling:market:summary', (event, opts) => {
+  launcherOnly(event);
+  const db = market();
+  return {
+    ...db.summary(opts || {}),
+    stats: db.stats(),
+    categories: db.categories()
+  };
+});
+
+/** Vendas cruas, mais recentes primeiro — o feed da aba "ao vivo". */
+ipcMain.handle('leveling:market:recent', (event, opts) => {
+  launcherOnly(event);
+  return { sales: market().recent(opts || {}) };
+});
+
+/** Um item em detalhe: série diária de preço e as vendas que a formaram. */
+ipcMain.handle('leveling:market:item', (event, defId, opts) => {
+  launcherOnly(event);
+  return { item: market().itemDetail(defId, opts || {}) };
+});
+
+/**
+ * Estatística do próprio servidor para um item. Complementa o banco: cobre o
+ * período anterior ao primeiro uso do launcher, que o banco nunca terá.
+ */
+ipcMain.handle('leveling:market:hint', async (event, defId, days) => {
+  launcherOnly(event);
+  const client = levelingHeadlessManager.marketClient();
+  if (!client) return { errorCode: 'market.noneActive' };
+  try {
+    return await client.marketPriceHint(defId, days);
+  } catch (e) {
+    return { errorCode: e.message };
+  }
+});
+
+/** Força uma leitura agora, sem esperar o minuto do coletor. */
+ipcMain.handle('leveling:market:poll', async event => {
+  launcherOnly(event);
+  const inserted = await levelingHeadlessManager.pollMarket();
+  return { inserted, poll: levelingHeadlessManager.getMarketStats(), stats: market().stats() };
+});
+
+/**
+ * Ícones, cores de raridade e sprites. A cópia de disco atende a primeira
+ * abertura; a primeira conta a logar a substitui pela do servidor.
+ */
+ipcMain.handle('leveling:market:catalog', event => {
+  launcherOnly(event);
+  const salvo = levelingHeadlessManager.getMarketCatalog() || readMarketCatalogFile();
+  if (salvo) levelingHeadlessManager.setMarketCatalog(salvo);
+  return { catalog: levelingHeadlessManager.getMarketCatalog() };
+});
+
+/**
+ * Anúncios à venda agora. É a única fonte das fichas: `MarketSale` não traz
+ * nível de item nem potência de sombra, mas `MarketListing` traz os dois —
+ * medido, `shadow{rank, level, power, quality, potential_total}` e
+ * `item{level, rarity, slot}`. Preço pedido não é preço pago, então isto
+ * complementa o histórico em vez de substituí-lo.
+ */
+ipcMain.handle('leveling:market:listings', async (event, filtros) => {
+  launcherOnly(event);
+  const client = levelingHeadlessManager.marketClient();
+  if (!client) return { errorCode: 'market.noneActive', listings: [] };
+  try {
+    return await client.marketSearch(filtros || {});
+  } catch (e) {
+    return { errorCode: e.message, listings: [] };
+  }
+});
+
+/**
+ * Quem tem cada item, entre as contas em modo monitor.
+ *
+ * Pedido com a lista de itens que a tela está mostrando, não o inventário
+ * inteiro: medido, `filter.def_ids` aceita 155 ids num pedido de 35 ms e o
+ * servidor devolve só o que a conta tem. Uma página da tabela custa um pedido
+ * por conta, em paralelo.
+ *
+ * Nada é guardado em disco. A posse muda a cada caçada; um número velho aqui
+ * seria pior que número nenhum, porque pareceria atual.
+ */
+ipcMain.handle('leveling:market:owners', async (event, defIds) => {
+  launcherOnly(event);
+  const ids = Array.isArray(defIds) ? defIds.slice(0, 200) : [];
+  if (!ids.length) return { byDef: {}, accounts: [], offline: [] };
+  try {
+    return await levelingHeadlessManager.inventoryOwners(ids);
+  } catch (e) {
+    return { errorCode: e.message, byDef: {}, accounts: [], offline: [] };
+  }
+});
+
+/**
+ * O inventário inteiro das contas em modo monitor, cruzado com o preço de
+ * mercado de cada item — a aba "Minha bolsa".
+ *
+ * Varredura, não filtro: aqui não há lista prévia de itens, a pergunta é "o
+ * que eu tenho". Medido: 4 pedidos e ~107 ms por conta, em paralelo.
+ *
+ * O cruzamento com o preço acontece aqui, no processo principal, porque é
+ * onde o banco está: mandar o inventário cru para a interface a obrigaria a
+ * pedir o resumo de cada item separadamente.
+ */
+ipcMain.handle('leveling:market:bag', async (event, opts) => {
+  launcherOnly(event);
+  try {
+    const bags = await levelingHeadlessManager.inventoryBags();
+    const dias = Number(opts && opts.days) || 0;
+    const db = market();
+    // Uma consulta só, grande: pedir item por item seria uma consulta por
+    // linha de inventário, e são centenas por conta.
+    const ids = new Set();
+    for (const c of bags.contas) for (const id of Object.keys(c.owned)) ids.add(id);
+    const precos = {};
+    if (db && ids.size) {
+      const page = db.summary({ days: dias, limit: 2000, includeExchange: true });
+      for (const i of page.items) precos[i.def_id] = i;
+    }
+    return { ...bags, precos };
+  } catch (e) {
+    return { errorCode: e.message, contas: [], offline: [], precos: {} };
+  }
+});
+
+/** Saúde do acúmulo: desde quando, quantas vendas, tamanho do arquivo. */
+ipcMain.handle('leveling:market:stats', event => {
+  launcherOnly(event);
+  return { stats: market().stats(), poll: levelingHeadlessManager.getMarketStats() };
 });
 
 ipcMain.handle('leveling:refill:get', event => {

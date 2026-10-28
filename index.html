@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'">
+    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://levelingidle2d.com.br; connect-src 'none'">
   <title>Leveling Idle 2D · Launcher</title>
   <link rel="stylesheet" href="src/ui/shell.css">
   <link rel="stylesheet" href="src/ui/leveling.css">
@@ -39,6 +39,9 @@
     <button id="huntBtn"
       title="Troca a caçada das contas em modo monitor, sem desligar o monitor. Dá para trocar uma conta só ou várias juntas.">🗺️
       Caçada</button>
+    <button id="marketBtn"
+      title="Preços praticados no mercado. O jogo só mostra os últimos 30 minutos de vendas; o launcher acumula o histórico enquanto alguma conta está em modo monitor.">💰
+      Mercado</button>
     <button id="reloadAll" title="Recarrega a página do jogo em todos os painéis">⟳ Atualizar</button>
     <button id="bootMonitorBtn"
       title="Esta aba abre já em modo monitor, sem carregar o jogo nos painéis (consumo mínimo)">🔋 Monitor no
@@ -159,11 +162,34 @@
     </div>
   </div>
 
+  <!-- Modal do mercado: preços praticados, acumulados pelo launcher -->
+  <div id="marketOverlay" style="display:none">
+    <div id="marketModal" role="dialog" aria-labelledby="marketTitle" aria-modal="true">
+      <div class="lv-head">
+        <h2><span class="lv-icon" aria-hidden="true">💰</span><span id="marketTitle">Preços do mercado</span></h2>
+        <button type="button" class="lv-close" id="marketCloseBtn" aria-label="Fechar">&times;</button>
+      </div>
+      <p class="hint">O jogo só mostra os <b>últimos 30 minutos</b> de vendas. O launcher lê esse
+        feed de minuto em minuto enquanto alguma conta está em <b>modo monitor</b> e guarda tudo
+        aqui — o histórico cresce com o tempo de uso e nada é apagado.</p>
+
+      <div id="marketBody"></div>
+
+      <div class="lv-status-bar" id="marketStatusBar" role="status" aria-live="polite"></div>
+
+      <div class="modal-actions">
+        <button type="button" id="marketRefresh" class="primary">Ler agora</button>
+        <button type="button" id="marketClose">Fechar</button>
+      </div>
+    </div>
+  </div>
+
   <script src="src/ui/hud-metrics.js"></script>
   <script src="src/ui/leveling-hud.js"></script>
   <script src="src/ui/leveling-panel.js"></script>
   <script src="src/ui/leveling-refill-ui.js"></script>
   <script src="src/ui/leveling-hunt-ui.js"></script>
+  <script src="src/ui/leveling-market-ui.js"></script>
   <script src="src/ui/shell.js"></script>
 </body>
 

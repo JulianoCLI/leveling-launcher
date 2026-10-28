@@ -44,6 +44,10 @@ const PARTY_PRIVACY = {
 function defaultSettings(capacity = 4) {
   return {
     privacy: PARTY_PRIVACY.CLOSED,
+    // `0` é "qualquer nível" (medido no cliente do jogo: `party.set.min_level`
+    // = "Nível mínimo (0 = qualquer)"). Qualquer outro valor vira o piso da
+    // faixa que o servidor cobra no `answer`.
+    min_level: 0,
     capacity,
     objective: 'Launcher',
     auto_accept_friends: true,

@@ -92,6 +92,172 @@ const huntCatalog = {
   }
 };
 
+/**
+ * Mercado. O banco fica no principal, então aqui ele é simulado: o que está em
+ * teste é a tela saber pedir, pintar e trocar de visão — e, sobretudo, saber
+ * distinguir "ainda não coletei nada" de "o filtro não casou", que são os dois
+ * vazios possíveis e levam a ações opostas.
+ */
+const marketCalls = [];
+const marketItems = [
+  {
+    def_id: 'arco-arqueiro', name: 'Arco de Arqueiro', category: 'armas', rarity: 'lendario',
+    currency: 'MARKET_CURRENCY_GOLD', vendas: 12, unidades: 14, volume: 3000000,
+    media: 250000, mediana: 35000, minimo: 1, maximo: 9000000,
+    ultimo_preco: 26666, ultima_venda_ms: Date.now() - 120000, ultimo_enchant: 0,
+    // Vendido nas duas moedas. Diamante é escala própria — dezenas, não
+    // milhares — e somá-lo ao ouro daria um preço que nunca existiu.
+    vendas_ouro: 10, vendas_dia: 2, unidades_dia: 2,
+    media_dia: 100, mediana_dia: 90, minimo_dia: 80, maximo_dia: 120,
+    ultimo_preco_dia: 120
+  },
+  {
+    def_id: 'sangue-de-troll', name: 'Sangue de Troll', category: 'materiais', rarity: 'comum',
+    currency: 'MARKET_CURRENCY_GOLD', vendas: 3, unidades: 9, volume: 690000,
+    media: 230000, mediana: 230000, minimo: 230000, maximo: 230000,
+    ultimo_preco: 230000, ultima_venda_ms: Date.now() - 60000, ultimo_enchant: 0,
+    // Nunca vendido em diamante: a coluna tem de ficar vazia, não zerada.
+    vendas_ouro: 3, vendas_dia: 0
+  }
+];
+let marketEmpty = false;
+
+ipcMain.handle('leveling:market:summary', (_e, opts) => {
+  marketCalls.push({ op: 'summary', opts });
+  const vazio = marketEmpty || (opts && opts.search === 'nao-existe');
+  return {
+    items: vazio ? [] : marketItems,
+    total: vazio ? 0 : marketItems.length,
+    // `stats.vendas` é o que separa "banco vazio" de "filtro sem resultado".
+    stats: marketEmpty
+      ? { ready: true, vendas: 0, itens: 0, bytes: 0 }
+      : { ready: true, vendas: 1500, itens: 42, desde_ms: Date.now() - 86400000, bytes: 2097152 },
+    categories: ['armas', 'materiais']
+  };
+});
+ipcMain.handle('leveling:market:recent', (_e, opts) => {
+  marketCalls.push({ op: 'recent', opts });
+  return {
+    sales: [{
+      id: 1, def_id: 'arco-arqueiro', name: 'Arco de Arqueiro', category: 'armas',
+      rarity: 'lendario', enchant: 7, currency: 'MARKET_CURRENCY_GOLD',
+      quantity: 1, unit_price: 1300000, total: 1300000, sold_at_ms: Date.now() - 30000
+    }]
+  };
+});
+ipcMain.handle('leveling:market:item', (_e, defId, opts) => {
+  marketCalls.push({ op: 'item', defId, opts });
+  const dia = 86400000;
+  return {
+    item: {
+      ...marketItems[0], def_id: defId,
+      primeira_venda_ms: Date.now() - 3 * dia,
+      series: [
+        { dia_ms: Date.now() - 2 * dia, vendas: 2, unidades: 2, media: 20000, minimo: 10000, maximo: 30000 },
+        { dia_ms: Date.now() - dia, vendas: 5, unidades: 5, media: 45000, minimo: 20000, maximo: 90000 }
+      ],
+      sales: [
+        { id: 1, quantity: 1, unit_price: 26666, total: 26666, enchant: 0, sold_at_ms: Date.now() - 60000 }
+      ]
+    }
+  };
+});
+ipcMain.handle('leveling:market:hint', (_e, defId, days) => {
+  marketCalls.push({ op: 'hint', defId, days });
+  return { sales: 1624, average: 232646, median: 35000, lowest_sold: 1, highest_sold: 9000000, lowest_now: 2667, days: 30 };
+});
+ipcMain.handle('leveling:market:poll', () => {
+  marketCalls.push({ op: 'poll' });
+  return { inserted: 7, poll: { lastError: '' }, stats: { ready: true, vendas: 1507 } };
+});
+ipcMain.handle('leveling:market:stats', () => ({ stats: { ready: true, vendas: 1500 }, poll: {} }));
+ipcMain.handle('leveling:market:catalog', () => {
+  marketCalls.push({ op: 'catalog' });
+  return {
+    catalog: {
+      items: {
+        'arco-arqueiro': {
+          name: 'Arco de Arqueiro',
+          icon: '/assets/paperdoll/gear/arco-arqueiro/icon.png',
+          slot: 'arma', category: 'weapons', stats: { atk: 9 }
+        }
+      },
+      rarities: { lendario: { name: 'Lendário', color: '#fbbf24', order: 4 } },
+      shadowRanks: { cavaleiro: { name: 'Cavaleiro', color: '#58d6e8', order: 2 } },
+      monsters: { 'Slime Corrosivo': { name: 'Slime Corrosivo', icon: '/assets/monsters/slime/idle.png' } },
+      origin: 'https://levelingidle2d.com.br'
+    }
+  };
+});
+let marketBagEmpty = false;
+ipcMain.handle('leveling:market:bag', (_e, opts) => {
+  marketCalls.push({ op: 'bag', opts });
+  if (marketBagEmpty) return { contas: [], offline: [{ index: 0, name: 'samaleiko' }], precos: {} };
+  return {
+    contas: [
+      {
+        index: 0, name: 'samaleiko', errorCode: '',
+        owned: {
+          // Vendável: está na mochila.
+          'sangue-de-troll': {
+            qty: 9, linhas: 1, bag: 9, warehouse: 0, equipped: 0,
+            melhor: { power: 0, level: 0, rarity: 'comum', enchant: 0, locked: false, equipped: false }
+          },
+          // Vestido: `qty` zero e `equipped` um. Não está à venda, e por isso
+          // fica fora da soma e só aparece quando a caixa é marcada.
+          'arco-arqueiro': {
+            qty: 0, linhas: 1, bag: 0, warehouse: 0, equipped: 1,
+            melhor: { power: 129, level: 45, rarity: 'lendario', enchant: 3, locked: true, equipped: true }
+          }
+        }
+      }
+    ],
+    offline: [{ index: 1, name: 'segunda' }],
+    precos: Object.fromEntries(marketItems.map(i => [i.def_id, i]))
+  };
+});
+
+let marketOwnersOffline = false;
+ipcMain.handle('leveling:market:owners', (_e, defIds) => {
+  marketCalls.push({ op: 'owners', defIds });
+  // Sem conta em modo monitor não há inventário para ler: a tela tem de dizer
+  // "não sei", nunca "não tem".
+  if (marketOwnersOffline) {
+    return { byDef: {}, accounts: [], offline: [{ index: 0, name: 'samaleiko' }] };
+  }
+  return {
+    byDef: {
+      'arco-arqueiro': {
+        total: 7, equipped: 1,
+        accounts: [
+          {
+            index: 0, name: 'samaleiko', qty: 5, linhas: 5, bag: 4, warehouse: 1, equipped: 1,
+            melhor: { power: 129, level: 45, rarity: 'lendario', enchant: 3, locked: true, equipped: false }
+          },
+          {
+            index: 1, name: 'segunda', qty: 2, linhas: 2, bag: 2, warehouse: 0, equipped: 0,
+            melhor: { power: 88, level: 40, rarity: 'raro', enchant: 0, locked: false, equipped: false }
+          }
+        ]
+      }
+    },
+    accounts: [{ index: 0, name: 'samaleiko', errorCode: '' }, { index: 1, name: 'segunda', errorCode: '' }],
+    offline: [{ index: 2, name: 'terceira' }],
+    readAtMs: Date.now()
+  };
+});
+ipcMain.handle('leveling:market:listings', (_e, filtros) => {
+  marketCalls.push({ op: 'listings', filtros });
+  return {
+    listings: [{
+      id: '1', name: 'Arco de Arqueiro', currency: 'MARKET_CURRENCY_GOLD',
+      unit_price: '1999999', quantity: '1',
+      item: { def_id: 'arco-arqueiro', level: 32, rarity: 'lendario', slot: 'arma' },
+      expires_at_ms: String(Date.now() + 7200000)
+    }]
+  };
+});
+
 const huntSwitches = [];
 ipcMain.handle('leveling:hunts:get', () => ({ catalog: huntCatalog }));
 ipcMain.handle('leveling:hunt:set', (_e, indexes, ticket) => {
@@ -428,10 +594,192 @@ app.whenReady().then(async () => {
   assert.deepEqual(started, [], 'Removing a tab must stop monitors that would become unreachable');
   assert.equal(await read('window.PioShell.panels[0].account'), 0, 'Removing the active tab must fall back');
 
+  // 14. Mercado. O banco vive no principal; o que se verifica aqui é a tela
+  // pedir os dados certos, pintar a tabela e navegar entre as três visões.
+  await read('window.PioShell.openMarket()');
+  await pause(600);
+
+  assert.equal(await read('document.getElementById("marketOverlay").classList.contains("show")'), true,
+    'The market modal must open');
+  assert.equal(await read('document.querySelectorAll("#marketBody .mk-table tbody tr").length'), 2,
+    'Each item must be one row');
+  assert.ok(await read('document.getElementById("marketStatusBar").textContent.includes("1.500")'),
+    'The footer must say how much history has been accumulated');
+
+  // Mediana muito distante da média é marcada: a média sozinha enganaria.
+  assert.equal(await read('document.querySelectorAll("#marketBody tbody tr.is-spread").length'), 1,
+    'Only the item with a scattered price must be flagged');
+
+  // Ícone e cor de raridade vêm do catálogo do jogo. Sem eles toda linha fica
+  // igual e nem câmbio nem gema se distinguem de uma peça de armadura.
+  assert.ok(await read(`document.querySelector('#marketBody tbody .mk-icon img')
+    .src.includes('levelingidle2d.com.br/assets/paperdoll/gear/arco-arqueiro/icon.png')`),
+    'The row must show the icon the game uses');
+  assert.ok(await read(`document.querySelector('#marketBody tbody .mk-c-name b')
+    .getAttribute('style').includes('#fbbf24')`),
+    'The name must take the rarity colour the game uses for legendary');
+  // O quadro existe mesmo sem imagem: sem catálogo para este item, a coluna
+  // não pode mudar de largura.
+  assert.equal(await read(`document.querySelectorAll('#marketBody tbody .mk-icon').length`), 2,
+    'Every row keeps its icon slot, with or without an image');
+
+  // Preço em diamante: coluna própria, nunca somada ao ouro. As duas moedas
+  // têm ordens de grandeza diferentes, e a média conjunta não corresponde a
+  // nenhuma venda que aconteceu.
+  assert.ok(await read(`document.querySelector('#marketBody tbody .mk-c-dia:not(.is-none)').textContent.includes('90')`),
+    'The diamond column must show the diamond median, not the gold one');
+  assert.ok(!(await read(`document.querySelector('#marketBody tbody .mk-c-p').textContent`)).includes('90'),
+    'The gold column must stay free of diamond prices');
+  // Item nunca vendido em diamante: vazio, não zero. Zero diria que ele vale
+  // nada nessa moeda; o fato é que ninguém o vendeu nela.
+  assert.ok(await read(`!!document.querySelector('#marketBody tbody .mk-c-dia.is-none')`),
+    'An item never sold for diamonds must read blank, not zero');
+
+  // O foco não pode sair da caixa de busca quando o resultado repinta: antes,
+  // a tabela e a barra eram refeitas juntas e o input era destruído no meio
+  // da palavra, jogando o cursor fora.
+  await read(`(() => {
+    const i = document.querySelector('#marketBody [data-role="search"]');
+    i.focus(); i.value = 'arco';
+    i.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  })()`);
+  await pause(700);
+  assert.ok(await read(`document.activeElement === document.querySelector('#marketBody [data-role="search"]')`),
+    'Typing must not steal focus from the search box');
+  assert.equal(await read(`document.querySelector('#marketBody [data-role="search"]').value`), 'arco',
+    'The typed text must survive the repaint');
+  await read(`(() => {
+    const i = document.querySelector('#marketBody [data-role="search"]');
+    i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  })()`);
+  await pause(600);
+
+  // Coluna "Minhas": a lista inteira custa um pedido por conta, graças ao
+  // filtro por def_ids. Os três estados têm de ser distinguíveis.
+  assert.ok(marketCalls.some(c => c.op === 'owners' && c.defIds.length === 2),
+    'The list must ask about every item it shows, in one request');
+  assert.ok(await read(`document.querySelector('#marketBody tbody .mk-c-own.is-owned b').textContent.includes('7')`),
+    'The owned column must total what the accounts hold');
+  // O item que ninguém tem mostra 0, não "—": foi perguntado e a resposta foi
+  // nenhuma. Confundir os dois levaria a comprar algo que já se tem.
+  assert.ok(await read(`!!document.querySelector('#marketBody tbody .mk-c-own.is-zero')`),
+    'An item nobody owns must read zero, which is different from unknown');
+
+  // Trocar o período tem de repetir a consulta, não filtrar o que já veio.
+  await read(`(() => {
+    const dias = document.querySelector('#marketBody [data-role="days"]');
+    dias.value = '30';
+    dias.onchange();
+  })()`);
+  await pause(400);
+  assert.equal(await read('window.PioMarket.query.days'), 30, 'Changing the period must requery');
+
+  // Clicar numa linha abre o item, e o detalhe pede o reforço ao servidor.
+  await read('document.querySelector("#marketBody tbody tr").click()');
+  await pause(700);
+  assert.equal(await read('window.PioMarket.view'), 'detail', 'Clicking a row must open the item');
+  assert.ok(await read('!!document.querySelector("#marketBody .mk-chart")'),
+    'The detail must chart the daily price');
+  assert.ok(await read('!!document.querySelector("#marketBody .mk-hint")'),
+    'The detail must also show what the server knows');
+  assert.ok(marketCalls.some(c => c.op === 'hint' && c.defId === 'arco-arqueiro'),
+    'The detail must ask the server about this very item');
+  assert.ok(await read(`document.querySelector('#marketBody .mk-ficha-stats').textContent.includes('ATQ 9')`),
+    'The detail must show the base stats the catalogue knows');
+  // Nível e potência só existem nos anúncios ativos: `MarketSale` não os traz.
+  assert.ok(marketCalls.some(c => c.op === 'listings'),
+    'The detail must ask for the active listings');
+  assert.ok(await read(`document.getElementById('marketBody').textContent.includes('À venda agora')`),
+    'Asking price must appear, clearly separate from the price actually paid');
+
+  // Quem tem o item. Com oito contas é a outra metade da decisão: o preço diz
+  // quanto vale, isto diz se vale a pena ir buscar e em qual conta.
+  assert.ok(marketCalls.some(c => c.op === 'owners' && c.defIds.includes('arco-arqueiro')),
+    'The detail must ask which accounts own the item');
+  assert.ok(await read(`!!document.querySelector('#marketBody .mk-owners')`),
+    'The detail must list the accounts that own it');
+  const donos = await read(`document.querySelector('#marketBody .mk-owners').textContent`);
+  assert.ok(donos.includes('samaleiko') && donos.includes('segunda'),
+    'Every owning account must be named');
+  // Mochila, depósito e equipado são somas diferentes: equipado é seu mas não
+  // está à venda, e misturá-los mentiria sobre o que dá para vender.
+  assert.ok(donos.includes('Equipado'), 'Equipped must be counted apart from what is for sale');
+  assert.ok(await read(`document.querySelector('#marketBody .mk-group').textContent.includes('contas')`)
+    || donos.length > 0, 'The heading must summarise the total');
+  // Conta fora do modo monitor não foi consultada: dizer que ela não tem seria
+  // inventar um dado que ninguém leu.
+  assert.ok(await read(`document.getElementById('marketBody').textContent.includes('terceira')`),
+    'Accounts that were not consulted must be named, not silently counted as zero');
+
+  // A aba "ao vivo" é outra pergunta: o que está acontecendo agora.
+  await read(`document.querySelector('#marketBody [data-view="live"]').click()`);
+  await pause(500);
+  assert.equal(await read('window.PioMarket.view'), 'live');
+  assert.ok(marketCalls.some(c => c.op === 'recent'), 'The live tab must read raw sales');
+
+  // Aba "Minha bolsa": a soma que decide se vale abrir o jogo.
+  await read(`document.querySelector('#marketBody [data-view="bolsa"]').click()`);
+  await pause(600);
+  assert.equal(await read('window.PioMarket.view'), 'bolsa');
+  assert.ok(marketCalls.some(c => c.op === 'bag'), 'The bag tab must scan the inventories');
+  const bolsa = await read(`document.querySelector('#marketBody').textContent`);
+  assert.ok(bolsa.includes('Sangue de Troll'), 'Sellable items must be listed');
+  assert.ok(bolsa.includes('Total vendável'), 'The tab must total what can be sold');
+  // Equipamento vestido fica fora por padrão: a pergunta é "quanto posso
+  // lucrar", e o que está no corpo não está à venda. Somá-lo trocaria a
+  // resposta por "quanto possuo", que é outra coisa.
+  assert.ok(!bolsa.includes('Arco de Arqueiro'),
+    'Equipped gear must be hidden by default, because it is not for sale');
+  assert.ok(await read(`!!document.querySelector('#marketBody [data-role="equip"]')`),
+    'A checkbox must exist to reveal it');
+
+  await read(`document.querySelector('#marketBody [data-role="equip"]').click()`);
+  await pause(300);
+  const comEquip = await read(`document.querySelector('#marketBody').textContent`);
+  assert.ok(comEquip.includes('Arco de Arqueiro'), 'Ticking the box must reveal equipped gear');
+  assert.ok(await read(`!!document.querySelector('#marketBody tr.is-equipped')`),
+    'Equipped rows must look different from what is actually sellable');
+  // Revelar não pode somar: o total continua sendo o do que dá para vender.
+  assert.ok(comEquip.includes('Total vendável'), 'The total must still be about sellable value');
+  // Conta fora do monitor é nomeada: a bolsa dela é desconhecida, não vazia.
+  assert.ok(comEquip.includes('fora do monitor') || comEquip.includes('segunda'),
+    'Accounts outside monitor mode must be reported, not counted as empty');
+
+  // "Ler agora" existe para não esperar o minuto do coletor.
+  await read('document.getElementById("marketRefresh").click()');
+  await pause(500);
+  assert.ok(marketCalls.some(c => c.op === 'poll'), 'The button must force a read');
+
+  // Os dois vazios são diferentes, e dizer a coisa errada mandaria o usuário
+  // esperar por dados que nunca viriam.
+  await read(`(() => {
+    window.PioMarket.view = 'items';
+    window.PioMarket.query.search = 'nao-existe';
+    return window.PioMarket.load();
+  })()`);
+  await pause(500);
+  assert.ok(await read('document.getElementById("marketBody").textContent.includes("filtros")'),
+    'An empty filter must say it is the filter');
+
+  marketEmpty = true;
+  await read(`(() => { window.PioMarket.query.search = ''; return window.PioMarket.load(); })()`);
+  await pause(500);
+  assert.ok(await read('document.getElementById("marketBody").textContent.includes("modo monitor")'),
+    'An empty database must explain that collecting depends on the monitor');
+  marketEmpty = false;
+
+  // Esc fecha o mercado antes de qualquer outro modal aberto por baixo.
+  await read(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+  await pause(300);
+  assert.equal(await read('document.getElementById("marketOverlay").classList.contains("show")'), false,
+    'Esc must close the market');
+
   const fatal = errors.filter(e => !/favicon|ERR_FILE_NOT_FOUND/i.test(e));
   assert.deepEqual(fatal, [], 'Renderer must not log errors: ' + fatal.join('\n'));
 
-  console.log('PASS: shell mounts four isolated panels, scales to more accounts through tabs, stores credentials safely, and hands the panel over to the read-only monitor and back.');
+  console.log('PASS: shell mounts four isolated panels, scales to more accounts through tabs, stores credentials safely, hands the panel over to the read-only monitor and back, and browses the accumulated market prices.');
   app.quit();
 }).catch(err => {
   console.error('FAIL:', err && err.stack || err);

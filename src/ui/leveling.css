@@ -814,3 +814,642 @@
   }
 }
 
+
+/* ------------------------------------------------------------------ mercado
+
+   A tela de preços é uma tabela densa: sete colunas numéricas que só servem
+   se puderem ser comparadas de relance. Daí as escolhas:
+
+   - números alinhados à direita e em fonte tabular, para as casas decimais
+     ficarem na mesma coluna vertical;
+   - o modal é o mais largo de todos, porque estreitar aqui significaria
+     esconder uma coluna que é justamente a comparação;
+   - só o corpo rola, com o cabeçalho preso: numa lista de 150 itens, perder
+     o nome da coluna é perder a tabela.
+*/
+
+#marketOverlay {
+  background: rgba(0, 0, 0, .72);
+  backdrop-filter: blur(4px);
+  position: fixed;
+  inset: 0;
+  /* Acima do seletor de caçada: é o último a abrir. */
+  z-index: 1430;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+#marketOverlay.show {
+  display: flex;
+}
+
+#marketModal {
+  width: min(980px, calc(100vw - 32px));
+  max-height: calc(100vh - 36px);
+  padding: 22px 24px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, .5);
+  color-scheme: var(--theme-color-scheme);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+#marketModal .lv-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+#marketModal .lv-head h2 {
+  color: var(--color-text-primary);
+  font-size: 21px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-weight: 700;
+}
+
+#marketModal .lv-icon {
+  font-size: 20px;
+}
+
+#marketModal .hint {
+  color: var(--color-text-secondary);
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+#marketModal .lv-close {
+  background: transparent;
+  border: 0;
+  color: var(--color-text-secondary);
+  width: 34px;
+  height: 34px;
+  font-size: 24px;
+  cursor: pointer;
+  border-radius: 8px;
+  line-height: 1;
+}
+
+#marketModal .lv-close:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+#marketModal #marketBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* A barra de filtros fica fora da área que rola: trocar de período com a
+   tabela rolada exigiria subir até o topo para alcançar o seletor. */
+#marketModal .mk-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, .08));
+  flex: 0 0 auto;
+}
+
+#marketModal .mk-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+#marketModal .mk-tab {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--color-text-secondary);
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#marketModal .mk-tab:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+#marketModal .mk-tab.is-on {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #0b0f14;
+}
+
+#marketModal .mk-filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+#marketModal .mk-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+#marketModal .mk-search {
+  flex: 1;
+  min-width: 160px;
+}
+
+#marketModal .mk-field select,
+#marketModal .mk-field input {
+  background: var(--color-bg-input, rgba(0, 0, 0, .25));
+  border: 1px solid var(--border-strong);
+  color: var(--color-text-primary);
+  border-radius: 8px;
+  padding: 6px 9px;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+#marketModal .mk-field select:focus,
+#marketModal .mk-field input:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+#marketModal .mk-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin-top: 10px;
+  /* A área que rola é isolada do resto do layout: sem isto, cada quadro de
+     rolagem reavaliava a página inteira, e com 200 linhas a rolagem travava.
+     `contain` promete ao navegador que nada aqui afeta nada lá fora. */
+  contain: layout paint style;
+  /* Camada própria, para a rolagem acontecer na GPU em vez de repintar. */
+  will-change: scroll-position;
+}
+
+#marketModal .mk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+/* Altura declarada por linha.
+   Com altura automática, o navegador tinha de medir o conteúdo de cada uma
+   das 200 linhas a cada quadro de rolagem — e as linhas têm imagem, que muda
+   de tamanho quando carrega. Fixar a altura torna a geometria conhecida antes
+   de qualquer medição, e é o que tira o travamento. */
+#marketModal .mk-table tbody tr {
+  height: 42px;
+  /* O navegador pode saltar a pintura das linhas fora da tela. O par
+     `contain-intrinsic-size` é obrigatório: sem ele a barra de rolagem
+     mudaria de tamanho conforme o conteúdo entra e sai da vista. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 42px;
+}
+
+/* Cabeçalho preso: numa lista longa, rolar não pode custar o nome da coluna. */
+#marketModal .mk-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  font-weight: 700;
+  text-align: right;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border-strong);
+  white-space: nowrap;
+}
+
+#marketModal .mk-table thead th.mk-c-name {
+  text-align: left;
+}
+
+#marketModal .mk-table tbody tr {
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, .05));
+}
+
+#marketModal .mk-table tbody tr:hover {
+  background: var(--color-bg-hover);
+}
+
+#marketModal .mk-table tbody tr:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+#marketModal .mk-table td {
+  padding: 6px 8px;
+  text-align: right;
+  /* Dígitos de largura fixa: sem isto as colunas de preço não se alinham e a
+     comparação vertical, que é o ponto da tabela, deixa de funcionar. */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#marketModal .mk-c-name {
+  text-align: left !important;
+  min-width: 180px;
+  max-width: 320px;
+}
+
+#marketModal .mk-c-name b {
+  display: block;
+  color: var(--color-text-primary);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#marketModal .mk-c-name small,
+#marketModal .mk-c-n small {
+  display: block;
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  font-weight: 400;
+}
+
+/* ------------------------------------------------------------- ícones */
+
+/* Coluna estreita e de largura fixa. O quadro existe mesmo sem imagem — se o
+   servidor de assets não responde, a tabela não pode mudar de forma; o que
+   resta é a borda na cor da raridade, que já diz o essencial. */
+#marketModal .mk-c-ic {
+  width: 34px;
+  padding-right: 0 !important;
+}
+
+#marketModal .mk-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  /* A cor da raridade vem do catálogo do jogo, por variável, para que a cor
+     chegue junto com o dado em vez de estar duplicada aqui. */
+  border: 1px solid var(--mk-cor, var(--border-strong));
+  background:
+    linear-gradient(var(--mk-cor, transparent), var(--mk-cor, transparent)) padding-box,
+    rgba(0, 0, 0, .25);
+  /* A cor é um acento, não um fundo: cheia, ela competiria com o ícone. */
+  box-shadow: inset 0 0 10px -4px var(--mk-cor, transparent);
+  background-blend-mode: overlay;
+  overflow: hidden;
+  flex: none;
+}
+
+#marketModal .mk-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* Arte de pixel: suavizar borraria o ícone no tamanho pequeno. */
+  image-rendering: pixelated;
+}
+
+#marketModal .mk-icon-lg {
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+}
+
+/* --------------------------------------------------------- ficha do item */
+
+#marketModal .mk-ficha {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+#marketModal .mk-ficha-txt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+#marketModal .mk-ficha-nome {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+#marketModal .mk-ficha-tags,
+#marketModal .mk-ficha-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+#marketModal .mk-ficha-tags em,
+#marketModal .mk-ficha-stats em {
+  font-style: normal;
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--color-text-secondary);
+}
+
+/* Atributos base se destacam das etiquetas descritivas: são o número que
+   responde "isto é melhor que o que estou usando?". */
+#marketModal .mk-ficha-stats em {
+  color: var(--color-text-primary);
+  background: rgba(100, 170, 255, .1);
+  border-color: rgba(100, 170, 255, .28);
+  font-variant-numeric: tabular-nums;
+}
+
+#marketModal .mk-group small {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  opacity: .75;
+  margin-left: 6px;
+}
+
+/* --------------------------------------------------------- minha bolsa */
+
+#marketModal .mk-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+
+#marketModal .mk-check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+
+#marketModal .mk-check:hover {
+  color: var(--color-text-primary);
+}
+
+/* Linha de item vestido: aparece só quando pedida, e precisa parecer o que
+   é — presente mas indisponível, não mais um item à venda. */
+#marketModal .mk-table tbody tr.is-equipped {
+  opacity: .55;
+}
+
+#marketModal .mk-table tbody tr.is-equipped .mk-c-p.mk-strong {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+/* ------------------------------------------------------------- diamante */
+
+/* Moeda separada do ouro, e a cor diz isso antes de qualquer leitura. Somar
+   as duas daria um número que não corresponde a venda nenhuma. */
+#marketModal .mk-c-dia {
+  color: #7dd3fc;
+  min-width: 70px;
+}
+
+#marketModal .mk-c-dia.is-none {
+  color: var(--color-text-secondary);
+  opacity: .3;
+}
+
+#marketModal .mk-card-dia .mk-card-value {
+  color: #7dd3fc;
+}
+
+/* ------------------------------------------------------- coluna "minhas" */
+
+#marketModal .mk-c-own {
+  min-width: 64px;
+  font-variant-numeric: tabular-nums;
+}
+
+#marketModal .mk-c-own b {
+  display: block;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+#marketModal .mk-c-own small {
+  display: block;
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  font-weight: 400;
+}
+
+/* Ter o item é o que distingue "vale a pena olhar" de "é só informação", por
+   isso a célula tem cor própria em vez de se parecer com as de preço. */
+#marketModal .mk-c-own.is-owned b {
+  color: #7ee0a1;
+}
+
+/* Zero e "não sei" não podem parecer a mesma coisa: um diz que você não tem,
+   o outro que ninguém perguntou. Um é dado, o outro é ausência de dado. */
+#marketModal .mk-c-own.is-zero {
+  color: var(--color-text-secondary);
+  opacity: .45;
+}
+
+#marketModal .mk-c-own.is-unknown {
+  color: var(--color-text-secondary);
+  opacity: .3;
+  cursor: help;
+}
+
+#marketModal .mk-owners tbody tr:hover {
+  background: transparent;
+}
+
+#marketModal .mk-strong {
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+/* Média e mediana muito distantes significam preço instável. Marcar a linha
+   evita que alguém tome a média por referência quando ela não representa
+   venda nenhuma. */
+#marketModal .mk-flag {
+  color: #ffb067;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
+#marketModal tbody tr.is-spread .mk-c-name b::after {
+  content: '';
+}
+
+#marketModal .mk-c-t {
+  color: var(--color-text-secondary);
+  font-size: 11.5px;
+}
+
+/* ------------------------------------------------------------ detalhe */
+
+#marketModal .mk-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+#marketModal .mk-card {
+  background: var(--color-bg-input, rgba(0, 0, 0, .22));
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 9px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#marketModal .mk-card-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--color-text-secondary);
+}
+
+#marketModal .mk-card-value {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+#marketModal .mk-card small {
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+}
+
+#marketModal .mk-hint {
+  background: rgba(100, 170, 255, .08);
+  border: 1px solid rgba(100, 170, 255, .25);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  margin-bottom: 12px;
+}
+
+#marketModal .mk-hint b {
+  color: var(--color-text-primary);
+}
+
+#marketModal .mk-hint small {
+  display: block;
+  margin-top: 3px;
+  font-size: 10.5px;
+  opacity: .8;
+}
+
+#marketModal .mk-group {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--color-text-secondary);
+  margin: 14px 0 7px;
+  font-weight: 700;
+}
+
+/* Barras em vez de canvas: a pergunta é "está subindo ou caindo", e a forma
+   responde isso sem uma biblioteca de gráficos. */
+#marketModal .mk-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 110px;
+  padding: 6px 4px 0;
+  background: var(--color-bg-input, rgba(0, 0, 0, .18));
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  overflow-x: auto;
+}
+
+#marketModal .mk-bar-wrap {
+  flex: 1 0 22px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 3px;
+  min-width: 22px;
+}
+
+#marketModal .mk-bar {
+  width: 100%;
+  background: linear-gradient(180deg, var(--color-accent), rgba(120, 190, 255, .45));
+  border-radius: 3px 3px 0 0;
+  min-height: 2px;
+}
+
+#marketModal .mk-bar-label {
+  font-size: 8.5px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+#marketModal .lv-status-bar {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  min-height: 16px;
+  flex: 0 0 auto;
+}
+
+#marketModal .lv-status-bar.is-warn {
+  color: #ffb067;
+}
+
+#marketModal .modal-actions button.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #0b0f14;
+  font-weight: 600;
+}
+
+@media (max-width: 720px) {
+
+  /* Mínimo e máximo saem primeiro: mediana, último e média bastam para
+     decidir um preço, e os extremos ainda aparecem no detalhe.
+
+     Por classe e não por `nth-child`: a coluna de ícone entrou na frente e
+     uma regra posicional passaria a esconder a coluna errada a cada mudança
+     de layout. */
+  #marketModal .mk-c-opt {
+    display: none;
+  }
+}

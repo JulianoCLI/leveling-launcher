@@ -562,6 +562,27 @@
     if (huntOverlay) huntOverlay.classList.remove('show');
   }
 
+  const marketOverlay = document.getElementById('marketOverlay');
+  let marketReady = false;
+
+  /**
+   * Preços do mercado. Não recebe contas: o feed de vendas é global e o banco
+   * é um só para o launcher inteiro — não há o que selecionar.
+   */
+  function openMarket() {
+    if (!marketOverlay || !window.PioMarket) return;
+    if (!marketReady) {
+      marketReady = true;
+      window.PioMarket.init(api);
+    }
+    marketOverlay.classList.add('show');
+    window.PioMarket.open().catch(e => report('market', e));
+  }
+
+  function closeMarket() {
+    if (marketOverlay) marketOverlay.classList.remove('show');
+  }
+
   // ------------------------------------------------------------------- grupo
 
   /**
@@ -585,6 +606,7 @@
     'party.noHuntTicket': 'Grupo montado, mas a conta líder não estava em caçada: o grupo ficou na cidade. Inicie a caçada na líder.',
     'party.inviteNotReceived': 'o convite não chegou',
     'party.invite.already': 'já havia um convite pendente que o servidor não soltou',
+    'party.join.level_range': 'o nível da conta está fora da faixa aceita pelo grupo',
     'party.exists': 'a conta já está em outro grupo',
     'party.full': 'o grupo já está cheio',
     'party.none': 'a conta não está em grupo'
@@ -686,10 +708,21 @@
       huntOverlay.onclick = e => { if (e.target === huntOverlay) closeHunt(); };
     }
 
+    const marketBtn = document.getElementById('marketBtn');
+    if (marketBtn) marketBtn.onclick = () => openMarket();
+    if (marketOverlay) {
+      document.getElementById('marketCloseBtn').onclick = closeMarket;
+      document.getElementById('marketClose').onclick = closeMarket;
+      marketOverlay.onclick = e => { if (e.target === marketOverlay) closeMarket(); };
+    }
+
     window.addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
       // Do mais recente para o mais antigo: o seletor de caçada abre por cima.
-      if (huntOverlay && huntOverlay.classList.contains('show')) {
+      if (marketOverlay && marketOverlay.classList.contains('show')) {
+        e.preventDefault();
+        closeMarket();
+      } else if (huntOverlay && huntOverlay.classList.contains('show')) {
         e.preventDefault();
         closeHunt();
       } else if (refillOverlay && refillOverlay.classList.contains('show')) {
@@ -821,6 +854,8 @@
     closeAccounts,
     openHunt,
     closeHunt,
+    openMarket,
+    closeMarket,
     toggleHeadless,
     startMonitors,
     assembleParty,

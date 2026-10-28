@@ -19,6 +19,9 @@
  *   `interact`           abrir a loja no NPC
  *   `start_hunt`         voltar à caçada que a conta já estava fazendo, ou
  *                        trocar de caçada quando o usuário escolhe outra
+ *   `market_request{history|config|price_hint|search|get}`
+ *                        ler preços do mercado. Só leitura: `create`, `buy`,
+ *                        `cancel` e as ofertas continuam fora da lista
  *
  * Os quatro últimos existem porque o servidor não vende à distância: medido
  * contra ele, `buy_consumable` numa cena de caçada responde `shop.npcRequired`,
@@ -56,6 +59,7 @@ const { getCodec } = require('./leveling-codec');
 const refill = require('./leveling-refill');
 const party = require('./leveling-party');
 const hunts = require('./leveling-hunts');
+const marketCatalog = require('./leveling-market-catalog');
 
 const WS_URL = 'wss://game.levelingidle2d.com.br:8443/ws';
 const ORIGIN = 'https://levelingidle2d.com.br';
@@ -109,6 +113,15 @@ const TRIP_TIMEOUT_MS = 45000;
 const NPC_REACH = 700;
 
 /**
+ * Intervalo do coletor do mercado. Medido: `market_request{history}` devolve
+ * 100 vendas cobrindo ~30 min, ou seja ~3,4 vendas por minuto. Ler a cada
+ * minuto reamostra a mesma janela trinta vezes de propósito: a sobreposição é
+ * o que garante que nada se perca se uma leitura falhar, e o banco descarta a
+ * repetição pela chave primária da venda.
+ */
+const MARKET_POLL_MS = 60000;
+
+/**
  * Tráfego de simulação de mundo: chega a 20 Hz e não alimenta nenhum número do
  * painel. Descartado no `peek`, antes de desserializar, para que o headless não
  * pague CPU por ~500 pacotes a cada 25 segundos.
@@ -139,10 +152,14 @@ const TRIP_CASES = new Set(['world_snapshot', 'npc_interaction']);
  * quando algo precisa dele — os preços dos consumíveis, para o auto-refill, e a
  * lista de portais, para a troca de caçada. O objeto de 1 MB é descartado em
  * seguida; sobram alguns kilobytes.
+ *
+ * `market_push` saiu desta lista: é raro (só dispara em venda da própria
+ * conta) e é a única via que informa quem comprou — o feed público do mercado
+ * anonimiza vendedor e comprador.
  */
 const IGNORED_PUSHES = new Set([
   'social_push', 'guild_push', 'commerce_push', 'admin_push',
-  'market_push', 'mail_push', 'trade_push', 'pool_push', 'pvp_push', 'gvg_push',
+  'mail_push', 'trade_push', 'pool_push', 'pvp_push', 'gvg_push',
   'housing_push', 'training_push', 'guild_boss_push', 'news_push', 'tower_push',
   'team_war_push', 'tournament_push', 'dungeon_break_push', 'missions_push',
   'battle_pass_push', 'wallet_push',
@@ -257,6 +274,12 @@ class LevelingHeadlessClient extends EventEmitter {
      * primeiro login do launcher o preenche e os outros não pagam a leitura.
      */
     this.huntStore = options.huntStore || { value: null };
+    /**
+     * Ícones, cores de raridade e sprites de monstro, para a tela de preços.
+     * Mesma origem e mesma regra de `huntStore`: conteúdo do jogo, uma
+     * leitura por execução do launcher, compartilhada entre as contas.
+     */
+    this.marketCatalogStore = options.marketCatalogStore || { value: null, fresh: false };
     /** O catálogo já foi desserializado nesta sessão? Ele chega uma vez só. */
     this.catalogRead = false;
     /** `InventorySummary.materials` cru, até o id da essência ser conhecido. */
@@ -792,6 +815,14 @@ class LevelingHeadlessClient extends EventEmitter {
       // `use_consumable_result` não entra aqui: o `remaining` dele é da tier
       // usada, e o `character_patch` seguinte traz `consumables` inteiro.
 
+      // Venda própria. O feed público (`market_request{history}`) anonimiza
+      // vendedor e comprador; este push é a única via que traz o comprador,
+      // porque é dirigido a quem vendeu. Vale uma linha no banco com dados
+      // que nenhuma leitura do feed teria.
+      case 'market_push':
+        if (value.sold) this.emit('market-sold', { index: this.index, sold: value.sold });
+        return false;
+
       case 'notice':
         this.emit('notice', { index: this.index, notice: value });
         return false;
@@ -1213,6 +1244,10 @@ class LevelingHeadlessClient extends EventEmitter {
   wantsCatalog() {
     if (this.catalogRead) return false;
     if (!this.catalog && refill.isConfigured(this.refillConfig)) return true;
+    // A aparência do mercado (ícones, cores de raridade, sprites de monstro)
+    // também só existe aqui dentro. Como as duas outras leituras, é uma por
+    // execução do launcher e compartilhada entre as contas.
+    if (!this.marketCatalogStore.fresh) return true;
     return !this.huntStore.fresh;
   }
 
@@ -1237,6 +1272,18 @@ class LevelingHeadlessClient extends EventEmitter {
       // Interessa à interface mesmo sem nenhuma mudança de estado da conta: é
       // o que preenche a lista de mapas do seletor de caçada.
       this.emit('hunts', { index: this.index, catalog: lido });
+    }
+
+    if (!this.marketCatalogStore.fresh) {
+      // `fresh` marca "já olhei", não "achei algo". Se dependesse do conteúdo,
+      // um catálogo sem itens faria toda conta seguinte desserializar 1 MB de
+      // novo para chegar à mesma resposta vazia.
+      this.marketCatalogStore.fresh = true;
+      const mkt = marketCatalog.readMarketCatalog(value);
+      if (marketCatalog.hasCatalog(mkt)) {
+        this.marketCatalogStore.value = mkt;
+        this.emit('market-catalog', { index: this.index, catalog: mkt });
+      }
     }
 
     // O saldo de essência só pode ser resolvido agora que o id dela é conhecido.
@@ -1654,6 +1701,178 @@ class LevelingHeadlessClient extends EventEmitter {
     return res.value || {};
   }
 
+  // ----------------------------------------------------------------- mercado
+
+  /**
+   * Operação de mercado. Tudo viaja dentro de `market_request`, e a resposta
+   * é sempre `market_response` com um `oneof result` — o nome do resultado
+   * não é o mesmo da operação (`get` responde `detail`, `search` responde
+   * `page`), então devolvemos a chave junto.
+   *
+   * Nenhuma operação de escrita passa por aqui. `create`, `buy`, `cancel` e
+   * as ofertas ficam fora: o monitor é de leitura, e mexer no inventário da
+   * conta sem o usuário pedir seria outra coisa.
+   */
+  async marketRequest(op, value = {}) {
+    const res = await this.request('market_request', { [op]: value });
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'market.failed' };
+    }
+    const body = res.value || {};
+    const result = Object.keys(body)[0] || null;
+    return { result, value: body[result] || {} };
+  }
+
+  /**
+   * O feed global de vendas recentes. Medido: 100 linhas fixas, sem
+   * paginação, cobrindo cerca de 30 minutos de mercado — e `seller_name` /
+   * `buyer_name` vêm vazios, o servidor anonimiza o feed público.
+   *
+   * É a única fonte de preço efetivamente pago. O que sai dessa janela não
+   * volta, por isso o launcher grava tudo localmente.
+   */
+  async marketHistory() {
+    const res = await this.marketRequest('history');
+    if (res.errorCode) return { errorCode: res.errorCode, sales: [] };
+    return { sales: (res.value && res.value.sales) || [] };
+  }
+
+  /** Vocabulário do mercado: categorias, ordenações, taxa de venda. */
+  async marketConfig() {
+    const res = await this.marketRequest('config');
+    return res.errorCode ? { errorCode: res.errorCode } : (res.value || {});
+  }
+
+  /**
+   * Estatística do servidor para um item. Complementa o banco local: cobre o
+   * período anterior ao primeiro uso do launcher, que o banco nunca terá.
+   *
+   * Medido: `days` é encaixado em degraus fixos (1 vira 7, 365 vira 90), e
+   * `rarity` é ignorado — não filtra nada. Um `def_id` inexistente devolve
+   * `{days:30}` sem erro, então vendas 0 é a resposta de "não sei".
+   */
+  async marketPriceHint(defId, days) {
+    if (!defId) return { errorCode: 'market.noDefId' };
+    const value = { def_id: String(defId) };
+    if (Number(days) > 0) value.days = Number(days);
+    const res = await this.marketRequest('price_hint', value);
+    return res.errorCode ? { errorCode: res.errorCode } : (res.value || {});
+  }
+
+  /** Anúncios à venda agora. Diferente de preço pago: é preço pedido. */
+  async marketSearch(filtros = {}) {
+    const value = {};
+    if (filtros.category) value.category = String(filtros.category);
+    if (filtros.name) value.name = String(filtros.name);
+    if (filtros.defId) value.def_id = String(filtros.defId);
+    if (filtros.rarity) value.rarity = String(filtros.rarity);
+    if (filtros.sort) value.sort = String(filtros.sort);
+    value.page = Math.max(Number(filtros.page) || 1, 1);
+    const res = await this.marketRequest('search', value);
+    if (res.errorCode) return { errorCode: res.errorCode, listings: [] };
+    return res.value || { listings: [] };
+  }
+
+  /**
+   * Quanto esta conta tem dos itens pedidos, por escopo.
+   *
+   * Existe porque a tela de preços responde "quanto vale" mas não respondia
+   * "e eu tenho?". Com oito contas, a resposta estava em oito inventários que
+   * o launcher nunca abria — ele só guardava a ocupação da mochila.
+   *
+   * `filter.def_ids` é o que torna isso viável. Medido: 155 ids num pedido
+   * só, 35 ms, e o servidor devolve apenas o que a conta de fato tem (34 de
+   * 155). Sem o filtro seria varrer o inventário inteiro — 4 pedidos por
+   * conta, 32 ao todo — para descartar quase tudo.
+   *
+   * O teto de `page_size` é 100, medido: 101 devolve zero itens, sem erro.
+   * Por isso a paginação não é opcional nem quando o filtro é estreito: um
+   * material empilhado é uma linha, mas equipamento é uma linha por peça, e
+   * `luvas-arqueiro` sozinho pode passar de 100.
+   *
+   * @param {string[]} defIds Itens de interesse. Vazio devolve vazio: pedir
+   *   sem filtro varreria o inventário inteiro por engano.
+   * @param {object} [opts] `scopes` — por padrão mochila e depósito.
+   */
+  async inventoryCounts(defIds, opts = {}) {
+    const ids = [...new Set((defIds || []).map(String).filter(Boolean))];
+    // `all` é a varredura: a aba "Minha bolsa" pergunta "o que eu tenho",
+    // sem lista prévia para filtrar. Medido: 301 itens em 4 pedidos, 107 ms.
+    if (!ids.length && !opts.all) return { owned: {} };
+    if (this.status !== 'connected') return { errorCode: 'inv.offline', owned: {} };
+
+    // Mochila (1) e depósito (3). O enum viaja como número: medido, o nome
+    // em string é recusado com `enum value expected`.
+    const scopes = Array.isArray(opts.scopes) ? opts.scopes : [1, 3];
+    const owned = {};
+
+    for (const scope of scopes) {
+      // Limite de segurança, não de completude: 100 por página com o filtro
+      // estreito cobre inventários muito maiores que os reais, e sem o teto
+      // uma resposta inesperada viraria laço infinito.
+      for (let page = 1; page <= 12; page++) {
+        const pedido = { scope, page, page_size: 100 };
+        if (ids.length) pedido.filter = { def_ids: ids };
+        const res = await this.request('inventory_page', pedido);
+        if (res.caseName === 'error') {
+          return { errorCode: (res.value && res.value.code) || 'inv.failed', owned };
+        }
+        const value = res.value || {};
+        for (const item of value.items || []) {
+          const defId = item && item.def_id;
+          if (!defId) continue;
+          const alvo = owned[defId] || (owned[defId] = {
+            qty: 0, linhas: 0, bag: 0, warehouse: 0, equipped: 0, melhor: null
+          });
+          const qty = Number(item.qty) || 1;
+          alvo.linhas++;
+          // Equipado é contado à parte: entra no patrimônio mas não está
+          // disponível para vender, e somá-lo no total mentiria sobre isso.
+          const vestido = !!item.equipped_slot
+            && item.equipped_slot !== 'EQUIP_SLOT_UNSPECIFIED';
+          if (vestido) {
+            alvo.equipped += qty;
+          } else {
+            alvo.qty += qty;
+            if (scope === 3) alvo.warehouse += qty;
+            else alvo.bag += qty;
+          }
+          // A melhor peça é a referência para comparar com o mercado: de
+          // nada serve saber que tenho cinco se a que interessa é uma.
+          const poder = Number(item.power) || 0;
+          if (!alvo.melhor || poder > alvo.melhor.power) {
+            alvo.melhor = {
+              power: poder,
+              level: Number(item.level) || 0,
+              rarity: String(item.rarity || ''),
+              enchant: Number(item.enchant) || 0,
+              locked: !!item.locked,
+              equipped: vestido
+            };
+          }
+        }
+        if (!value.has_next) break;
+      }
+    }
+
+    return { owned };
+  }
+
+  /**
+   * Detalhe de um anúncio, com `MarketPriceStats` junto — mais rico que o
+   * `price_hint`: traz também quantos anúncios estão ativos e o menor preço
+   * pedido agora. Custa ter um `listing_id` em mãos.
+   *
+   * `id` é uint64 e o codec exige número: o decode entrega string, então a
+   * conversão tem de acontecer aqui, senão o encode recusa o pacote.
+   */
+  async marketGet(listingId) {
+    const id = Number(listingId);
+    if (!Number.isFinite(id) || id <= 0) return { errorCode: 'market.badId' };
+    const res = await this.marketRequest('get', { id });
+    return res.errorCode ? { errorCode: res.errorCode } : (res.value || {});
+  }
+
   /** A caçada lida na entrada, ou `null` se a conta não estava caçando. */
   getHuntTicket() {
     return this.huntTicket ? { ...this.huntTicket } : null;
@@ -1814,6 +2033,207 @@ class LevelingHeadlessManager extends EventEmitter {
      * porque o jogo pode ter ganhado portal novo desde então.
      */
     this.huntStore = { value: options.huntCatalog || null, fresh: false };
+
+    /**
+     * Ícones, cores de raridade e sprites, para a tela de preços. Mesma
+     * origem e mesma regra do catálogo de caçadas: uma leitura do
+     * `content_catalog` por execução, compartilhada entre as contas.
+     */
+    this.marketCatalogStore = { value: options.marketCatalog || null, fresh: false };
+
+    /**
+     * Coletor do mercado. Uma leitura para o launcher inteiro, não por conta:
+     * `market_request{history}` devolve o feed global, idêntico em qualquer
+     * sessão, então N contas lendo o mesmo feed seriam N vezes o mesmo dado.
+     *
+     * O intervalo é folgado de propósito. Medido: o feed tem 100 linhas e
+     * cobre ~30 min, ou seja ~3,4 vendas por minuto. Ler de minuto em minuto
+     * reamostra a mesma janela trinta vezes; a sobreposição é o que garante
+     * que nada se perca se uma leitura falhar, e o banco descarta a repetição
+     * pela chave primária.
+     */
+    this.marketTimer = null;
+    this.marketSink = typeof options.marketSink === 'function' ? options.marketSink : null;
+    this.marketIntervalMs = Number(options.marketIntervalMs) || MARKET_POLL_MS;
+    this.marketBusy = false;
+    this.marketStats = { polls: 0, inserted: 0, lastAtMs: 0, lastError: '', lastCount: 0 };
+  }
+
+  // ------------------------------------------------------------- mercado
+
+  /**
+   * Qualquer conta conectada serve para ler o mercado, mas a escolha não pode
+   * ser aleatória a cada tique: trocar de conta sem motivo espalharia o
+   * tráfego por todas as sessões. A primeira conectada, em ordem de índice,
+   * é estável enquanto ela existir.
+   */
+  marketClient() {
+    for (const index of [...this.clients.keys()].sort((a, b) => a - b)) {
+      const client = this.clients.get(index);
+      if (client && client.status === 'connected') return client;
+    }
+    return null;
+  }
+
+  /**
+   * Uma leitura do feed. Devolve quantas vendas eram inéditas.
+   *
+   * Nunca lança: o coletor roda em segundo plano para sempre, e uma falha de
+   * rede não pode derrubar o temporizador nem poluir o log. O erro fica
+   * registrado em `marketStats` para a interface mostrar.
+   */
+  async pollMarket() {
+    if (this.marketBusy) return 0;
+    const client = this.marketClient();
+    if (!client) {
+      this.marketStats.lastError = 'market.noneActive';
+      return 0;
+    }
+    this.marketBusy = true;
+    try {
+      const res = await client.marketHistory();
+      this.marketStats.polls++;
+      this.marketStats.lastAtMs = Date.now();
+      if (res.errorCode) {
+        this.marketStats.lastError = res.errorCode;
+        return 0;
+      }
+      this.marketStats.lastError = '';
+      this.marketStats.lastCount = res.sales.length;
+      const novas = this.marketSink ? (this.marketSink(res.sales) || 0) : 0;
+      this.marketStats.inserted += novas;
+      if (novas) this.emit('market', { inserted: novas, total: res.sales.length });
+      return novas;
+    } catch (err) {
+      this.marketStats.lastError = err && err.message || String(err);
+      return 0;
+    } finally {
+      this.marketBusy = false;
+    }
+  }
+
+  /**
+   * Liga o coletor. `unref` no temporizador: o mercado nunca deve ser o
+   * motivo de o processo continuar vivo.
+   */
+  startMarketPoll() {
+    if (this.marketTimer || !this.marketSink) return false;
+    this.marketTimer = setInterval(() => { this.pollMarket(); }, this.marketIntervalMs);
+    if (this.marketTimer.unref) this.marketTimer.unref();
+    // Uma leitura imediata: esperar o primeiro minuto perderia vendas à toa
+    // quando o usuário acabou de ligar o monitor.
+    this.pollMarket();
+    return true;
+  }
+
+  stopMarketPoll() {
+    if (!this.marketTimer) return false;
+    clearInterval(this.marketTimer);
+    this.marketTimer = null;
+    return true;
+  }
+
+  getMarketStats() {
+    return { ...this.marketStats, running: !!this.marketTimer };
+  }
+
+  /**
+   * Quem tem cada item, entre todas as contas em modo monitor.
+   *
+   * A pergunta que isto responde não existia na tela de preços: ela dizia
+   * quanto um item vale, mas com oito contas o que falta saber é se vale a
+   * pena ir buscar — e em qual delas.
+   *
+   * As contas são consultadas em paralelo de propósito. São sockets
+   * independentes, uma por conta, e o custo medido é de ~35 ms por pedido:
+   * em série, oito contas somariam a latência oito vezes para nada. O que
+   * não pode ir em paralelo são as páginas de uma mesma conta, e essas ficam
+   * em série dentro de `inventoryCounts`.
+   *
+   * Conta desconectada não é erro: ela aparece em `offline` para a tela
+   * poder dizer "não sei" em vez de "não tem", que são coisas diferentes e
+   * levariam a decisões opostas.
+   */
+  /**
+   * O inventário inteiro de cada conta em modo monitor.
+   *
+   * Diferente de `inventoryOwners`, que parte de uma lista de itens e
+   * pergunta quem tem. Aqui a pergunta é a inversa — "o que eu tenho, e
+   * quanto isso vale" — e não existe lista prévia para filtrar: é varredura.
+   *
+   * Medido: 301 itens em 4 pedidos, 107 ms por conta. Com oito contas em
+   * paralelo o custo continua sendo o de uma, porque são sockets separados.
+   */
+  async inventoryBags() {
+    const ativos = [];
+    const offline = [];
+    for (const index of [...this.clients.keys()].sort((a, b) => a - b)) {
+      const client = this.clients.get(index);
+      if (client && client.status === 'connected') ativos.push(client);
+      else if (client) offline.push({ index, name: client.state.name || '' });
+    }
+
+    const contas = await Promise.all(ativos.map(async client => {
+      const res = await client.inventoryCounts([], { all: true }).catch(err => ({
+        errorCode: (err && err.message) || 'inv.failed', owned: {}
+      }));
+      return {
+        index: client.index,
+        name: client.state.name || '',
+        errorCode: res.errorCode || '',
+        owned: res.owned || {}
+      };
+    }));
+
+    return { contas, offline, readAtMs: Date.now() };
+  }
+
+  async inventoryOwners(defIds, opts = {}) {
+    const ids = [...new Set((defIds || []).map(String).filter(Boolean))];
+    if (!ids.length) return { byDef: {}, accounts: [], offline: [] };
+
+    const ativos = [];
+    const offline = [];
+    for (const index of [...this.clients.keys()].sort((a, b) => a - b)) {
+      const client = this.clients.get(index);
+      if (client && client.status === 'connected') ativos.push(client);
+      else if (client) offline.push({ index, name: client.state.name || '' });
+    }
+
+    const leituras = await Promise.all(ativos.map(async client => {
+      const res = await client.inventoryCounts(ids, opts).catch(err => ({
+        errorCode: err && err.message || 'inv.failed', owned: {}
+      }));
+      return {
+        index: client.index,
+        name: client.state.name || '',
+        errorCode: res.errorCode || '',
+        owned: res.owned || {}
+      };
+    }));
+
+    // Invertido por item, que é como a tela pergunta: ela tem uma linha por
+    // item e precisa saber, para aquela linha, quais contas aparecem.
+    const byDef = {};
+    for (const leitura of leituras) {
+      for (const [defId, dados] of Object.entries(leitura.owned)) {
+        const alvo = byDef[defId] || (byDef[defId] = { total: 0, equipped: 0, accounts: [] });
+        alvo.total += dados.qty;
+        alvo.equipped += dados.equipped;
+        alvo.accounts.push({ index: leitura.index, name: leitura.name, ...dados });
+      }
+    }
+    // Quem tem mais primeiro: é a conta de onde vale a pena vender.
+    for (const entrada of Object.values(byDef)) {
+      entrada.accounts.sort((a, b) => b.qty - a.qty || a.index - b.index);
+    }
+
+    return {
+      byDef,
+      accounts: leituras.map(l => ({ index: l.index, name: l.name, errorCode: l.errorCode })),
+      offline,
+      readAtMs: Date.now()
+    };
   }
 
   /** Portais, faixas e dificuldades, ou `null` antes do primeiro login. */
@@ -1830,6 +2250,23 @@ class LevelingHeadlessManager extends EventEmitter {
     if (this.huntStore.fresh) return this.huntStore.value;
     if (hunts.hasHunts(catalog)) this.huntStore.value = catalog;
     return this.huntStore.value;
+  }
+
+  /** Ícones e cores de raridade, ou `null` antes do primeiro login. */
+  getMarketCatalog() {
+    return this.marketCatalogStore.value;
+  }
+
+  /**
+   * Semeia com a cópia salva em disco, para a tabela de preços abrir já com
+   * os ícones em vez de piscar. Não marca `fresh`: a primeira conta a logar
+   * ainda lê o catálogo do servidor e substitui esta cópia, que pode estar
+   * velha em relação ao jogo.
+   */
+  setMarketCatalog(catalog) {
+    if (this.marketCatalogStore.fresh) return this.marketCatalogStore.value;
+    if (marketCatalog.hasCatalog(catalog)) this.marketCatalogStore.value = catalog;
+    return this.marketCatalogStore.value;
   }
 
   /** Aplica a configuração de refill nos monitores já em execução. */
@@ -1849,11 +2286,14 @@ class LevelingHeadlessManager extends EventEmitter {
       // O catálogo de caçadas é do jogo, não da conta: a primeira conta a logar
       // o preenche e as outras já nascem com a lista pronta.
       huntStore: this.huntStore,
+      // Mesma lógica para a aparência do mercado: ícones e cores de raridade
+      // são conteúdo do jogo, lidos uma vez por execução do launcher.
+      marketCatalogStore: this.marketCatalogStore,
       ...options
     });
     this.clients.set(accountIndex, client);
 
-    for (const event of ['update', 'status', 'error', 'ended', 'death', 'notice', 'token', 'arise', 'refill', 'hunts']) {
+    for (const event of ['update', 'status', 'error', 'ended', 'death', 'notice', 'token', 'arise', 'refill', 'hunts', 'market-catalog', 'market-sold']) {
       client.on(event, data => this.emit(event, data));
     }
     // Só a sessão substituída encerra o monitor: a conta está sendo usada
@@ -2033,6 +2473,7 @@ module.exports = {
   RATELIMIT_RETRY_MS,
   REFILL_INTERVAL_MS,
   REFILL_BACKOFF_MS,
+  MARKET_POLL_MS,
   TRIP_TIMEOUT_MS,
   TRIP_CASES,
   NPC_REACH,

@@ -37,6 +37,28 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   // que já estava aberto sem a lista.
   onLevelingHunts: (cb) => ipcRenderer.on('leveling:hunts', (_e, data) => cb(data)),
 
+  // Mercado: o servidor só mostra os últimos ~30 min de vendas, então o
+  // launcher coleta de minuto em minuto e acumula num banco local. Tudo aqui
+  // lê desse banco, menos `Hint`, que pergunta ao servidor.
+  marketSummary: (opts) => ipcRenderer.invoke('leveling:market:summary', opts),
+  marketRecent: (opts) => ipcRenderer.invoke('leveling:market:recent', opts),
+  marketItem: (defId, opts) => ipcRenderer.invoke('leveling:market:item', defId, opts),
+  marketHint: (defId, days) => ipcRenderer.invoke('leveling:market:hint', defId, days),
+  marketPoll: () => ipcRenderer.invoke('leveling:market:poll'),
+  marketStats: () => ipcRenderer.invoke('leveling:market:stats'),
+  // Ícones e cores de raridade, recortados do catálogo do jogo.
+  marketCatalog: () => ipcRenderer.invoke('leveling:market:catalog'),
+  // Anúncios à venda agora: a única fonte de nível de item e potência de sombra.
+  marketListings: (filtros) => ipcRenderer.invoke('leveling:market:listings', filtros),
+  // Quem das minhas contas tem cada item, e quanto.
+  marketOwners: (defIds) => ipcRenderer.invoke('leveling:market:owners', defIds),
+  // O inventário inteiro das contas, já cruzado com o preço de mercado.
+  marketBag: (opts) => ipcRenderer.invoke('leveling:market:bag', opts),
+  onMarketCatalog: (cb) => ipcRenderer.on('leveling:market-catalog', (_e, data) => cb(data)),
+  // Avisa que entraram vendas novas; a aba aberta se atualiza sozinha.
+  onMarket: (cb) => ipcRenderer.on('leveling:market', (_e, data) => cb(data)),
+  onMarketSold: (cb) => ipcRenderer.on('leveling:market-sold', (_e, data) => cb(data)),
+
   // Auto-refill: uma configuração para todas as contas, sem índice.
   levelingGetRefill: () => ipcRenderer.invoke('leveling:refill:get'),
   levelingSetRefill: (config) => ipcRenderer.invoke('leveling:refill:set', config),
