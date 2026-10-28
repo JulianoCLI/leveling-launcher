@@ -353,6 +353,18 @@ levelingHeadlessManager.marketSink = sales => {
   }
 };
 
+/**
+ * O enriquecedor de nível precisa ler a fila de vendas sem nível, que só o
+ * banco conhece — `marketSink` é de mão única. Ligado de forma preguiçosa
+ * pelo mesmo motivo de `market()`: quem nunca abre o mercado não paga o
+ * arquivo. Mas o coletor roda em segundo plano e é ele quem dispara o
+ * enriquecimento, então a referência tem de existir desde o início.
+ */
+levelingHeadlessManager.marketDb = {
+  pendingLevels: n => { try { return market().pendingLevels(n); } catch { return []; } },
+  setLevels: linhas => { try { return market().setLevels(linhas); } catch { return 0; } }
+};
+
 function syncMarketPoll() {
   const ativa = [...levelingHeadlessManager.clients.values()]
     .some(c => c && c.status === 'connected');
@@ -706,6 +718,25 @@ ipcMain.handle('leveling:market:bag', async (event, opts) => {
   } catch (e) {
     return { errorCode: e.message, contas: [], offline: [], precos: {} };
   }
+});
+
+/**
+ * Preço por nível de um item.
+ *
+ * Responde "Topázio de que nível?" — a pergunta que o feed não responde,
+ * porque `MarketSale` não tem o campo. O nível vem de `market_request{get}`
+ * no anúncio já vendido, consultado em segundo plano pelo coletor, e por isso
+ * a cobertura começa parcial e cresce: `coverage` existe para a tela poder
+ * dizer sobre quantas vendas a quebra foi feita.
+ */
+ipcMain.handle('leveling:market:levels', (event, defId, opts) => {
+  launcherOnly(event);
+  const db = market();
+  const o = { days: Number(opts && opts.days) || 0 };
+  return {
+    levels: db.levelBreakdown(defId, o),
+    coverage: db.levelCoverage(defId, o)
+  };
 });
 
 /** Saúde do acúmulo: desde quando, quantas vendas, tamanho do arquivo. */

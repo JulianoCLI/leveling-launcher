@@ -217,6 +217,33 @@ ipcMain.handle('leveling:market:bag', (_e, opts) => {
   };
 });
 
+/**
+ * Preço por nível.
+ *
+ * O nível não vem no feed de vendas: é descoberto consultando o anúncio de
+ * cada venda, em segundo plano. Por isso a cobertura é parcial — e mostrar
+ * isso é o que impede o usuário de confiar numa quebra feita sobre 3 de 12
+ * vendas como se fosse sobre 12.
+ */
+ipcMain.handle('leveling:market:levels', (_e, defId, opts) => {
+  marketCalls.push({ op: 'levels', defId, opts });
+  return {
+    levels: [
+      {
+        level: 1, vendas: 4, unidades: 4, vendas_ouro: 4, media: 1200,
+        minimo: 900, maximo: 1500, vendas_dia: 0, media_dia: null,
+        ultima_venda_ms: Date.now() - 300000
+      },
+      {
+        level: 4, vendas: 2, unidades: 2, vendas_ouro: 1, media: 8400000,
+        minimo: 8400000, maximo: 8400000, vendas_dia: 1, media_dia: 55,
+        ultima_venda_ms: Date.now() - 90000
+      }
+    ],
+    coverage: { total: 12, perguntadas: 6, comNivel: 6 }
+  };
+});
+
 let marketOwnersOffline = false;
 ipcMain.handle('leveling:market:owners', (_e, defIds) => {
   marketCalls.push({ op: 'owners', defIds });
@@ -712,6 +739,27 @@ app.whenReady().then(async () => {
   // inventar um dado que ninguém leu.
   assert.ok(await read(`document.getElementById('marketBody').textContent.includes('terceira')`),
     'Accounts that were not consulted must be named, not silently counted as zero');
+
+  // Preço por nível. "Topázio" não é um item: são quatro, com o mesmo nome e
+  // preços que no banco real vão de 1 a 10 milhões. A média de tudo junto não
+  // serve para comprar nem para vender nenhum deles.
+  assert.ok(marketCalls.some(c => c.op === 'levels' && c.defId === 'arco-arqueiro'),
+    'The detail must ask for the per-level breakdown');
+  assert.ok(await read(`!!document.querySelector('#marketBody .mk-levels')`),
+    'The breakdown must be rendered as its own table');
+  const niveis = await read(`document.querySelector('#marketBody .mk-levels').textContent`);
+  assert.ok(niveis.includes('nv 1') && niveis.includes('nv 4'),
+    'Each distinct level must appear as its own row');
+  // O nível com mais vendas é o que o mercado de fato negocia: os outros
+  // podem ser uma venda só, e um preço de uma venda não é um preço.
+  assert.ok(await read(`!!document.querySelector('#marketBody .mk-levels tr.mk-row-top')`),
+    'The most traded level must stand out');
+  // A honestidade da amostra: dizer sobre quantas vendas a quebra foi feita.
+  const corpo = await read(`document.getElementById('marketBody').textContent`);
+  assert.ok(corpo.includes('6 de 12'),
+    'The screen must say how many sales were actually identified');
+  assert.ok(corpo.includes('Faltam 6'),
+    'And how many are still unknown, because an expired listing never gets a level');
 
   // A aba "ao vivo" é outra pergunta: o que está acontecendo agora.
   await read(`document.querySelector('#marketBody [data-view="live"]').click()`);

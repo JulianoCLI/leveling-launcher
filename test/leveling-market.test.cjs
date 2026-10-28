@@ -582,3 +582,87 @@ test('sem nenhuma conta em monitor a bolsa vem vazia, sem erro', async () => {
   assert.deepEqual(res.offline, []);
   manager.stopAll();
 });
+
+// ------------------------------------------------------- nível das vendas
+
+test('o enriquecedor pergunta o nível anúncio por anúncio e grava o que vem', async () => {
+  // `MarketSale` não tem nível. Quem tem é `MarketListing` — e medido, `get`
+  // num anúncio JÁ VENDIDO ainda responde, com o level intacto. Sem isto o
+  // histórico diria "Topázio" sem dizer qual dos quatro.
+  const manager = new LevelingHeadlessManager({ WebSocket: MockWebSocket, autoReconnect: false });
+  manager.start(0, { username: 'u', password: 'p' });
+  await sleep(10);
+  const ws = MockWebSocket.last;
+  ws.reply('login', 'auth_ok', { token: 't', account_id: 1, username: 'eu' });
+  await sleep(5);
+
+  const gravadas = [];
+  manager.marketDb = {
+    pendingLevels: () => [
+      { listing_id: 700, def_id: 'gema-topazio', name: 'Topázio' },
+      { listing_id: 701, def_id: 'gema-topazio', name: 'Topázio' }
+    ],
+    setLevels: linhas => { gravadas.push(...linhas); return linhas.length; }
+  };
+
+  const promessa = manager.enrichLevels(5);
+  await sleep(10);
+  assert.deepEqual(ws.lastMarket(), { get: { id: '700' } },
+    'em série: o primeiro anúncio antes do segundo');
+  ws.reply('market_request', 'market_response', {
+    detail: { listing: { id: 700, level: 3, slot: '', status: 4 } }
+  });
+  await sleep(10);
+  assert.deepEqual(ws.lastMarket(), { get: { id: '701' } },
+    'só depois da resposta o segundo sai — centenas de pedidos de uma vez é o que faz um servidor recusar');
+  ws.reply('market_request', 'market_response', {
+    detail: { listing: { id: 701, level: 1, slot: '' } }
+  });
+
+  assert.equal(await promessa, 2);
+  assert.deepEqual(gravadas.map(g => g.level), [3, 1]);
+  assert.equal(manager.getMarketStats().levels.achados, 2);
+  manager.stopAll();
+});
+
+test('anúncio que já expirou é marcado com 0, para não ser perguntado para sempre', async () => {
+  const manager = new LevelingHeadlessManager({ WebSocket: MockWebSocket, autoReconnect: false });
+  manager.start(0, { username: 'u', password: 'p' });
+  await sleep(10);
+  const ws = MockWebSocket.last;
+  ws.reply('login', 'auth_ok', { token: 't', account_id: 1, username: 'eu' });
+  await sleep(5);
+
+  const gravadas = [];
+  manager.marketDb = {
+    pendingLevels: () => [{ listing_id: 900, def_id: 'arco', name: 'Arco' }],
+    setLevels: linhas => { gravadas.push(...linhas); return linhas.length; }
+  };
+
+  const promessa = manager.enrichLevels(5);
+  await sleep(10);
+  // O erro vem no envelope, não dentro de `market_response`: é assim que o
+  // servidor recusa um anúncio que já não existe.
+  ws.reply('market_request', 'error', { code: 'market.notFound' });
+
+  await promessa;
+  assert.deepEqual(gravadas, [{ listing_id: 900, level: 0 }],
+    'insistir num id que o servidor já esqueceu gastaria tráfego sem resposta possível');
+  assert.equal(manager.getMarketStats().levels.falhas, 1);
+  assert.equal(manager.getMarketStats().levels.achados, 0);
+  manager.stopAll();
+});
+
+test('sem banco, sem conta, ou já rodando, o enriquecedor não faz nada', async () => {
+  // Reentrância importa: o coletor dispara isto a cada tique, e dois lotes
+  // sobrepostos perguntariam duas vezes a mesma coisa.
+  const manager = new LevelingHeadlessManager({ WebSocket: MockWebSocket, autoReconnect: false });
+  assert.equal(await manager.enrichLevels(), 0, 'sem banco não há fila');
+
+  manager.marketDb = { pendingLevels: () => [{ listing_id: 1 }], setLevels: () => 0 };
+  assert.equal(await manager.enrichLevels(), 0, 'sem conta em monitor não há quem perguntar');
+
+  manager.levelBusy = true;
+  assert.equal(await manager.enrichLevels(), 0, 'um lote por vez');
+  manager.stopAll();
+});

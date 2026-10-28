@@ -1315,6 +1315,41 @@
   font-size: 11.5px;
 }
 
+/* ----------------------------------------------------------- por nível */
+
+/* Tabela curta e dentro do detalhe: não rola, então nada aqui precisa das
+   defesas de desempenho da tabela principal. Linha mais baixa porque a
+   quebra por nível é lida junto com os cards, não no lugar deles. */
+#marketModal .mk-levels {
+  margin-bottom: 12px;
+}
+
+#marketModal .mk-levels tbody tr {
+  height: 32px;
+  cursor: default;
+  content-visibility: visible;
+}
+
+#marketModal .mk-levels tbody tr:hover {
+  background: transparent;
+}
+
+#marketModal .mk-levels .mk-c-n small {
+  display: block;
+  font-size: 10px;
+  color: var(--color-text-secondary);
+}
+
+/* O nível com mais vendas. É o que o mercado de fato negocia: os outros
+   podem ser uma venda só, e um preço de uma venda não é um preço. */
+#marketModal .mk-levels tbody tr.mk-row-top {
+  background: var(--color-bg-elevated);
+}
+
+#marketModal .mk-levels tbody tr.mk-row-top .mk-c-n b {
+  color: var(--color-accent);
+}
+
 /* ------------------------------------------------------------ detalhe */
 
 #marketModal .mk-cards {

@@ -59,7 +59,25 @@ CREATE TABLE IF NOT EXISTS sales (
   sold_at_ms  INTEGER NOT NULL,
   seller_name TEXT,
   buyer_name  TEXT,
-  seen_at_ms  INTEGER NOT NULL
+  seen_at_ms  INTEGER NOT NULL,
+  -- Nível e slot do item vendido. NÃO vêm no feed: MarketSale não tem esses
+  -- campos, e por isso o histórico mostrava "Topázio" sem dizer se era o de
+  -- nível 1 ou o de nível 4 — que são itens diferentes com o mesmo nome e
+  -- preços de ordens de grandeza distintas.
+  --
+  -- Quem tem o nível é MarketListing, e medido: market_request{get} num
+  -- anúncio JÁ VENDIDO ainda responde, com status MARKET_STATUS_SOLD e o
+  -- level intacto. O listing_id que o feed traz é a chave.
+  --
+  -- NULL significa "ainda não perguntei"; 0 significa "perguntei e o item não
+  -- tem nível" (câmbio, consumível). Confundir os dois faria o enriquecedor
+  -- perguntar de novo, para sempre, sobre o que não tem resposta.
+  level       INTEGER,
+  slot        TEXT,
+  -- Quando a consulta de nível foi feita. Existe para o enriquecedor saber o
+  -- que já tentou: o anúncio expira do servidor e a pergunta passa a falhar,
+  -- e sem isto ele reinsistiria em cada tique.
+  level_at_ms INTEGER
 );
 
 -- A consulta dominante é "este item, nos últimos N dias", nesta ordem.
@@ -185,6 +203,7 @@ class MarketDatabase {
       this.db.exec('PRAGMA journal_mode = WAL');
       this.db.exec('PRAGMA synchronous = NORMAL');
       this.db.exec(SCHEMA);
+      this.migrate();
       this.ready = true;
       this.error = null;
     } catch (err) {
@@ -192,6 +211,41 @@ class MarketDatabase {
       this.ready = false;
     }
     return this.ready;
+  }
+
+  /**
+   * Colunas que nasceram depois do banco.
+   *
+   * `CREATE TABLE IF NOT EXISTS` não altera uma tabela existente, e o banco
+   * do usuário já acumulou meses de vendas que não podem ser recriadas: o
+   * servidor só lembra os últimos 30 minutos. Recriar a tabela destruiria o
+   * único lugar onde esse histórico existe, então as colunas entram por
+   * `ALTER TABLE` e os dados antigos ficam com `NULL` — que é a verdade:
+   * ninguém perguntou o nível deles ainda.
+   */
+  migrate() {
+    let colunas;
+    try {
+      colunas = new Set(this.db.prepare('PRAGMA table_info(sales)').all().map(c => c.name));
+    } catch { return; }
+    const novas = [
+      ['level', 'INTEGER'],
+      ['slot', 'TEXT'],
+      ['level_at_ms', 'INTEGER']
+    ];
+    for (const [nome, tipo] of novas) {
+      if (colunas.has(nome)) continue;
+      try { this.db.exec(`ALTER TABLE sales ADD COLUMN ${nome} ${tipo}`); } catch {}
+    }
+    // Índice da fila do enriquecedor: "vendas sem nível, da mais recente
+    // para a mais velha". Parcial de propósito — assim ele encolhe conforme
+    // as vendas são enriquecidas, em vez de crescer com o banco.
+    try {
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_sales_sem_nivel
+        ON sales(sold_at_ms DESC) WHERE level IS NULL
+      `);
+    } catch {}
   }
 
   close() {
@@ -242,6 +296,132 @@ class MarketDatabase {
     // sobrevive, que é exatamente quando ele serve.
     if (novas) this.invalidate();
     return novas;
+  }
+
+  /**
+   * Vendas que ainda não têm nível, da mais recente para a mais velha.
+   *
+   * A ordem importa: o anúncio expira do servidor depois de um tempo, e
+   * `get` passa a falhar. Perguntar primeiro pelas vendas novas é perguntar
+   * enquanto a resposta ainda existe — as velhas provavelmente já não têm.
+   *
+   * Agrupa por `listing_id` porque é a chave do servidor: duas linhas do
+   * mesmo anúncio (venda parcial) custariam duas perguntas para a mesma
+   * resposta.
+   */
+  pendingLevels(limit = 20) {
+    if (!this.open()) return [];
+    try {
+      return this.db.prepare(`
+        SELECT listing_id, MIN(def_id) AS def_id, MIN(name) AS name
+        FROM sales
+        WHERE level IS NULL AND listing_id > 0 AND level_at_ms IS NULL
+        GROUP BY listing_id
+        ORDER BY MAX(sold_at_ms) DESC
+        LIMIT ?
+      `).all(Math.min(Math.max(num(limit) || 20, 1), 200));
+    } catch (err) {
+      this.error = err && err.message || String(err);
+      return [];
+    }
+  }
+
+  /**
+   * Grava o nível descoberto para um ou mais anúncios.
+   *
+   * `level_at_ms` é marcado sempre, mesmo quando o nível não veio: é o que
+   * impede o enriquecedor de perguntar de novo, para sempre, sobre anúncios
+   * que já expiraram do servidor ou sobre itens que não têm nível.
+   *
+   * @param {Array<{listing_id:number, level:number|null, slot?:string}>} linhas
+   */
+  setLevels(linhas) {
+    if (!this.open() || !Array.isArray(linhas) || !linhas.length) return 0;
+    const stmt = this.db.prepare(`
+      UPDATE sales SET level = ?, slot = COALESCE(?, slot), level_at_ms = ?
+      WHERE listing_id = ?
+    `);
+    const agora = Date.now();
+    let mudou = 0;
+    this.db.exec('BEGIN');
+    try {
+      for (const l of linhas) {
+        const id = num(l && l.listing_id);
+        if (!id) continue;
+        // `null` viraria "não perguntei" outra vez; 0 é a resposta honesta
+        // para um item sem nível, e é o que permite parar de perguntar.
+        const nivel = l.level == null ? 0 : num(l.level);
+        const r = stmt.run(nivel, str(l.slot) || null, agora, id);
+        if (r && r.changes) mudou += r.changes;
+      }
+      this.db.exec('COMMIT');
+    } catch (err) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      this.error = err && err.message || String(err);
+      return 0;
+    }
+    if (mudou) this.invalidate();
+    return mudou;
+  }
+
+  /**
+   * Preço por nível de um item.
+   *
+   * É a resposta para "Topázio de que nível?". Sem isto, as vendas de um
+   * nome só apareciam somadas, e no caso das gemas isso juntava coisas que
+   * variam 10 000x de preço — medido: `gema-ametista` entre 1 e 21 000 000.
+   * A média de tudo junto não descreve nenhum dos níveis.
+   */
+  levelBreakdown(defId, opts = {}) {
+    if (!this.open() || !defId) return [];
+    const since = sinceOf(opts.days);
+    try {
+      return this.db.prepare(`
+        SELECT level,
+               COUNT(*) AS vendas,
+               SUM(quantity) AS unidades,
+               COUNT(CASE WHEN ${SQL_OURO} THEN 1 END) AS vendas_ouro,
+               CAST(SUM(CASE WHEN ${SQL_OURO} THEN unit_price * quantity END) AS REAL)
+                 / NULLIF(SUM(CASE WHEN ${SQL_OURO} THEN quantity END), 0) AS media,
+               MIN(CASE WHEN ${SQL_OURO} THEN unit_price END) AS minimo,
+               MAX(CASE WHEN ${SQL_OURO} THEN unit_price END) AS maximo,
+               COUNT(CASE WHEN ${SQL_DIAMANTE} THEN 1 END) AS vendas_dia,
+               CAST(SUM(CASE WHEN ${SQL_DIAMANTE} THEN unit_price * quantity END) AS REAL)
+                 / NULLIF(SUM(CASE WHEN ${SQL_DIAMANTE} THEN quantity END), 0) AS media_dia,
+               MAX(sold_at_ms) AS ultima_venda_ms
+        FROM sales
+        WHERE def_id = ? AND sold_at_ms >= ? AND level IS NOT NULL AND level > 0
+        GROUP BY level
+        ORDER BY level ASC
+      `).all(String(defId), since);
+    } catch (err) {
+      this.error = err && err.message || String(err);
+      return [];
+    }
+  }
+
+  /**
+   * Quantas vendas já têm nível descoberto.
+   *
+   * A tela precisa disto para ser honesta: uma quebra por nível feita sobre
+   * 3 de 40 vendas não é a mesma coisa que uma feita sobre 38, e mostrar as
+   * duas igual faria o usuário confiar num número que não merece confiança.
+   */
+  levelCoverage(defId, opts = {}) {
+    if (!this.open()) return { total: 0, comNivel: 0 };
+    const since = sinceOf(opts.days);
+    const where = ['sold_at_ms >= ?'];
+    const params = [since];
+    if (defId) { where.push('def_id = ?'); params.push(String(defId)); }
+    try {
+      const r = this.db.prepare(`
+        SELECT COUNT(*) AS total,
+               COUNT(CASE WHEN level IS NOT NULL THEN 1 END) AS perguntadas,
+               COUNT(CASE WHEN level > 0 THEN 1 END) AS comNivel
+        FROM sales WHERE ${where.join(' AND ')}
+      `).get(...params);
+      return r || { total: 0, comNivel: 0 };
+    } catch { return { total: 0, comNivel: 0 }; }
   }
 
   /**

@@ -2057,6 +2057,13 @@ class LevelingHeadlessManager extends EventEmitter {
     this.marketIntervalMs = Number(options.marketIntervalMs) || MARKET_POLL_MS;
     this.marketBusy = false;
     this.marketStats = { polls: 0, inserted: 0, lastAtMs: 0, lastError: '', lastCount: 0 };
+    /**
+     * Banco, para o enriquecedor de nível. Ele precisa da fila de vendas sem
+     * nível, que só o banco conhece — `marketSink` é de mão única.
+     */
+    this.marketDb = null;
+    this.levelBusy = false;
+    this.levelStats = { consultas: 0, achados: 0, falhas: 0, lastAtMs: 0, lastError: '' };
   }
 
   // ------------------------------------------------------------- mercado
@@ -2109,6 +2116,11 @@ class LevelingHeadlessManager extends EventEmitter {
       return 0;
     } finally {
       this.marketBusy = false;
+      // Depois de gravar, nunca antes: o nível é perguntado anúncio por
+      // anúncio e a coleta das vendas não pode esperar por isso. Sem `await`
+      // porque o tique do coletor não depende do resultado — e `enrichLevels`
+      // nunca lança.
+      this.enrichLevels();
     }
   }
 
@@ -2134,7 +2146,78 @@ class LevelingHeadlessManager extends EventEmitter {
   }
 
   getMarketStats() {
-    return { ...this.marketStats, running: !!this.marketTimer };
+    return {
+      ...this.marketStats,
+      running: !!this.marketTimer,
+      levels: { ...this.levelStats }
+    };
+  }
+
+  /**
+   * Descobre o nível dos itens vendidos.
+   *
+   * `MarketSale` não traz nível, e por isso o histórico mostrava "Topázio"
+   * sem dizer qual — quando existem Topázios de nível 1 a 4 vendidos por
+   * preços que variam de 1 a 10 milhões. A média de todos juntos não
+   * descreve nenhum deles.
+   *
+   * Quem tem o nível é `MarketListing`. O achado que torna isto possível:
+   * medido, `market_request{get}` num anúncio **já vendido** continua
+   * respondendo, com `status: MARKET_STATUS_SOLD` e o `level` intacto. O
+   * `listing_id` que o feed traz é a chave, e custa ~35 ms por pergunta.
+   *
+   * Um pedido por anúncio, em série e com teto por rodada. O teto é o que
+   * decide quanto tempo o histórico antigo leva para ser identificado: o
+   * feed traz ~3,4 vendas novas por minuto, então qualquer lote acima disso
+   * já ganha da chegada — o resto do orçamento serve para recuperar o
+   * atraso, que num banco com meses de uso são milhares de vendas.
+   *
+   * 40 por minuto, medido: ~45 ms por pergunta, logo ~1,8 s de tráfego em
+   * cada 60 s. Em série de propósito. Disparar o lote em paralelo seria
+   * rápido e também seria uma rajada de dezenas de pedidos simultâneos por
+   * dados que ninguém está olhando — o tipo de tráfego que faz um servidor
+   * começar a recusar.
+   */
+  async enrichLevels(limite = 40) {
+    if (!this.marketDb || this.levelBusy) return 0;
+    const client = this.marketClient();
+    if (!client) return 0;
+
+    this.levelBusy = true;
+    let gravadas = 0;
+    try {
+      const fila = this.marketDb.pendingLevels(limite);
+      if (!fila.length) return 0;
+
+      const linhas = [];
+      for (const pendente of fila) {
+        const res = await client.marketGet(Number(pendente.listing_id));
+        if (res.errorCode) {
+          // O anúncio expirou do servidor, ou nunca existiu. Marcar com
+          // nível 0 encerra a pergunta: insistir todo tique num id que já
+          // não existe gastaria tráfego para sempre, sem resposta possível.
+          linhas.push({ listing_id: pendente.listing_id, level: 0 });
+          this.levelStats.falhas++;
+          continue;
+        }
+        const l = (res && res.listing) || {};
+        linhas.push({
+          listing_id: pendente.listing_id,
+          level: Number(l.level) || 0,
+          slot: typeof l.slot === 'string' ? l.slot : ''
+        });
+        if (Number(l.level) > 0) this.levelStats.achados++;
+      }
+
+      gravadas = this.marketDb.setLevels(linhas);
+      this.levelStats.consultas += fila.length;
+      this.levelStats.lastAtMs = Date.now();
+    } catch (e) {
+      this.levelStats.lastError = (e && e.message) || String(e);
+    } finally {
+      this.levelBusy = false;
+    }
+    return gravadas;
   }
 
   /**
@@ -2153,7 +2236,10 @@ class LevelingHeadlessManager extends EventEmitter {
    * Conta desconectada não é erro: ela aparece em `offline` para a tela
    * poder dizer "não sei" em vez de "não tem", que são coisas diferentes e
    * levariam a decisões opostas.
+   *
+   * (A documentação de `inventoryOwners` continua logo acima da função.)
    */
+
   /**
    * O inventário inteiro de cada conta em modo monitor.
    *

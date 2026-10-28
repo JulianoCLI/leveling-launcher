@@ -127,6 +127,12 @@
     /** Anúncios à venda agora, por `def_id`. Só a ficha vem daqui. */
     listings: [],
     /**
+     * Preço por nível do item aberto. Vazio não significa "não varia por
+     * nível": significa que o nível dessas vendas ainda não foi descoberto —
+     * o enriquecedor pergunta anúncio por anúncio, em segundo plano.
+     */
+    levels: { levels: [], coverage: null },
+    /**
      * Quem tem cada item, por `def_id`. Pedido depois da tabela já estar
      * pintada: depende das contas conectadas e de ida ao servidor, e a tela
      * não pode ficar esperando isso para mostrar preço.
@@ -300,10 +306,12 @@
           // depende de uma conta conectada, e a tela tem de abrir sem isso.
           this.data.hint = null;
           this.listings = [];
+          this.levels = { levels: [], coverage: null };
           this.render();
           this.loadHint();
           this.loadListings();
           this.loadOwners([this.defId]);
+          this.loadLevels();
           return;
         }
         if (this.view === 'bolsa') {
@@ -379,6 +387,20 @@
       this.ownersAsked = true;
       if (res && !res.errorCode) this.owners = res;
       this.render();
+    },
+
+    /**
+     * Preço por nível. É leitura local do banco, mas vem depois da pintura
+     * pelo mesmo princípio das outras: o preço geral já está na tela e não
+     * precisa esperar por um detalhamento.
+     */
+    async loadLevels() {
+      if (!this.api || !this.api.marketLevels || !this.defId) return;
+      const alvo = this.defId;
+      const res = await this.api.marketLevels(alvo, { days: this.query.days }).catch(() => null);
+      if (alvo !== this.defId) return;
+      this.levels = res || { levels: [], coverage: null };
+      if (this.view === 'detail') this.render();
     },
 
     /** O que as minhas contas têm deste item, ou `null` se não foi lido. */
@@ -807,6 +829,78 @@
     },
 
     /**
+     * Preço por nível.
+     *
+     * A quebra que faltava. "Topázio" não é um item: são quatro, de nível 1 a
+     * 4, vendidos no mesmo nome por preços que no banco real vão de 1 a 10
+     * milhões. Somar tudo numa média produzia um número que não serve para
+     * comprar nem para vender nenhum deles.
+     *
+     * A cobertura é mostrada sempre, e é a parte honesta: o nível não vem no
+     * feed de vendas, ele é descoberto consultando o anúncio de cada venda,
+     * um por vez, em segundo plano. No começo a quebra cobre poucas vendas, e
+     * dizer isso é o que impede o usuário de confiar numa amostra de três.
+     */
+    levelsHtml(it) {
+      const dados = (this.levels && this.levels.levels) || [];
+      const cob = this.levels && this.levels.coverage;
+      const faltam = cob ? Math.max(0, (cob.total || 0) - (cob.perguntadas || 0)) : 0;
+
+      if (!dados.length) {
+        if (!cob || !cob.total) return '';
+        return `
+          <h3 class="mk-group">Por nível</h3>
+          <p class="hint">${faltam
+            ? `O nível ainda não foi descoberto para ${faltam} das ${cob.total} vendas deste período.
+               Ele não vem no feed de vendas — o launcher consulta o anúncio de cada venda em
+               segundo plano, alguns por minuto, enquanto uma conta está em modo monitor.`
+            : `Nenhuma das ${cob.total} vendas deste período tem nível: o item não varia por nível,
+               ou os anúncios já expiraram do servidor antes de poderem ser consultados.`}</p>`;
+      }
+
+      // O nível mais caro primeiro na dica, mas a tabela fica em ordem de
+      // nível: é como o jogo apresenta, e procurar "o nível 3" numa lista
+      // ordenada por preço é mais difícil do que parece.
+      const maisVendido = dados.reduce((a, b) => (b.vendas > a.vendas ? b : a), dados[0]);
+
+      return `
+        <h3 class="mk-group">Por nível <small>${dados.length} ${
+          dados.length === 1 ? 'nível' : 'níveis'
+        } distintos${cob && cob.total ? ` · ${cob.comNivel} de ${cob.total} vendas identificadas` : ''}</small></h3>
+        <table class="mk-table mk-levels">
+          <thead>
+            <tr>
+              <th class="mk-c-n">Nível</th>
+              <th class="mk-c-n">Vendas</th>
+              <th class="mk-c-p" title="Média ponderada pela quantidade, só das vendas em ouro">Média</th>
+              <th class="mk-c-p mk-c-opt">Mínimo</th>
+              <th class="mk-c-p mk-c-opt">Máximo</th>
+              <th class="mk-c-p mk-c-dia" title="Mediana das vendas em diamante neste nível">💎</th>
+              <th class="mk-c-t">Última</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${dados.map(l => `
+              <tr class="${l === maisVendido && dados.length > 1 ? 'mk-row-top' : ''}">
+                <td class="mk-c-n"><b>nv ${l.level}</b></td>
+                <td class="mk-c-n">${l.vendas}<small>${curto(l.unidades)} un</small></td>
+                <td class="mk-c-p mk-strong" title="${cheio(l.media)}">${l.media ? curto(l.media) : '—'}</td>
+                <td class="mk-c-p mk-c-opt" title="${cheio(l.minimo)}">${l.minimo ? curto(l.minimo) : '—'}</td>
+                <td class="mk-c-p mk-c-opt" title="${cheio(l.maximo)}">${l.maximo ? curto(l.maximo) : '—'}</td>
+                <td class="mk-c-p mk-c-dia${l.media_dia ? '' : ' is-none'}" title="${
+                  l.media_dia ? cheio(l.media_dia) + ' 💎' : 'nenhuma venda em diamante neste nível'
+                }">${l.media_dia ? '💎 ' + curto(l.media_dia) : '—'}</td>
+                <td class="mk-c-t" title="${new Date(Number(l.ultima_venda_ms)).toLocaleString('pt-BR')}">${decorrido(l.ultima_venda_ms)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+        ${faltam ? `<p class="hint">Faltam ${faltam} de ${cob.total} vendas por identificar. O nível não vem
+        no feed: é consultado anúncio por anúncio em segundo plano, e anúncio antigo pode já ter
+        expirado do servidor — essas vendas ficam sem nível para sempre.</p>` : ''}
+      `;
+    },
+
+    /**
      * Preço em diamante.
      *
      * Coluna própria, nunca somada ao ouro. São moedas de ordens de grandeza
@@ -869,6 +963,8 @@
               em ${h.sales} vendas${h.lowest_now ? ` · menor pedido agora: <b>${curto(h.lowest_now)}</b>` : ''}.
               <small>Cobre um período maior que o banco local, mas sem as vendas por trás.</small>
             </div>` : ''}
+
+          ${this.levelsHtml(it)}
 
           ${this.ownersHtml(it)}
 

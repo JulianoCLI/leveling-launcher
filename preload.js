@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   marketOwners: (defIds) => ipcRenderer.invoke('leveling:market:owners', defIds),
   // O inventário inteiro das contas, já cruzado com o preço de mercado.
   marketBag: (opts) => ipcRenderer.invoke('leveling:market:bag', opts),
+  // Preço por nível: "Topázio de nível 1 ou 4?" são itens de preços diferentes.
+  marketLevels: (defId, opts) => ipcRenderer.invoke('leveling:market:levels', defId, opts),
   onMarketCatalog: (cb) => ipcRenderer.on('leveling:market-catalog', (_e, data) => cb(data)),
   // Avisa que entraram vendas novas; a aba aberta se atualiza sozinha.
   onMarket: (cb) => ipcRenderer.on('leveling:market', (_e, data) => cb(data)),

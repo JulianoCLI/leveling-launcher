@@ -402,3 +402,137 @@ test('item só vendido em diamante tem o gráfico em diamante', () => {
   assert.equal(d.series.length, 1, 'sem venda em ouro, o gráfico não pode ficar vazio');
   assert.equal(d.vendas_ouro, 0);
 });
+
+// --------------------------------------------------------------- nível
+
+test('as colunas de nível entram numa tabela que já existia, sem apagar nada', () => {
+  // O banco do usuário tem meses de vendas que o servidor não lembra: ele só
+  // devolve os últimos 30 minutos. Recriar a tabela destruiria o único lugar
+  // onde esse histórico existe.
+  const { DatabaseSync } = require("node:sqlite");
+  const fs = require("fs");
+  const os = require("os");
+  const path = require("path");
+  const arq = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "mkdb-")), "m.db");
+
+  const velho = new DatabaseSync(arq);
+  velho.exec(`CREATE TABLE sales (
+    id INTEGER PRIMARY KEY, listing_id INTEGER, kind TEXT, def_id TEXT NOT NULL,
+    name TEXT, category TEXT, rarity TEXT, enchant INTEGER NOT NULL DEFAULT 0,
+    currency TEXT, quantity INTEGER NOT NULL DEFAULT 1,
+    unit_price INTEGER NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT 0,
+    fee INTEGER NOT NULL DEFAULT 0, net INTEGER NOT NULL DEFAULT 0,
+    sold_at_ms INTEGER NOT NULL, seller_name TEXT, buyer_name TEXT,
+    seen_at_ms INTEGER NOT NULL)`);
+  velho.exec(`INSERT INTO sales (id, listing_id, def_id, name, quantity, unit_price, sold_at_ms, seen_at_ms)
+              VALUES (1, 70, 'gema-topazio', 'Topázio', 1, 500, ${Date.now()}, ${Date.now()})`);
+  velho.close();
+
+  const db = new MarketDatabase(arq);
+  assert.equal(db.stats().vendas, 1, "a venda antiga tem de sobreviver à migração");
+  // NULL, não 0: ninguém perguntou o nível dela ainda, e isso é diferente de
+  // "perguntei e ela não tem nível".
+  assert.deepEqual(db.pendingLevels(5).map(p => p.listing_id), [70],
+    "venda antiga entra na fila do enriquecedor");
+  db.close();
+
+  // Abrir de novo não pode tentar recriar as colunas e quebrar.
+  const outra = new MarketDatabase(arq);
+  assert.equal(outra.stats().vendas, 1);
+  assert.equal(outra.ready, true, 'a segunda migração não pode falhar ao reencontrar as colunas');
+  outra.close();
+  fs.rmSync(path.dirname(arq), { recursive: true, force: true });
+});
+
+test('a fila pergunta primeiro pelas vendas novas', () => {
+  // O anúncio expira do servidor: perguntar pelo recente é perguntar
+  // enquanto a resposta ainda existe.
+  const db = abrir();
+  const agora = Date.now();
+  db.insertSales([
+    venda(1, "a", 10, 1, agora - 3 * DIA),
+    venda(2, "b", 10, 1, agora - 1000),
+    venda(3, "c", 10, 1, agora - DIA)
+  ]);
+  assert.deepEqual(db.pendingLevels(10).map(p => p.def_id), ["b", "c", "a"]);
+});
+
+test('duas vendas do mesmo anúncio custam uma pergunta só', () => {
+  const db = abrir();
+  const agora = Date.now();
+  // `venda(id)` usa listing_id = id * 7; forçamos o mesmo anúncio.
+  db.insertSales([
+    { ...venda(1, "gema-topazio", 10, 1, agora), listing_id: "900" },
+    { ...venda(2, "gema-topazio", 10, 1, agora - 10), listing_id: "900" }
+  ]);
+  assert.equal(db.pendingLevels(10).length, 1);
+});
+
+test('nível gravado sai da fila; falha grava 0 para parar de perguntar', () => {
+  const db = abrir();
+  const agora = Date.now();
+  db.insertSales([venda(1, "gema-topazio", 10, 1, agora), venda(2, "cambio:gold", 1, 1, agora)]);
+  assert.equal(db.pendingLevels(10).length, 2);
+
+  assert.equal(db.setLevels([{ listing_id: 7, level: 3, slot: "" }]), 1);
+  // 0 é a resposta honesta para o que não tem nível — e é o que encerra a
+  // pergunta. `null` voltaria a significar "não perguntei".
+  assert.equal(db.setLevels([{ listing_id: 14, level: null }]), 1);
+  assert.deepEqual(db.pendingLevels(10), [],
+    "nada pode voltar à fila, nem o que falhou: insistir num anúncio expirado não tem fim");
+});
+
+test('o preço por nível separa o que o nome juntava', () => {
+  // O caso real: "Topázio" são quatro itens com o mesmo nome, e no banco
+  // medido os preços vão de 1 a 10 milhões. A média de tudo junto não serve
+  // para comprar nem para vender nenhum deles.
+  const db = abrir();
+  const agora = Date.now();
+  db.insertSales([
+    venda(1, "gema-topazio", 100, 1, agora - 1000),
+    venda(2, "gema-topazio", 200, 1, agora - 2000),
+    venda(3, "gema-topazio", 9000000, 1, agora - 3000),
+    venda(4, "gema-topazio", 40, 1, agora - 4000, { currency: "MARKET_CURRENCY_DIAMOND" })
+  ]);
+  db.setLevels([
+    { listing_id: 7, level: 1 }, { listing_id: 14, level: 1 },
+    { listing_id: 21, level: 4 }, { listing_id: 28, level: 4 }
+  ]);
+
+  const q = db.levelBreakdown("gema-topazio", { days: 0 });
+  assert.deepEqual(q.map(l => l.level), [1, 4], "em ordem de nível, como o jogo mostra");
+  assert.equal(q[0].vendas, 2);
+  assert.equal(q[0].media, 150);
+  assert.equal(q[1].media, 9000000, "o nível 4 é outro preço, não um ruído da média");
+  // Moeda não se mistura nem dentro de um nível.
+  assert.equal(q[1].vendas_dia, 1);
+  assert.equal(q[1].media_dia, 40);
+  assert.equal(q[1].vendas_ouro, 1);
+});
+
+test('venda sem nível descoberto fica fora da quebra, não vira nível zero', () => {
+  const db = abrir();
+  db.insertSales([venda(1, "gema-topazio", 100, 1, Date.now())]);
+  assert.deepEqual(db.levelBreakdown("gema-topazio", { days: 0 }), [],
+    "sem nível conhecido não há quebra para mostrar");
+  db.setLevels([{ listing_id: 7, level: 0 }]);
+  assert.deepEqual(db.levelBreakdown("gema-topazio", { days: 0 }), [],
+    "nível 0 é ausência de nível, não o nível zero");
+});
+
+test('a cobertura diz sobre quantas vendas a quebra foi feita', () => {
+  // Uma quebra sobre 1 de 3 vendas não é a mesma coisa que sobre 3 de 3, e
+  // mostrar as duas igual faria confiar num número que não merece.
+  const db = abrir();
+  const agora = Date.now();
+  db.insertSales([
+    venda(1, "gema-topazio", 100, 1, agora),
+    venda(2, "gema-topazio", 200, 1, agora),
+    venda(3, "gema-topazio", 300, 1, agora)
+  ]);
+  db.setLevels([{ listing_id: 7, level: 2 }, { listing_id: 14, level: 0 }]);
+  const c = db.levelCoverage("gema-topazio", { days: 0 });
+  assert.equal(c.total, 3);
+  assert.equal(c.perguntadas, 2, "duas já foram consultadas");
+  assert.equal(c.comNivel, 1, "mas só uma tinha nível para dar");
+});
