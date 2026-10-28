@@ -666,3 +666,29 @@ test('sem banco, sem conta, ou já rodando, o enriquecedor não faz nada', async
   assert.equal(await manager.enrichLevels(), 0, 'um lote por vez');
   manager.stopAll();
 });
+
+test('o enriquecedor sob demanda pergunta só os anúncios pedidos', async () => {
+  // A aba "Ao vivo" pergunta pelo que está na tela. Sem o repasse da lista,
+  // ela gastaria o orçamento na fila de fundo e o nível apareceria no banco
+  // para depois, não na tela aberta.
+  const manager = new LevelingHeadlessManager({ WebSocket: MockWebSocket, autoReconnect: false });
+  manager.start(0, { username: 'u', password: 'p' });
+  await sleep(10);
+  const ws = MockWebSocket.last;
+  ws.reply('login', 'auth_ok', { token: 't', account_id: 1, username: 'eu' });
+  await sleep(5);
+
+  const pedidos = [];
+  manager.marketDb = {
+    pendingLevels: (n, ids) => { pedidos.push({ n, ids }); return [{ listing_id: 772, def_id: 'gema-topazio' }]; },
+    setLevels: () => 1
+  };
+
+  const promessa = manager.enrichLevels(2, [771, 772]);
+  await sleep(10);
+  assert.deepEqual(pedidos, [{ n: 2, ids: [771, 772] }],
+    'a lista da tela tem de chegar ao banco, senão a fila de fundo responde outra pergunta');
+  ws.reply('market_request', 'market_response', { detail: { listing: { id: 772, level: 2 } } });
+  await promessa;
+  manager.stopAll();
+});

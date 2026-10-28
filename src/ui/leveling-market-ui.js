@@ -133,6 +133,12 @@
      */
     levels: { levels: [], coverage: null },
     /**
+     * Nível por `listing_id`, para o ao vivo. Acumula entre repinturas: a
+     * resposta já paga não precisa ser pedida outra vez quando o feed traz
+     * vendas novas.
+     */
+    saleLevels: {},
+    /**
      * Quem tem cada item, por `def_id`. Pedido depois da tabela já estar
      * pintada: depende das contas conectadas e de ida ao servidor, e a tela
      * não pode ficar esperando isso para mostrar preço.
@@ -262,6 +268,26 @@
     },
 
     /**
+     * "nv. 2" ao lado do nome, no ao vivo.
+     *
+     * É a diferença entre "Topázio" e "Topázio nv. 2" — dois itens com o
+     * mesmo nome vendidos, medido no banco real, por 4 128 300 e por 999. O
+     * preço na mesma linha só é interpretável com isto ao lado.
+     *
+     * Três estados, e a distinção importa:
+     *   - nada: o anúncio ainda não foi perguntado, ou não há conta em modo
+     *     monitor para perguntar. Omitir é honesto; `nv. 0` não seria.
+     *   - `nv. n`: o nível, como o jogo mostra.
+     *   - nada também quando o nível é 0: câmbio e consumível não têm nível,
+     *     e marcá-los diria que a informação falta quando ela não existe.
+     */
+    levelTagHtml(sale) {
+      const d = this.saleLevels[String(sale && sale.listing_id)];
+      if (!d || !(Number(d.level) > 0)) return '';
+      return ` <span class="mk-nv">nv. ${Number(d.level)}</span>`;
+    },
+
+    /**
      * Linha de baixo do nome: moeda, categoria, raridade e o que o catálogo
      * souber do item — slot e atributos base. É o que responde "isto é uma
      * arma de quê" sem precisar abrir o detalhe.
@@ -352,6 +378,10 @@
           .filter(r => r.kind !== 'MARKET_KIND_SHADOW' && r.category !== 'sombra')
           .map(r => r.def_id);
         this.loadOwners(visiveis);
+        // "Topázio" sozinho não diz nada: são quatro itens com esse nome. No
+        // ao vivo a linha é uma venda, então o nível dela é o que falta para
+        // o preço ao lado fazer sentido.
+        if (this.view === 'live') this.loadSaleLevels(this.data.sales);
       }
     },
 
@@ -387,6 +417,46 @@
       this.ownersAsked = true;
       if (res && !res.errorCode) this.owners = res;
       this.render();
+    },
+
+    /**
+     * O nível de cada venda listada no ao vivo.
+     *
+     * Aqui o pedido é diferente de todos os outros desta tela: ele pode
+     * causar tráfego. As vendas do ao vivo são as mais novas do banco, logo
+     * as que o enriquecedor de fundo ainda não perguntou — e ele vai da mais
+     * nova para a mais velha, mas com milhares de vendas atrasadas e 40 por
+     * minuto de orçamento, "ele vai chegar" pode significar meia hora.
+     * Perguntar pelos anúncios visíveis é o que põe o nível na tela aberta.
+     *
+     * O que já tem nível não é perguntado de novo: o banco responde de
+     * memória e o pedido sai só para o que falta.
+     *
+     * Falha em silêncio. Sem conta em modo monitor não há a quem perguntar, e
+     * a linha fica sem nível — que é a verdade, não um nível inventado.
+     */
+    async loadSaleLevels(vendas) {
+      if (!this.api || !this.api.marketLevelsFor) return;
+      const ids = [...new Set((vendas || [])
+        .map(s => Number(s.listing_id))
+        .filter(id => id > 0 && !this.saleLevels[String(id)]))];
+      if (!ids.length) return;
+
+      const marca = this.view;
+      // Em lotes de 50, de cima para baixo. A aba mostra 200 vendas e o canal
+      // aceita 100 por pedido, então um pedido só deixaria metade da tabela
+      // sem nível — foi o que aconteceu quando medido. Lotes também fazem as
+      // primeiras linhas, que são as que o usuário está lendo, aparecerem
+      // antes de as últimas serem perguntadas.
+      for (let i = 0; i < ids.length; i += 50) {
+        const res = await this.api.marketLevelsFor(ids.slice(i, i + 50)).catch(() => null);
+        // Trocou de aba no meio: o resto dos lotes é trabalho para ninguém.
+        if (marca !== this.view) return;
+        const vindos = (res && res.levels) || {};
+        if (!Object.keys(vindos).length) continue;
+        Object.assign(this.saleLevels, vindos);
+        this.render();
+      }
     },
 
     /**
@@ -692,7 +762,7 @@
                 <td class="mk-c-t" title="${new Date(Number(s.sold_at_ms)).toLocaleString('pt-BR')}">${quando(s.sold_at_ms)}</td>
                 <td class="mk-c-ic">${this.iconHtml(s)}</td>
                 <td class="mk-c-name">
-                  ${this.nameHtml(s, s.enchant ? ' +' + s.enchant : '')}
+                  ${this.nameHtml(s, this.levelTagHtml(s) + (s.enchant ? ' +' + s.enchant : ''))}
                   ${this.subHtml(s)}
                 </td>
                 <td class="mk-c-n">${curto(s.quantity)}</td>

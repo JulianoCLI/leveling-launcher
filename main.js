@@ -361,7 +361,7 @@ levelingHeadlessManager.marketSink = sales => {
  * enriquecimento, então a referência tem de existir desde o início.
  */
 levelingHeadlessManager.marketDb = {
-  pendingLevels: n => { try { return market().pendingLevels(n); } catch { return []; } },
+  pendingLevels: (n, ids) => { try { return market().pendingLevels(n, ids); } catch { return []; } },
   setLevels: linhas => { try { return market().setLevels(linhas); } catch { return 0; } }
 };
 
@@ -393,10 +393,23 @@ levelingHeadlessManager.on('market-sold', ({ index, sold }) => {
 
 // ------------------------------------------------------------------------- IPC
 
-/** Só o frame principal do launcher fala com estes canais. */
+/**
+ * Só o frame principal de uma página do launcher fala com estes canais.
+ *
+ * Duas páginas, não uma: o mercado tem janela própria e carrega o mesmo
+ * preload. A lista é fechada de propósito — comparar com "qualquer file://"
+ * deixaria uma WebView do jogo que conseguisse navegar para um arquivo local
+ * falando com o IPC privilegiado.
+ *
+ * O frame tem de ser o principal: um iframe dentro da página não fala.
+ */
+const LAUNCHER_PAGES = ['index.html', 'market.html'].map(
+  f => require('url').pathToFileURL(path.join(__dirname, f)).href
+);
+
 const launcherOnly = event => {
-  const expected = require('url').pathToFileURL(path.join(__dirname, 'index.html')).href;
-  if (event.senderFrame !== event.sender.mainFrame || event.sender.getURL().split('?')[0] !== expected) {
+  if (event.senderFrame !== event.sender.mainFrame
+    || !LAUNCHER_PAGES.includes(event.sender.getURL().split('?')[0])) {
     throw new Error('Origem não autorizada.');
   }
 };
@@ -739,6 +752,29 @@ ipcMain.handle('leveling:market:levels', (event, defId, opts) => {
   };
 });
 
+/**
+ * Nível das vendas que estão na tela agora.
+ *
+ * A aba "Ao vivo" mostra justamente as vendas mais novas — as que o coletor
+ * acabou de gravar e que ainda ninguém perguntou. A fila de fundo chegaria
+ * nelas, porque vai da mais nova para a mais velha, mas "chegaria" pode ser
+ * meia hora depois: o orçamento é de 40 por minuto e o banco tem milhares de
+ * vendas atrasadas. Pedir pelos `listing_id` visíveis é o que faz o nível
+ * aparecer na tela aberta em vez de no banco para depois.
+ *
+ * Teto de 100 por pedido. A tela manda em lotes menores que isso; o teto
+ * existe para que um pedido malformado não vire uma varredura do banco
+ * disfarçada de pergunta sobre a tela.
+ */
+ipcMain.handle('leveling:market:levels-for', async (event, listingIds) => {
+  launcherOnly(event);
+  const ids = Array.isArray(listingIds) ? listingIds.slice(0, 100) : [];
+  if (!ids.length) return { levels: {} };
+  await levelingHeadlessManager.enrichLevels(ids.length, ids);
+  const db = market();
+  return { levels: db.levelsOf(ids) };
+});
+
 /** Saúde do acúmulo: desde quando, quantas vendas, tamanho do arquivo. */
 ipcMain.handle('leveling:market:stats', event => {
   launcherOnly(event);
@@ -791,6 +827,90 @@ ipcMain.handle('errlog:open', event => {
 
 ipcMain.handle('errlog:write', (_event, origem, mensagem) => {
   logErro(origem || 'renderer', String(mensagem || '').slice(0, 2000));
+  return true;
+});
+
+// --------------------------------------------------------- janela do mercado
+
+/**
+ * O mercado numa janela própria.
+ *
+ * Era um modal sobre o launcher, e isso o inutilizava para a sua razão de
+ * existir: comparar preço enquanto se decide o que vender no jogo. Um modal
+ * cobre os painéis e prende o teclado — era preciso fechá-lo para olhar o
+ * inventário, e aí o preço sumia da vista.
+ *
+ * Janela de verdade, não `alwaysOnTop`: fixar por cima resolveria o "ver
+ * junto" e criaria um estorvo que fica na frente de tudo, inclusive do que
+ * não é o jogo. Uma janela normal o usuário põe onde quiser, inclusive no
+ * segundo monitor, e o sistema cuida do resto.
+ *
+ * Uma só. Clicar no botão com a janela aberta foca a que existe em vez de
+ * empilhar cópias disputando o mesmo banco.
+ */
+let marketWindow = null;
+
+function openMarketWindow() {
+  if (marketWindow && !marketWindow.isDestroyed()) {
+    if (marketWindow.isMinimized()) marketWindow.restore();
+    marketWindow.focus();
+    return true;
+  }
+
+  marketWindow = new BrowserWindow({
+    width: 1180,
+    height: 820,
+    minWidth: 760,
+    minHeight: 480,
+    title: 'Mercado · Leveling Idle 2D',
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#0b0f14',
+    // Sem `parent`: janela filha no Windows fica sempre à frente da mãe e é
+    // arrastada junto quando ela minimiza. O ponto aqui é o oposto — poder
+    // deixar o mercado de lado e mexer no jogo.
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      // O coletor roda no processo principal, mas a tela repinta quando ele
+      // traz vendas novas; sem isto a janela em segundo plano acumularia
+      // repinturas para entregar todas de uma vez ao voltar.
+      backgroundThrottling: false,
+      spellcheck: false
+    }
+  });
+
+  marketWindow.loadFile(path.join(__dirname, 'market.html'));
+  marketWindow.once('ready-to-show', () => marketWindow.show());
+
+  // Mesma política da janela principal: nada navega para fora, e o que tentar
+  // vai para o navegador do sistema.
+  marketWindow.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith('file://')) {
+      e.preventDefault();
+      openOutside(url);
+    }
+  });
+  marketWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openOutside(url);
+    return { action: 'deny' };
+  });
+
+  marketWindow.on('closed', () => { marketWindow = null; });
+  return true;
+}
+
+ipcMain.handle('leveling:market:window', event => {
+  launcherOnly(event);
+  return openMarketWindow();
+});
+
+ipcMain.handle('leveling:market:window-close', event => {
+  launcherOnly(event);
+  // Fecha a janela de quem pediu. Vem da própria janela do mercado (Esc), e
+  // usar o remetente em vez de `marketWindow` mantém isso correto mesmo que
+  // um dia exista mais de uma.
+  const janela = BrowserWindow.fromWebContents(event.sender);
+  if (janela && !janela.isDestroyed() && janela !== mainWindow) janela.close();
   return true;
 });
 

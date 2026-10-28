@@ -2178,7 +2178,7 @@ class LevelingHeadlessManager extends EventEmitter {
    * dados que ninguém está olhando — o tipo de tráfego que faz um servidor
    * começar a recusar.
    */
-  async enrichLevels(limite = 40) {
+  async enrichLevels(limite = 40, listingIds = null) {
     if (!this.marketDb || this.levelBusy) return 0;
     const client = this.marketClient();
     if (!client) return 0;
@@ -2186,7 +2186,7 @@ class LevelingHeadlessManager extends EventEmitter {
     this.levelBusy = true;
     let gravadas = 0;
     try {
-      const fila = this.marketDb.pendingLevels(limite);
+      const fila = this.marketDb.pendingLevels(limite, listingIds);
       if (!fila.length) return 0;
 
       const linhas = [];

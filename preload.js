@@ -56,6 +56,13 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   marketBag: (opts) => ipcRenderer.invoke('leveling:market:bag', opts),
   // Preço por nível: "Topázio de nível 1 ou 4?" são itens de preços diferentes.
   marketLevels: (defId, opts) => ipcRenderer.invoke('leveling:market:levels', defId, opts),
+  // O nível das vendas que estão na tela, por listing_id. A aba "Ao vivo"
+  // mostra as vendas mais novas, que são justo as que ninguém perguntou ainda.
+  marketLevelsFor: (listingIds) => ipcRenderer.invoke('leveling:market:levels-for', listingIds),
+  // Abre o mercado em janela própria, para dar para olhar o preço e mexer no
+  // jogo ao mesmo tempo — o que um modal sobre o launcher não permitia.
+  marketWindow: () => ipcRenderer.invoke('leveling:market:window'),
+  marketWindowClose: () => ipcRenderer.invoke('leveling:market:window-close'),
   onMarketCatalog: (cb) => ipcRenderer.on('leveling:market-catalog', (_e, data) => cb(data)),
   // Avisa que entraram vendas novas; a aba aberta se atualiza sozinha.
   onMarket: (cb) => ipcRenderer.on('leveling:market', (_e, data) => cb(data)),

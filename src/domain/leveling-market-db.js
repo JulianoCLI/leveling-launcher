@@ -309,17 +309,27 @@ class MarketDatabase {
    * mesmo anúncio (venda parcial) custariam duas perguntas para a mesma
    * resposta.
    */
-  pendingLevels(limit = 20) {
+  pendingLevels(limit = 20, listingIds = null) {
     if (!this.open()) return [];
+    // Lista explícita: é a aba "Ao vivo" pedindo o nível das linhas que o
+    // usuário está olhando agora. A fila de fundo vai da venda mais nova para
+    // a mais velha e chegaria nelas sozinha, mas "sozinha" pode ser meia
+    // hora depois — e a pergunta é sobre a tela aberta.
+    const alvos = Array.isArray(listingIds)
+      ? [...new Set(listingIds.map(num).filter(Boolean))]
+      : null;
+    if (alvos && !alvos.length) return [];
+    const teto = Math.min(Math.max(num(limit) || 20, 1), 200);
     try {
       return this.db.prepare(`
         SELECT listing_id, MIN(def_id) AS def_id, MIN(name) AS name
         FROM sales
         WHERE level IS NULL AND listing_id > 0 AND level_at_ms IS NULL
+        ${alvos ? `AND listing_id IN (${alvos.map(() => '?').join(',')})` : ''}
         GROUP BY listing_id
         ORDER BY MAX(sold_at_ms) DESC
         LIMIT ?
-      `).all(Math.min(Math.max(num(limit) || 20, 1), 200));
+      `).all(...(alvos || []), teto);
     } catch (err) {
       this.error = err && err.message || String(err);
       return [];
@@ -362,6 +372,32 @@ class MarketDatabase {
     }
     if (mudou) this.invalidate();
     return mudou;
+  }
+
+  /**
+   * O nível já conhecido de anúncios específicos, por `listing_id`.
+   *
+   * A aba "Ao vivo" lista vendas, não itens: ela precisa do nível de cada
+   * linha, não da quebra agregada. Devolve só o que tem resposta — anúncio
+   * ainda não perguntado fica fora do mapa, e a tela mostra isso como
+   * ausência em vez de inventar um nível.
+   */
+  levelsOf(listingIds) {
+    if (!this.open() || !Array.isArray(listingIds) || !listingIds.length) return {};
+    const ids = [...new Set(listingIds.map(num).filter(Boolean))].slice(0, 500);
+    if (!ids.length) return {};
+    try {
+      const linhas = this.db.prepare(`
+        SELECT listing_id, level, slot FROM sales
+        WHERE listing_id IN (${ids.map(() => '?').join(',')}) AND level IS NOT NULL
+      `).all(...ids);
+      const mapa = {};
+      for (const l of linhas) mapa[String(l.listing_id)] = { level: l.level, slot: l.slot || '' };
+      return mapa;
+    } catch (err) {
+      this.error = err && err.message || String(err);
+      return {};
+    }
   }
 
   /**

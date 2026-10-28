@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<!--
+  Janela própria do mercado.
+
+  O mercado era um modal sobre o launcher, e isso o tornava inútil para o que
+  ele existe: comparar preço enquanto se decide o que vender *no jogo*. Um
+  modal cobre os painéis e rouba o teclado — era preciso fechá-lo para olhar o
+  inventário, e então o preço sumia.
+
+  Janela separada resolve porque é o sistema operacional que faz o trabalho:
+  dá para pôr ao lado, no outro monitor, e clicar no jogo sem que ela feche.
+
+  A página reusa `leveling-market-ui.js` inteiro, sem bifurcar nada. O módulo
+  só precisa de três ids no documento — `marketBody`, `marketStatusBar`,
+  `marketRefresh` — e de `marketOverlay` com a classe `show`, que é como ele
+  sabe que está visível. Numa janela dedicada ele sempre está, e por isso o
+  overlay nasce com a classe e nunca a perde.
+-->
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://levelingidle2d.com.br; connect-src 'none'">
+  <title>Mercado · Leveling Idle 2D</title>
+  <link rel="stylesheet" href="src/ui/shell.css">
+  <link rel="stylesheet" href="src/ui/leveling.css">
+</head>
+
+<body class="market-standalone">
+  <!-- `show` fixo: numa janela dedicada "aberto" é o único estado possível, e
+       é esse marcador que o módulo consulta antes de repintar quando o
+       coletor traz vendas novas. -->
+  <div id="marketOverlay" class="show">
+    <div id="marketModal" role="region" aria-labelledby="marketTitle">
+      <div class="lv-head">
+        <h2><span class="lv-icon" aria-hidden="true">💰</span><span id="marketTitle">Preços do mercado</span></h2>
+      </div>
+      <p class="hint">O jogo só mostra os <b>últimos 30 minutos</b> de vendas. O launcher lê esse
+        feed de minuto em minuto enquanto alguma conta está em <b>modo monitor</b> e guarda tudo
+        aqui — o histórico cresce com o tempo de uso e nada é apagado.</p>
+
+      <div id="marketBody"></div>
+
+      <div class="lv-status-bar" id="marketStatusBar" role="status" aria-live="polite"></div>
+
+      <div class="modal-actions">
+        <button type="button" id="marketRefresh" class="primary">Ler agora</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="src/ui/leveling-market-ui.js"></script>
+  <script src="src/ui/market-window.js"></script>
+</body>
+
+</html>

@@ -536,3 +536,49 @@ test('a cobertura diz sobre quantas vendas a quebra foi feita', () => {
   assert.equal(c.perguntadas, 2, "duas já foram consultadas");
   assert.equal(c.comNivel, 1, "mas só uma tinha nível para dar");
 });
+
+test('a fila aceita uma lista de anúncios: é a tela aberta que pergunta', () => {
+  // O ao vivo mostra as vendas mais novas, que são justo as que a fila de
+  // fundo ainda não alcançou. Esperar que ela chegue pode ser meia hora.
+  const db = abrir();
+  const agora = Date.now();
+  db.insertSales([
+    venda(1, "a", 10, 1, agora - 1000),
+    venda(2, "b", 10, 1, agora - 2000),
+    venda(3, "c", 10, 1, agora - 3000)
+  ]);
+  assert.deepEqual(db.pendingLevels(10, [14]).map(p => p.def_id), ["b"]);
+  assert.deepEqual(db.pendingLevels(10, [21, 7]).map(p => p.def_id), ["a", "c"],
+    "mesmo pedida por lista, a ordem continua da venda mais nova para a mais velha");
+  // Lista vazia é "não pergunte nada", não "pergunte tudo": confundir os dois
+  // transformaria um clique na aba numa varredura do banco.
+  assert.deepEqual(db.pendingLevels(10, []), []);
+  // Anúncio já respondido não volta, nem quando pedido pelo nome.
+  db.setLevels([{ listing_id: 14, level: 5 }]);
+  assert.deepEqual(db.pendingLevels(10, [14]), []);
+});
+
+test('o nível por listing_id devolve só o que tem resposta', () => {
+  // A linha do ao vivo é uma venda, não um item: ela precisa do nível dela,
+  // não da quebra agregada. E ausência tem de voltar como ausência.
+  const db = abrir();
+  const agora = Date.now();
+  db.insertSales([venda(1, "gema-topazio", 999, 1, agora), venda(2, "arco", 100, 1, agora)]);
+  db.setLevels([{ listing_id: 7, level: 2, slot: "" }]);
+
+  const mapa = db.levelsOf([7, 14]);
+  assert.equal(mapa["7"].level, 2);
+  assert.equal(mapa["14"], undefined,
+    "venda não perguntada fica fora do mapa, para a tela não inventar um nível");
+  assert.deepEqual(db.levelsOf([]), {});
+  assert.deepEqual(db.levelsOf([999999]), {}, "id inexistente não quebra nada");
+});
+
+test('nível 0 volta como 0, e é a tela que decide não mostrar', () => {
+  // O banco não pode esconder a diferença: 0 é "perguntei e não tem nível",
+  // e ausência do mapa é "ainda não perguntei". São fatos diferentes.
+  const db = abrir();
+  db.insertSales([venda(1, "cambio:gold", 1, 1, Date.now())]);
+  db.setLevels([{ listing_id: 7, level: 0 }]);
+  assert.equal(db.levelsOf([7])["7"].level, 0);
+});

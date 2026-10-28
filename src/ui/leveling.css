@@ -860,6 +860,35 @@
   box-sizing: border-box;
 }
 
+/* Janela própria do mercado (market.html).
+   O mesmo HTML serve de modal e de janela, então aqui o que muda é só o
+   enquadramento: a janela *é* a moldura, logo o escurecido, o arredondamento e
+   a largura máxima do modal viram estorvo — eles deixariam uma faixa preta
+   decorativa em volta de uma tela que já ocupa a janela. */
+body.market-standalone {
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-bg-elevated);
+}
+
+body.market-standalone #marketOverlay {
+  position: static;
+  background: none;
+  backdrop-filter: none;
+  height: 100vh;
+}
+
+body.market-standalone #marketModal {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  height: 100vh;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 16px 18px;
+}
+
 #marketModal .lv-head {
   display: flex;
   align-items: center;
@@ -1313,6 +1342,22 @@
 #marketModal .mk-c-t {
   color: var(--color-text-secondary);
   font-size: 11.5px;
+}
+
+/* Nível ao lado do nome, no ao vivo. Não herda a cor da raridade: o nível é
+   um fato do item vendido, não parte do nome, e pintá-lo igual faria "Topázio
+   nv. 2" parecer o nome de outro item. */
+#marketModal .mk-nv {
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-left: 3px;
+  white-space: nowrap;
+  vertical-align: 1px;
 }
 
 /* ----------------------------------------------------------- por nível */

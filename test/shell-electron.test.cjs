@@ -138,11 +138,22 @@ ipcMain.handle('leveling:market:summary', (_e, opts) => {
 ipcMain.handle('leveling:market:recent', (_e, opts) => {
   marketCalls.push({ op: 'recent', opts });
   return {
-    sales: [{
-      id: 1, def_id: 'arco-arqueiro', name: 'Arco de Arqueiro', category: 'armas',
-      rarity: 'lendario', enchant: 7, currency: 'MARKET_CURRENCY_GOLD',
-      quantity: 1, unit_price: 1300000, total: 1300000, sold_at_ms: Date.now() - 30000
-    }]
+    sales: [
+      {
+        id: 1, listing_id: 771, def_id: 'arco-arqueiro', name: 'Arco de Arqueiro',
+        category: 'armas', rarity: 'lendario', enchant: 7, currency: 'MARKET_CURRENCY_GOLD',
+        quantity: 1, unit_price: 1300000, total: 1300000, sold_at_ms: Date.now() - 30000
+      },
+      // Gema: o caso que motivou o nível na linha. Mesmo nome e mesma
+      // raridade para itens de preços muito diferentes, e o feed não os
+      // distingue. Esta fica sem nível de propósito — ausência tem de
+      // aparecer como ausência, não como "nv. 0".
+      {
+        id: 2, listing_id: 772, def_id: 'gema-topazio', name: 'Topázio',
+        category: 'materiais', rarity: 'comum', enchant: 0, currency: 'MARKET_CURRENCY_GOLD',
+        quantity: 1, unit_price: 999, total: 999, sold_at_ms: Date.now() - 45000
+      }
+    ]
   };
 });
 ipcMain.handle('leveling:market:item', (_e, defId, opts) => {
@@ -243,6 +254,31 @@ ipcMain.handle('leveling:market:levels', (_e, defId, opts) => {
     coverage: { total: 12, perguntadas: 6, comNivel: 6 }
   };
 });
+
+/**
+ * Nível das vendas listadas no ao vivo, por `listing_id`.
+ *
+ * O ao vivo mostra as vendas mais novas — justamente as que o enriquecedor de
+ * fundo ainda não perguntou. Sem este pedido sob demanda a linha diria
+ * "Topázio" e o preço ao lado seria ininterpretável, porque são quatro itens
+ * com esse nome e preços que no banco real vão de 999 a 4 milhões.
+ */
+ipcMain.handle('leveling:market:levels-for', (_e, listingIds) => {
+  marketCalls.push({ op: 'levels-for', listingIds });
+  // Só a primeira venda tem nível. A segunda fica sem, e é isso que o teste
+  // verifica: ausência é mostrada como ausência, não como "nv. 0".
+  return { levels: { '771': { level: 2, slot: '' } } };
+});
+
+/**
+ * A janela separada não pode ser criada no teste — ela carregaria `market.html`
+ * fora do alcance deste harness. Devolver `false` exercita o caminho de
+ * reserva, que é o que importa verificar: se a janela falhar, a tela ainda
+ * abre como modal em vez de não abrir.
+ */
+let marketWindowCalls = 0;
+ipcMain.handle('leveling:market:window', () => { marketWindowCalls++; return false; });
+ipcMain.handle('leveling:market:window-close', () => true);
 
 let marketOwnersOffline = false;
 ipcMain.handle('leveling:market:owners', (_e, defIds) => {
@@ -626,8 +662,13 @@ app.whenReady().then(async () => {
   await read('window.PioShell.openMarket()');
   await pause(600);
 
+  // O botão pede a janela separada: a tela serve para comparar preço enquanto
+  // se mexe no jogo, e como modal ela cobria os painéis.
+  assert.ok(marketWindowCalls > 0, 'The button must ask for a separate window');
+  // Aqui a janela não pode ser criada, e o caminho de reserva tem de valer:
+  // uma tela ruim de usar ainda é melhor do que uma tela que não abre.
   assert.equal(await read('document.getElementById("marketOverlay").classList.contains("show")'), true,
-    'The market modal must open');
+    'If the window cannot open, the modal must still work');
   assert.equal(await read('document.querySelectorAll("#marketBody .mk-table tbody tr").length'), 2,
     'Each item must be one row');
   assert.ok(await read('document.getElementById("marketStatusBar").textContent.includes("1.500")'),
@@ -766,6 +807,27 @@ app.whenReady().then(async () => {
   await pause(500);
   assert.equal(await read('window.PioMarket.view'), 'live');
   assert.ok(marketCalls.some(c => c.op === 'recent'), 'The live tab must read raw sales');
+
+  // Nível na linha da venda. Sem isto "Topázio" ao lado de 999 é
+  // ininterpretável: são quatro itens com esse nome, e no banco real um deles
+  // vale 999 e outro 4 milhões.
+  await pause(500);
+  const pedido = marketCalls.find(c => c.op === 'levels-for');
+  assert.ok(pedido, 'The live tab must ask for the level of the sales on screen');
+  assert.ok(pedido.listingIds.includes(771) && pedido.listingIds.includes(772),
+    'It must ask by listing_id, which is the only key the sale feed carries');
+  const aoVivo = await read(`document.querySelector('#marketBody .mk-live').textContent`);
+  assert.ok(aoVivo.includes('nv. 2'), 'The discovered level must show next to the name');
+  assert.equal(await read(`document.querySelectorAll('#marketBody .mk-live .mk-nv').length`), 1,
+    'A sale whose level is still unknown must show nothing, never "nv. 0"');
+  // O que já tem resposta não é perguntado outra vez.
+  const antes = marketCalls.filter(c => c.op === 'levels-for').length;
+  await read(`window.PioMarket.loadSaleLevels(window.PioMarket.data.sales)`);
+  await pause(300);
+  assert.equal(marketCalls.filter(c => c.op === 'levels-for').length, antes + 1,
+    'Only the sales still missing a level may be asked again');
+  assert.ok(marketCalls.filter(c => c.op === 'levels-for').pop().listingIds.every(id => id !== 771),
+    'The sale that already has a level must not be asked again');
 
   // Aba "Minha bolsa": a soma que decide se vale abrir o jogo.
   await read(`document.querySelector('#marketBody [data-view="bolsa"]').click()`);

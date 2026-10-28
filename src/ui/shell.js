@@ -568,8 +568,26 @@
   /**
    * Preços do mercado. Não recebe contas: o feed de vendas é global e o banco
    * é um só para o launcher inteiro — não há o que selecionar.
+   *
+   * Abre em janela própria. A tela serve para comparar preço *enquanto* se
+   * decide o que vender no jogo, e como modal ela cobria os painéis: era
+   * preciso fechá-la para olhar o inventário, e então o preço sumia. Janela de
+   * verdade dá para pôr ao lado, ou no outro monitor, e clicar no jogo sem que
+   * ela desapareça.
+   *
+   * O modal continua no documento e é o caminho de reserva: se a janela não
+   * puder ser criada, a tela ainda abre — ruim de usar é melhor que ausente.
    */
   function openMarket() {
+    if (api.marketWindow) {
+      api.marketWindow().then(ok => { if (!ok) openMarketModal(); })
+        .catch(() => openMarketModal());
+      return;
+    }
+    openMarketModal();
+  }
+
+  function openMarketModal() {
     if (!marketOverlay || !window.PioMarket) return;
     if (!marketReady) {
       marketReady = true;
