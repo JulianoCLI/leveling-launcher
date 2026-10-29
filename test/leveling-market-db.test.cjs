@@ -68,6 +68,64 @@ test('quantidade ausente conta como uma unidade', () => {
   assert.equal(normalizeSale({ id: '1', def_id: 'x' }).quantity, 1);
 });
 
+// ------------------------------------------------------------- câmbio
+//
+// Medido no banco real: em `MARKET_KIND_EXCHANGE` o servidor manda
+// `unit_price == total`, ou seja o campo carrega o preço do **lote**. A tela
+// mostrava o mesmo número em "Unitário" e "Total", e um pacote de 10
+// diamantes por 3,78 M parecia custar 3,78 M por diamante — dez vezes o preço
+// real, e exatamente ao contrário do que a oferta significa.
+
+/** Pacote de câmbio como o servidor manda. */
+const cambio = (id, qtd, totalOuro) => ({
+  id: String(id),
+  kind: 'MARKET_KIND_EXCHANGE',
+  def_id: 'cambio:diamante',
+  name: 'Diamante',
+  category: 'cambio',
+  currency: 'MARKET_CURRENCY_GOLD',
+  quantity: String(qtd),
+  unit_price: String(totalOuro),
+  total: String(totalOuro),
+  fee: '0',
+  net: String(totalOuro),
+  sold_at_ms: String(Date.now())
+});
+
+test('em câmbio o unitário é derivado do lote, não copiado do total', () => {
+  assert.equal(normalizeSale(cambio(1, 10, 3780000)).unit_price, 378000);
+  // Lote de um não tem o que dividir: o número do servidor já é o unitário.
+  assert.equal(normalizeSale(cambio(2, 1, 380000)).unit_price, 380000);
+});
+
+test('item comum mantém o unitário do servidor', () => {
+  // Aqui `total` pode diferir de `unit_price * quantity` — 3.443 de pó arcano
+  // por 500 de ouro — mas o unitário já é o arredondamento do próprio
+  // servidor, e recalculá-lo daria zero.
+  const linha = normalizeSale({
+    id: '3', kind: 'MARKET_KIND_ITEM', def_id: 'po-arcano',
+    quantity: '3443', unit_price: '1', total: '500'
+  });
+  assert.equal(linha.unit_price, 1);
+});
+
+test('o câmbio já gravado com o preço do lote é corrigido na abertura', () => {
+  // O histórico é insubstituível: o servidor só lembra meia hora. Corrigir
+  // apenas na entrada deixaria meses de vendas mentindo para sempre.
+  const db = abrir();
+  db.db.exec(`
+    INSERT INTO sales (id, kind, def_id, name, currency, quantity, unit_price, total, sold_at_ms, seen_at_ms)
+    VALUES (90, 'MARKET_KIND_EXCHANGE', 'cambio:diamante', 'Diamante',
+            'MARKET_CURRENCY_GOLD', 10, 3780000, 3780000, ${Date.now()}, ${Date.now()})
+  `);
+  // `open` numa base em memória criaria outra base vazia; a correção mora em
+  // `migrate`, que é o que a reabertura de verdade executa.
+  db.migrate();
+  const linha = db.db.prepare('SELECT unit_price FROM sales WHERE id = 90').get();
+  assert.equal(linha.unit_price, 378000);
+  db.close();
+});
+
 // ------------------------------------------------------------- deduplicação
 
 test('reler o mesmo feed não duplica nada', () => {

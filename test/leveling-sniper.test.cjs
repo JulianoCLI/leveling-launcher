@@ -10,6 +10,9 @@ const {
   searchesFor,
   matches,
   plan,
+  isExchange,
+  unitPriceOf,
+  EXCHANGE_DEFS,
   MIN_INTERVAL_MS,
   MAX_INTERVAL_MS,
   DEFAULT_INTERVAL_MS
@@ -136,6 +139,82 @@ test('regra sem def_id busca por nome', () => {
   const [busca] = searchesFor(normalizeRule({ name: 'Topázio', maxGold: 10 }));
   assert.equal(busca.name, 'Topázio');
   assert.equal(busca.defId, undefined);
+});
+
+// ------------------------------------------------------------- câmbio
+//
+// Diamante não é um item: é `MARKET_KIND_EXCHANGE`, e o `content_catalog` não
+// o lista. Dois problemas distintos saem daí — a regra não tinha como ser
+// criada, e o preço unitário do servidor mente para lotes.
+
+/** Pacote de câmbio como o servidor manda: 10 diamantes por 3.780.000 de ouro. */
+const cambio = patch => ({
+  id: '900',
+  def_id: 'cambio:diamante',
+  name: 'Diamante',
+  kind: 'MARKET_KIND_EXCHANGE',
+  status: 'MARKET_STATUS_ACTIVE',
+  quantity: 10,
+  // Medido: nos anúncios de câmbio o servidor repete o preço do lote aqui.
+  unit_price: 3780000,
+  total: 3780000,
+  ...patch
+});
+
+test('o câmbio tem entrada própria: o catálogo do jogo não traz diamante', () => {
+  assert.ok(EXCHANGE_DEFS['cambio:diamante'], 'Diamante precisa ser oferecível como regra');
+  // A moeda é cruzada, e errar isso mandaria o teto para o campo errado.
+  assert.equal(EXCHANGE_DEFS['cambio:diamante'].currency, 'gold');
+  assert.equal(EXCHANGE_DEFS['cambio:gold'].currency, 'diamond');
+});
+
+test('o câmbio é reconhecido pelo kind e pelo def_id', () => {
+  assert.equal(isExchange(cambio()), true);
+  assert.equal(isExchange({ def_id: 'cambio:gold' }), true);
+  assert.equal(isExchange(listing()), false);
+});
+
+test('em câmbio o unitário é o lote dividido, não o que o servidor manda', () => {
+  // Sem isto um pacote de 10 pareceria custar 3,78 M por diamante, dez vezes
+  // o preço real — e o sniper recusaria justamente a oferta mais barata.
+  assert.equal(unitPriceOf(cambio()), 378000);
+  // Lote de um não tem o que dividir: o número do servidor já é o unitário.
+  assert.equal(unitPriceOf(cambio({ quantity: 1, unit_price: 380000, total: 380000 })), 380000);
+  // Item comum não é tocado: ali o unitário do servidor é verdade.
+  assert.equal(unitPriceOf(listing({ unit_price: 900, total: 900, quantity: 1 })), 900);
+});
+
+test('o pacote de câmbio é comprado quando o preço por unidade cabe no teto', () => {
+  const r = normalizeRule({ defId: 'cambio:diamante', maxGold: 400000 });
+  const v = matches(cambio(), r);
+  assert.equal(v.ok, true, 'O teto é por diamante, e 378 k cabe em 400 k');
+  assert.equal(v.unitPrice, 378000);
+  // O total é o do lote inteiro: é o que sai da conta.
+  assert.equal(v.total, 3780000);
+});
+
+test('pacote de câmbio caro é recusado pelo preço por unidade', () => {
+  const r = normalizeRule({ defId: 'cambio:diamante', maxGold: 300000 });
+  assert.equal(matches(cambio(), r).reason, 'price.high');
+});
+
+test('a busca de câmbio manda o kind e omite o teto de preço', () => {
+  const [busca] = searchesFor(normalizeRule({ defId: 'cambio:diamante', maxGold: 400000 }));
+  assert.equal(busca.kind, 'MARKET_KIND_EXCHANGE',
+    'Sem o kind a busca por def_id não alcança o câmbio');
+  // `price_max` compara contra o unit_price cru, que em câmbio é o do lote:
+  // mandá-lo derrubaria todo pacote e deixaria só a unidade avulsa.
+  assert.equal(busca.priceMax, undefined);
+});
+
+test('o plano de câmbio ordena pelo preço por unidade, não pelo do lote', () => {
+  const r = normalizeRule({ defId: 'cambio:diamante', maxGold: 400000 });
+  // O avulso custa menos no total e mais por diamante. Ordenar pelo lote
+  // poria o pior negócio em primeiro lugar.
+  const avulso = cambio({ id: '901', quantity: 1, unit_price: 395000, total: 395000 });
+  const { buys } = plan([avulso, cambio()], r);
+  assert.equal(buys[0].id, '900', 'O pacote sai mais barato por diamante');
+  assert.equal(buys[0].unitPrice, 378000);
 });
 
 // ------------------------------------------------------------- casamento

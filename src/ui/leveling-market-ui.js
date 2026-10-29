@@ -104,6 +104,26 @@
 
   const moeda = c => (String(c || '').includes('DIAMOND') ? '💎' : '🪙');
 
+  /**
+   * Preço por unidade de um anúncio à venda.
+   *
+   * Em `MARKET_KIND_EXCHANGE` o servidor repete o preço do lote em
+   * `unit_price` — medido: um pacote de 10 diamantes por 3.780.000 chega com
+   * `unit_price` e `total` iguais. O mesmo conserto que `leveling-market-db`
+   * faz nas vendas gravadas, aqui para os anúncios abertos, que não passam
+   * pelo banco.
+   */
+  const unitPedido = l => {
+    const unit = Number(l && l.unit_price) || 0;
+    const cambio = String((l && l.kind) || '').endsWith('_EXCHANGE')
+      || String((l && l.def_id) || '').startsWith('cambio:');
+    if (!cambio) return unit;
+    const total = Number(l.total) || 0;
+    const qty = Number(l.quantity) || 0;
+    if (total <= 0 || qty <= 1) return unit;
+    return Math.max(1, Math.round(total / qty));
+  };
+
   /** Rótulos dos atributos base, para a ficha do item. */
   const STATS = {
     atk: 'ATQ', def: 'DEF', hp: 'HP', mp: 'MP', crit: 'Crít.',
@@ -1254,9 +1274,14 @@
               const rar = i ? this.catalog.rarities[i.rarity] : null;
               const cor = (rank && rank.color) || (rar && rar.color) || '';
               const estilo = cor ? ` style="color:${escape(cor)}"` : '';
+              // Câmbio manda o preço do lote em `unit_price` (medido:
+              // `unit_price == total` num pacote de 10). Repetir o número
+              // aqui diria que o pacote custa dez vezes mais por unidade do
+              // que o avulso, quando ele é justamente o mais barato.
+              const unit = unitPedido(l);
               return `
                 <tr>
-                  <td class="mk-c-p mk-strong" title="${cheio(l.unit_price)}">${moeda(l.currency)} ${curto(l.unit_price)}</td>
+                  <td class="mk-c-p mk-strong" title="${cheio(unit)}">${moeda(l.currency)} ${curto(unit)}</td>
                   <td class="mk-c-n">${curto(l.quantity)}</td>
                   ${sombra ? `
                     <td class="mk-c-n">${(s && s.level) || '—'}</td>

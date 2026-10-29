@@ -40,6 +40,48 @@ const int = (value, fallback = 0) => {
 const str = v => (typeof v === 'string' ? v.trim() : '');
 
 /**
+ * Câmbio: os dois anúncios que o mercado tem e que o catálogo do jogo não.
+ *
+ * `content_catalog` lista 180 itens e nenhum deles é diamante — câmbio é
+ * `MARKET_KIND_EXCHANGE`, uma oferta de moeda por moeda, não um `ItemDef`.
+ * Por isso digitar "diamante" no sniper não sugeria nada: não havia o que
+ * sugerir. As duas entradas são fixas porque o servidor não as publica em
+ * lugar nenhum; os `def_id` são os que o feed de vendas usa, medidos.
+ *
+ * A moeda é a do anúncio, e é cruzada: quem vende diamante cobra ouro.
+ */
+const EXCHANGE_DEFS = {
+  'cambio:diamante': { name: 'Diamante (câmbio)', currency: 'gold' },
+  'cambio:gold': { name: 'Ouro (câmbio)', currency: 'diamond' }
+};
+
+/** O anúncio é câmbio? Vale pelo `kind` do servidor e pelo `def_id`. */
+function isExchange(target) {
+  const t = target || {};
+  if (String(t.kind || '').endsWith('_EXCHANGE')) return true;
+  return String(t.def_id || t.defId || '').startsWith('cambio:');
+}
+
+/**
+ * Preço por unidade de um anúncio.
+ *
+ * Em `MARKET_KIND_EXCHANGE` o `unit_price` do servidor é o preço do **lote**:
+ * medido, um pacote de 10 diamantes por 3.780.000 chega com `unit_price` e
+ * `total` ambos em 3.780.000. Comparar isso contra um teto por diamante faria
+ * o sniper recusar todo pacote e só comprar unidade avulsa — justamente a
+ * forma mais cara.
+ */
+function unitPriceOf(listing) {
+  const l = listing || {};
+  const unit = int(l.unit_price);
+  if (!isExchange(l)) return unit;
+  const total = int(l.total);
+  const qty = int(l.quantity);
+  if (total <= 0 || qty <= 1) return unit;
+  return Math.max(1, Math.round(total / qty));
+}
+
+/**
  * Moeda do anúncio, normalizada.
  *
  * proto3 omite o enum zero, então um anúncio em ouro chega **sem** o campo
@@ -186,12 +228,24 @@ function searchesFor(rule) {
   base.sort = 'preco-asc';
   base.page = 1;
 
+  // Câmbio é um `kind` próprio, e sem ele a busca por `def_id` não alcança
+  // nada: `cambio:diamante` não é um `ItemDef`, e o servidor separa os dois
+  // conjuntos. `MARKET_KIND_ITEM` não é mandado no caso comum porque hoje a
+  // regra pode mirar uma sombra, que também não é item.
+  const cambio = isExchange(rule);
+  if (cambio) base.kind = 'MARKET_KIND_EXCHANGE';
+
   const out = [];
+  // `price_max` do servidor compara contra o `unit_price` cru — que em câmbio
+  // é o preço do lote. Mandar o teto por diamante ali derrubaria todo pacote
+  // e deixaria passar só a unidade avulsa. Em câmbio o corte fica com
+  // `matches`, que divide pelo tamanho do lote antes de comparar.
+  const teto = (max) => (cambio ? {} : { priceMax: max });
   if (rule.maxGold) {
-    out.push({ ...base, currency: 'MARKET_CURRENCY_GOLD', priceMax: rule.maxGold });
+    out.push({ ...base, currency: 'MARKET_CURRENCY_GOLD', ...teto(rule.maxGold) });
   }
   if (rule.maxDiamond) {
-    out.push({ ...base, currency: 'MARKET_CURRENCY_DIAMOND', priceMax: rule.maxDiamond });
+    out.push({ ...base, currency: 'MARKET_CURRENCY_DIAMOND', ...teto(rule.maxDiamond) });
   }
   return out;
 }
@@ -231,7 +285,7 @@ function matches(listing, rule) {
   const ceiling = ceilingFor(rule, currency);
   if (!ceiling) return { ok: false, reason: 'currency.off' };
 
-  const unit = int(l.unit_price);
+  const unit = unitPriceOf(l);
   if (!unit) return { ok: false, reason: 'price.unknown' };
   if (unit > ceiling) return { ok: false, reason: 'price.high' };
 
@@ -267,7 +321,7 @@ function plan(listings, rule) {
   // Mais barato primeiro. A busca já devolve assim, mas a ordenação é do
   // servidor e aqui ela é o que decide quem leva a quantidade restante.
   const ordenados = [...(listings || [])].sort(
-    (a, b) => int(a.unit_price) - int(b.unit_price)
+    (a, b) => unitPriceOf(a) - unitPriceOf(b)
   );
 
   for (const listing of ordenados) {
@@ -304,6 +358,9 @@ module.exports = {
   matches,
   plan,
   ruleId,
+  isExchange,
+  unitPriceOf,
+  EXCHANGE_DEFS,
   MIN_INTERVAL_MS,
   MAX_INTERVAL_MS,
   DEFAULT_INTERVAL_MS,

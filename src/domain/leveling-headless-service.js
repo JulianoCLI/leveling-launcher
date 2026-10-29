@@ -147,6 +147,13 @@ const SNIPER_RESOLVE_MAX = 10;
  * número é o que `encode` aceita — `verify` recusa o nome, igual às tiers de
  * poção no refill.
  */
+/** Tipos de anúncio por número. Mesma razão das moedas: `verify` recusa nome. */
+const MARKET_KIND_NUM = {
+  MARKET_KIND_ITEM: 1,
+  MARKET_KIND_SHADOW: 2,
+  MARKET_KIND_EXCHANGE: 3
+};
+
 const MARKET_CURRENCY_NUM = {
   MARKET_CURRENCY_GOLD: 1,
   MARKET_CURRENCY_DIAMOND: 2,
@@ -1805,6 +1812,13 @@ class LevelingHeadlessClient extends EventEmitter {
     if (filtros.defId) value.def_id = String(filtros.defId);
     if (filtros.rarity) value.rarity = String(filtros.rarity);
     if (filtros.sort) value.sort = String(filtros.sort);
+    // `kind` pelo número, pelo mesmo motivo da moeda logo abaixo. O sniper
+    // precisa dele para alcançar o câmbio: `cambio:diamante` não é um item,
+    // e sem o `kind` a busca por `def_id` não devolve nada.
+    if (filtros.kind) {
+      const k = MARKET_KIND_NUM[filtros.kind];
+      if (k) value.kind = k;
+    }
     // Moeda pelo número, não pelo nome. `decode` entrega enums como string,
     // mas `ClientMessage.verify` recusa string na codificação — medido:
     // "enum value expected". O mesmo cuidado que `leveling-refill.js` já toma
@@ -2954,6 +2968,8 @@ module.exports = {
   REFILL_INTERVAL_MS,
   REFILL_BACKOFF_MS,
   MARKET_POLL_MS,
+  MARKET_KIND_NUM,
+  MARKET_CURRENCY_NUM,
   SNIPER_LOG_MAX,
   SNIPER_RESOLVE_MAX,
   SNIPER_LOST_CODES,

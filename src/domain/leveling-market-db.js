@@ -112,6 +112,33 @@ const num = v => {
   const n = Number(v);
   return Number.isFinite(n) ? Math.trunc(n) : 0;
 };
+
+/** Anúncio de câmbio. O `kind` do protobuf, como o `decode` o entrega. */
+const KIND_EXCHANGE = 'MARKET_KIND_EXCHANGE';
+
+/**
+ * Preço por unidade de uma venda de câmbio.
+ *
+ * Medido: em `MARKET_KIND_EXCHANGE` o servidor manda `unit_price == total` —
+ * o campo carrega o preço do **lote**, não o da unidade. Um pacote de 10
+ * diamantes por 3.780.000 chegava como "unitário 3.780.000", e a tela
+ * mostrava o mesmo número nas duas colunas; ao lado de um pacote de 1 por
+ * 380.000 isso dizia que comprar dez saía dez vezes mais caro por diamante,
+ * quando na verdade sai ligeiramente mais barato.
+ *
+ * Só câmbio é tocado. Item comum também aparece com `total` diferente de
+ * `unit_price * quantity` (3.443 de pó arcano por 500 de ouro), mas ali o
+ * número é verdade: o preço por unidade é menor que 1 e o inteiro já é o
+ * arredondamento do próprio servidor.
+ */
+function unitPriceOf(sale) {
+  const unit = num(sale.unit_price);
+  if (String(sale.kind || '') !== KIND_EXCHANGE) return unit;
+  const total = num(sale.total);
+  const qty = num(sale.quantity);
+  if (total <= 0 || qty <= 1) return unit;
+  return Math.max(1, Math.round(total / qty));
+}
 const str = v => (typeof v === 'string' ? v : v == null ? '' : String(v));
 
 /**
@@ -138,7 +165,7 @@ function normalizeSale(sale) {
     enchant: num(sale.enchant),
     currency: str(sale.currency),
     quantity: num(sale.quantity) || 1,
-    unit_price: num(sale.unit_price),
+    unit_price: unitPriceOf(sale),
     total: num(sale.total),
     fee: num(sale.fee),
     net: num(sale.net),
@@ -244,6 +271,23 @@ class MarketDatabase {
       this.db.exec(`
         CREATE INDEX IF NOT EXISTS idx_sales_sem_nivel
         ON sales(sold_at_ms DESC) WHERE level IS NULL
+      `);
+    } catch {}
+
+    // Câmbio gravado antes de `unitPriceOf` existir: o preço do lote estava na
+    // coluna do unitário. Corrigir só na entrada deixaria o histórico — que é
+    // quase todo o banco, e insubstituível — mentindo para sempre.
+    //
+    // A condição se auto-desarma: depois do UPDATE `unit_price` deixa de ser
+    // igual a `total`, e a segunda abertura não encontra linha nenhuma.
+    try {
+      this.db.exec(`
+        UPDATE sales
+           SET unit_price = MAX(1, CAST(ROUND(CAST(total AS REAL) / quantity) AS INTEGER))
+         WHERE kind = '${KIND_EXCHANGE}'
+           AND quantity > 1
+           AND total > 0
+           AND unit_price = total
       `);
     } catch {}
   }
@@ -780,7 +824,9 @@ module.exports = {
   MarketDatabase,
   getMarketDb,
   normalizeSale,
+  unitPriceOf,
   DB_FILE,
+  KIND_EXCHANGE,
   CAMBIO_PREFIX,
   CURRENCY_DIAMOND
 };

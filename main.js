@@ -874,7 +874,11 @@ ipcMain.handle('leveling:sniper:get', event => {
       minIntervalMs: levelingSniper.MIN_INTERVAL_MS,
       maxIntervalMs: levelingSniper.MAX_INTERVAL_MS,
       maxRules: levelingSniper.MAX_RULES
-    }
+    },
+    // Câmbio não está no `content_catalog` — é `MARKET_KIND_EXCHANGE`, não
+    // um `ItemDef` —, então a tela nunca teria como sugerir "diamante". A
+    // lista vem do domínio para a busca por nome alcançá-lo.
+    exchanges: levelingSniper.EXCHANGE_DEFS
   };
 });
 

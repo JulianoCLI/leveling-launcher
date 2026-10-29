@@ -78,6 +78,15 @@
      * travar o formulário atrás de um login que pode não acontecer seria pior.
      */
     catalog: { items: {}, rarities: {}, origin: '' },
+    /**
+     * Câmbio: diamante e ouro vendidos um pelo outro.
+     *
+     * Vem do processo principal, não do catálogo do jogo, porque não está
+     * lá: `content_catalog` traz 180 `ItemDef` e nenhum é diamante. Sem esta
+     * lista, digitar "diamante" no campo de item não sugeria nada e a regra
+     * só podia ser criada por nome solto — que não casa com o `def_id` real.
+     */
+    exchanges: {},
     /** Rascunho do formulário, para a repintura não apagar o que foi digitado. */
     draft: { search: '', defId: '', name: '', maxGold: '', maxDiamond: '', target: '0', account: 0 },
     /** Sugestões abertas sob o campo de busca. */
@@ -138,6 +147,7 @@
       this.log = res.log || [];
       this.stats = res.stats || null;
       if (res.limits) this.limits = res.limits;
+      if (res.exchanges) this.exchanges = res.exchanges;
       // Conta padrão do formulário: a primeira em modo monitor, que é a única
       // que pode pagar agora. Sem nenhuma, a primeira configurada.
       const viva = this.accounts.find(a => a.connected);
@@ -169,6 +179,13 @@
         return;
       }
       const out = [];
+      // Câmbio primeiro e fora do teto de 40: são duas linhas, e enterrá-las
+      // atrás do corte do catálogo recriaria o problema que elas resolvem.
+      for (const [id, def] of Object.entries(this.exchanges)) {
+        const nome = String((def && def.name) || id);
+        if (!nome.toLowerCase().includes(alvo) && !id.toLowerCase().includes(alvo)) continue;
+        out.push({ defId: id, name: nome, rarity: '', icon: '', exchange: true });
+      }
       for (const [id, def] of Object.entries(this.catalog.items)) {
         const nome = String((def && def.name) || id);
         if (!nome.toLowerCase().includes(alvo) && !id.toLowerCase().includes(alvo)) continue;
@@ -187,13 +204,19 @@
 
     /** Escolheu um item da lista: a regra passa a ter `def_id`. */
     pick(defId) {
-      const def = this.catalog.items[defId];
+      const cambio = this.exchanges[defId];
+      const def = cambio || this.catalog.items[defId];
       this.draft.defId = defId;
       this.draft.name = (def && def.name) || defId;
       this.draft.search = this.draft.name;
       this.sugestoes = [];
       this.renderForm();
-      const campo = document.getElementById('snMaxGold');
+      // O foco vai para o teto da moeda que de fato paga por este anúncio.
+      // Em câmbio ela é cruzada — diamante se compra com ouro —, e mandar o
+      // cursor para o campo errado faria a regra nascer sem critério.
+      const campo = document.getElementById(
+        cambio && cambio.currency === 'diamond' ? 'snMaxDiamond' : 'snMaxGold'
+      );
       if (campo) campo.focus();
     },
 
@@ -377,7 +400,9 @@
             ? `<img src="${escape(src)}" alt="" width="22" height="22" loading="lazy" decoding="async" onerror="this.remove()">`
             : ''}</span>
             <b${cor}>${escape(s.name)}</b>
-            <small>${escape(s.defId)}</small>
+            <small>${s.exchange
+            ? `câmbio · teto por unidade em ${this.exchanges[s.defId].currency === 'diamond' ? '💎' : '🪙'}`
+            : escape(s.defId)}</small>
           </button></li>`;
         }).join('')}</ul>`
         : '';
