@@ -1,0 +1,311 @@
+/**
+ * @file leveling-sniper.js
+ * Regras do sniper de mercado. Decide, não compra.
+ *
+ * Mesma separação do `leveling-refill.js`, e pelo mesmo motivo: a parte que
+ * precisa de teste é a regra ("este anúncio está abaixo do meu teto e ainda
+ * falta quantidade para o alvo?"), e a parte que precisa de socket é o
+ * serviço. Aqui não há rede, nem tempo, nem estado global.
+ *
+ * O que uma regra diz:
+ *   - qual item (`defId` do catálogo, ou `name` quando o usuário digitou sem
+ *     escolher da lista);
+ *   - teto de **preço unitário**, um por moeda: `maxGold` e `maxDiamond`.
+ *     Zero desliga aquela moeda — um teto de zero significaria "compre de
+ *     graça", que não é um pedido possível;
+ *   - `target`: quantas unidades comprar ao todo. **Zero é infinito**, o que
+ *     o usuário pediu explicitamente: "vai comprar sempre";
+ *   - `account`: qual conta paga. Por regra, não global: a conta que tem ouro
+ *     para material barato não é a que o usuário quer gastando em equipamento;
+ *   - `bought`: quanto já foi comprado. Fica gravado junto da regra de
+ *     propósito — se o contador vivesse só em memória, reabrir o launcher
+ *     zeraria o alvo e a compra aconteceria de novo.
+ */
+
+'use strict';
+
+/** Mínimo e máximo do intervalo de verificação, em milissegundos. */
+const MIN_INTERVAL_MS = 1000;
+const MAX_INTERVAL_MS = 60000;
+const DEFAULT_INTERVAL_MS = 5000;
+
+/** Teto de regras. Cada regra é uma busca por tique; a lista é o tráfego. */
+const MAX_RULES = 30;
+
+const int = (value, fallback = 0) => {
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+};
+
+const str = v => (typeof v === 'string' ? v.trim() : '');
+
+/**
+ * Moeda do anúncio, normalizada.
+ *
+ * proto3 omite o enum zero, então um anúncio em ouro chega **sem** o campo
+ * `currency` — é o mesmo cuidado que o banco de vendas já toma. Tratar a
+ * ausência como diamante faria o sniper comparar o preço contra o teto errado.
+ */
+function currencyOf(listing) {
+  const raw = String((listing && listing.currency) || '');
+  if (raw.includes('DIAMOND')) return 'diamond';
+  if (raw.includes('TOKEN')) return 'token';
+  return 'gold';
+}
+
+/** Configuração vazia: desligada, sem regra nenhuma. */
+function defaultConfig() {
+  return { enabled: false, intervalMs: DEFAULT_INTERVAL_MS, rules: [] };
+}
+
+/**
+ * Chave estável de uma regra.
+ *
+ * Serve para o contador de comprados sobreviver a uma reordenação da lista na
+ * tela: o índice não serve, porque apagar a primeira regra deslocaria o
+ * contador de todas as outras.
+ */
+function ruleId(rule) {
+  const id = str(rule && rule.id);
+  if (id) return id;
+  const alvo = str(rule && rule.defId) || str(rule && rule.name).toLowerCase();
+  return `r:${alvo}`;
+}
+
+/**
+ * Normaliza uma regra vinda do disco ou da interface.
+ *
+ * Devolve `null` para o que não dá para executar — sem item não há busca, e
+ * sem nenhum teto de preço não há critério de compra. Descartar é melhor que
+ * guardar uma regra que nunca dispara e que o usuário acha que está ligada.
+ */
+function normalizeRule(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const defId = str(source.defId);
+  const name = str(source.name);
+  if (!defId && !name) return null;
+
+  const maxGold = int(source.maxGold);
+  const maxDiamond = int(source.maxDiamond);
+  if (!maxGold && !maxDiamond) return null;
+
+  const minLevel = int(source.minLevel);
+  const rule = {
+    id: ruleId(source),
+    defId,
+    name,
+    maxGold,
+    maxDiamond,
+    minLevel,
+    // Um máximo menor que o mínimo é erro de digitação, não pedido: o teto
+    // sobe para o piso em vez de a regra nunca casar com nada.
+    maxLevel: (() => {
+      const max = int(source.maxLevel);
+      return max && max < minLevel ? minLevel : max;
+    })(),
+    /** Zero é infinito. */
+    target: int(source.target),
+    bought: int(source.bought),
+    account: int(source.account),
+    enabled: source.enabled === undefined ? true : !!source.enabled
+  };
+  return rule;
+}
+
+/**
+ * Normaliza a configuração inteira.
+ *
+ * Regras repetidas no mesmo item são fundidas pela chave: duas linhas para o
+ * mesmo item com tetos diferentes só dobrariam o tráfego de busca, e qual das
+ * duas vence seria imprevisível.
+ */
+function normalizeConfig(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const lista = Array.isArray(source.rules) ? source.rules : [];
+
+  const porChave = new Map();
+  for (const bruta of lista) {
+    const rule = normalizeRule(bruta);
+    if (!rule) continue;
+    porChave.set(rule.id, rule);
+    if (porChave.size >= MAX_RULES) break;
+  }
+
+  return {
+    enabled: !!source.enabled,
+    intervalMs: Math.min(MAX_INTERVAL_MS, Math.max(MIN_INTERVAL_MS,
+      int(source.intervalMs, DEFAULT_INTERVAL_MS) || DEFAULT_INTERVAL_MS)),
+    rules: [...porChave.values()]
+  };
+}
+
+/** Vale ligar o loop? Sem regra ativa ele só geraria tráfego. */
+function isConfigured(config) {
+  const cfg = normalizeConfig(config);
+  return cfg.enabled && cfg.rules.some(r => r.enabled && remainingOf(r) !== 0);
+}
+
+/**
+ * Quantas unidades ainda faltam para o alvo. `Infinity` quando o alvo é zero,
+ * que é como o usuário pede "sempre".
+ */
+function remainingOf(rule) {
+  const target = int(rule && rule.target);
+  if (!target) return Infinity;
+  return Math.max(0, target - int(rule && rule.bought));
+}
+
+/** Teto de preço unitário da regra para a moeda do anúncio. */
+function ceilingFor(rule, currency) {
+  if (currency === 'gold') return int(rule && rule.maxGold);
+  if (currency === 'diamond') return int(rule && rule.maxDiamond);
+  // Token não tem campo próprio: nenhuma tela do launcher o oferece, e
+  // adivinhar um teto para ele seria gastar uma moeda que ninguém configurou.
+  return 0;
+}
+
+/**
+ * Filtros de busca da regra.
+ *
+ * `price_max` é mandado ao servidor em vez de filtrado aqui: a busca volta
+ * ordenada por preço e já sem o que não interessa, e isso é a diferença entre
+ * ler uma página e paginar o mercado inteiro atrás de uma pechincha. O filtro
+ * local continua existindo — `matches` não confia na resposta.
+ *
+ * Uma moeda por busca, porque `MarketSearch.currency` é um campo só. Quando a
+ * regra tem os dois tetos, saem duas buscas.
+ */
+function searchesFor(rule) {
+  const base = {};
+  if (rule.defId) base.defId = rule.defId;
+  else base.name = rule.name;
+  if (rule.minLevel) base.levelMin = rule.minLevel;
+  if (rule.maxLevel) base.levelMax = rule.maxLevel;
+  // Mais barato primeiro: a primeira linha da resposta é a que interessa, e
+  // se ela já está acima do teto nenhuma das outras está abaixo.
+  base.sort = 'preco-asc';
+  base.page = 1;
+
+  const out = [];
+  if (rule.maxGold) {
+    out.push({ ...base, currency: 'MARKET_CURRENCY_GOLD', priceMax: rule.maxGold });
+  }
+  if (rule.maxDiamond) {
+    out.push({ ...base, currency: 'MARKET_CURRENCY_DIAMOND', priceMax: rule.maxDiamond });
+  }
+  return out;
+}
+
+/**
+ * Este anúncio serve para esta regra?
+ *
+ * Devolve `{ok:false, reason}` em vez de um booleano porque o motivo é o que
+ * o log precisa mostrar: "apareceu e eu não comprei" sem dizer por quê é a
+ * informação inútil.
+ */
+function matches(listing, rule) {
+  const l = listing || {};
+  if (!rule || !rule.enabled) return { ok: false, reason: 'rule.off' };
+
+  // Anúncio da própria conta: comprar de si mesmo é pagar a taxa de venda por
+  // nada. O servidor recusa, mas o log ficaria cheio de erros.
+  if (l.mine) return { ok: false, reason: 'listing.mine' };
+  if (l.offer_only) return { ok: false, reason: 'listing.offerOnly' };
+
+  const status = String(l.status || '');
+  if (status && !status.endsWith('_ACTIVE') && !status.endsWith('_UNSPECIFIED')) {
+    return { ok: false, reason: 'listing.closed' };
+  }
+
+  if (rule.defId) {
+    if (String(l.def_id || '') !== rule.defId) return { ok: false, reason: 'item.other' };
+  } else if (!String(l.name || '').toLowerCase().includes(rule.name.toLowerCase())) {
+    return { ok: false, reason: 'item.other' };
+  }
+
+  const level = int(l.level);
+  if (rule.minLevel && level < rule.minLevel) return { ok: false, reason: 'level.low' };
+  if (rule.maxLevel && level > rule.maxLevel) return { ok: false, reason: 'level.high' };
+
+  const currency = currencyOf(l);
+  const ceiling = ceilingFor(rule, currency);
+  if (!ceiling) return { ok: false, reason: 'currency.off' };
+
+  const unit = int(l.unit_price);
+  if (!unit) return { ok: false, reason: 'price.unknown' };
+  if (unit > ceiling) return { ok: false, reason: 'price.high' };
+
+  const restante = remainingOf(rule);
+  if (restante <= 0) return { ok: false, reason: 'target.done' };
+
+  // Lote maior que o que falta: compra-se só o pedaço. `MarketBuy.quantity`
+  // aceita compra parcial — `MarketBought.remaining` é o que sobra no anúncio.
+  const disponivel = Math.max(1, int(l.quantity, 1));
+  const quantity = restante === Infinity ? disponivel : Math.min(disponivel, restante);
+
+  return { ok: true, currency, unitPrice: unit, quantity, total: unit * quantity };
+}
+
+/**
+ * Decide a lista de compras de uma rodada.
+ *
+ * Função pura: recebe os anúncios que a busca trouxe, devolve o que comprar e
+ * em que ordem. O alvo é descontado aqui, enquanto a lista é montada, porque
+ * duas linhas do mesmo item na mesma rodada não podem as duas pensar que o
+ * alvo inteiro está livre.
+ *
+ * @param {object[]} listings Anúncios, já de uma regra só.
+ * @param {object} rule Regra normalizada.
+ * @returns {{buys: object[], skipped: object[]}}
+ */
+function plan(listings, rule) {
+  const buys = [];
+  const skipped = [];
+  // Cópia: a regra de verdade só é alterada quando a compra confirma.
+  const simulada = { ...rule };
+
+  // Mais barato primeiro. A busca já devolve assim, mas a ordenação é do
+  // servidor e aqui ela é o que decide quem leva a quantidade restante.
+  const ordenados = [...(listings || [])].sort(
+    (a, b) => int(a.unit_price) - int(b.unit_price)
+  );
+
+  for (const listing of ordenados) {
+    const veredito = matches(listing, simulada);
+    if (!veredito.ok) {
+      skipped.push({ listing, reason: veredito.reason });
+      continue;
+    }
+    buys.push({
+      id: listing.id,
+      quantity: veredito.quantity,
+      unitPrice: veredito.unitPrice,
+      total: veredito.total,
+      currency: veredito.currency,
+      listing,
+      rule: simulada.id
+    });
+    simulada.bought = int(simulada.bought) + veredito.quantity;
+    if (remainingOf(simulada) <= 0) break;
+  }
+
+  return { buys, skipped };
+}
+
+module.exports = {
+  defaultConfig,
+  normalizeConfig,
+  normalizeRule,
+  isConfigured,
+  remainingOf,
+  ceilingFor,
+  currencyOf,
+  searchesFor,
+  matches,
+  plan,
+  ruleId,
+  MIN_INTERVAL_MS,
+  MAX_INTERVAL_MS,
+  DEFAULT_INTERVAL_MS,
+  MAX_RULES
+};

@@ -68,6 +68,19 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   onMarket: (cb) => ipcRenderer.on('leveling:market', (_e, data) => cb(data)),
   onMarketSold: (cb) => ipcRenderer.on('leveling:market-sold', (_e, data) => cb(data)),
 
+  // Sniper: compra sozinho o item que entrar abaixo do teto. A configuração
+  // inteira vai e volta junta — o interruptor é um campo dela, não um canal
+  // próprio, para a tela nunca mostrar "ligado" com regras não salvas.
+  sniperGet: () => ipcRenderer.invoke('leveling:sniper:get'),
+  sniperSet: (config) => ipcRenderer.invoke('leveling:sniper:set', config),
+  sniperPoll: () => ipcRenderer.invoke('leveling:sniper:poll'),
+  sniperLog: () => ipcRenderer.invoke('leveling:sniper:log'),
+  sniperLogClear: () => ipcRenderer.invoke('leveling:sniper:log-clear'),
+  sniperWindow: () => ipcRenderer.invoke('leveling:sniper:window'),
+  // Uma linha de log por acontecimento: anunciado, comprado, ou levado por
+  // outra pessoa. A tela aberta acompanha sem perguntar.
+  onSniper: (cb) => ipcRenderer.on('leveling:sniper', (_e, data) => cb(data)),
+
   // Auto-refill: uma configuração para todas as contas, sem índice.
   levelingGetRefill: () => ipcRenderer.invoke('leveling:refill:get'),
   levelingSetRefill: (config) => ipcRenderer.invoke('leveling:refill:set', config),

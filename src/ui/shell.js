@@ -601,6 +601,17 @@
     if (marketOverlay) marketOverlay.classList.remove('show');
   }
 
+  /**
+   * Sniper de mercado. Só janela própria, sem modal de reserva: o log existe
+   * para ser lido *enquanto* o jogo está na frente — é lá que o item chega —, e
+   * um modal sobre o launcher cobriria justamente isso. Sem a janela, a tela
+   * não teria para que servir.
+   */
+  function openSniper() {
+    if (!api.sniperWindow) return;
+    api.sniperWindow().catch(e => report('sniper', e));
+  }
+
   // ------------------------------------------------------------------- grupo
 
   /**
@@ -728,6 +739,8 @@
 
     const marketBtn = document.getElementById('marketBtn');
     if (marketBtn) marketBtn.onclick = () => openMarket();
+    const sniperBtn = document.getElementById('sniperBtn');
+    if (sniperBtn) sniperBtn.onclick = () => openSniper();
     if (marketOverlay) {
       document.getElementById('marketCloseBtn').onclick = closeMarket;
       document.getElementById('marketClose').onclick = closeMarket;
@@ -874,6 +887,7 @@
     closeHunt,
     openMarket,
     closeMarket,
+    openSniper,
     toggleHeadless,
     startMonitors,
     assembleParty,

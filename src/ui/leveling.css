@@ -1533,3 +1533,394 @@ body.market-standalone #marketModal {
     display: none;
   }
 }
+
+
+/* ------------------------------------------------------------------- sniper
+
+   A tela do sniper é três coisas numa página: o formulário de adicionar, a
+   lista do que está sendo caçado e o log. A ordem na tela é a ordem de uso, e
+   o log leva o espaço que sobra porque é o que se fica olhando.
+
+   Só janela, nunca modal — o log serve para ser lido com o jogo na frente — e
+   por isso aqui não há overlay escurecido nem largura máxima: a janela é a
+   moldura. */
+
+body.sniper-standalone {
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-bg-elevated);
+}
+
+#sniperOverlay {
+  display: none;
+  height: 100vh;
+}
+
+#sniperOverlay.show {
+  display: block;
+}
+
+#sniperModal {
+  height: 100vh;
+  box-sizing: border-box;
+  padding: 16px 18px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  color-scheme: var(--theme-color-scheme);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#sniperModal .lv-head h2 {
+  color: var(--color-text-primary);
+  font-size: 21px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 2px;
+  font-weight: 700;
+}
+
+#sniperModal .hint {
+  color: var(--color-text-secondary);
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+#sniperModal .sn-section {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--color-text-secondary);
+  flex: 0 0 auto;
+}
+
+/* ---------------------------------------------------- interruptor e números */
+
+#sniperModal .sn-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, .08));
+}
+
+#sniperModal .sn-master {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+#sniperModal .sn-stats {
+  color: var(--color-text-secondary);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+#sniperModal .sn-warn {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--color-warn, #e8b339);
+}
+
+/* ------------------------------------------------------------- formulário */
+
+#sniperModal .sn-form {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  padding: 12px 0;
+}
+
+#sniperModal .sn-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  /* O campo de item tem a lista de sugestões ancorada nele. */
+  position: relative;
+}
+
+#sniperModal .sn-field-wide {
+  flex: 1;
+  min-width: 220px;
+}
+
+#sniperModal .sn-field input,
+#sniperModal .sn-field select {
+  background: var(--color-bg-input, rgba(0, 0, 0, .25));
+  border: 1px solid var(--border-strong);
+  color: var(--color-text-primary);
+  border-radius: 8px;
+  padding: 6px 9px;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+#sniperModal .sn-field input:focus,
+#sniperModal .sn-field select:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+#sniperModal .sn-field small {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+}
+
+/* O item escolhido do catálogo é dito com o id; a regra por nome é dita com
+   um aviso, porque as duas se comportam de forma diferente e a tela não pode
+   deixar isso implícito. */
+#sniperModal .sn-pick.is-loose {
+  color: var(--color-warn, #e8b339);
+}
+
+/* Sugestões do catálogo. Flutuam sobre o resto: empurrar o layout faria os
+   campos de teto saltarem a cada tecla digitada. */
+#sniperModal .sn-sug {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  margin: 2px 0 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .45);
+}
+
+#sniperModal .sn-sug button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  padding: 5px 7px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--color-text-primary);
+}
+
+#sniperModal .sn-sug button:hover,
+#sniperModal .sn-sug button:focus-visible {
+  background: var(--color-bg-hover);
+}
+
+#sniperModal .sn-sug b {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#sniperModal .sn-sug small {
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+}
+
+#sniperModal .sn-sug-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+
+#sniperModal .sn-sug-ic img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* Arte de pixel: suavizar borraria o ícone neste tamanho. */
+  image-rendering: pixelated;
+}
+
+/* --------------------------------------------------------- listas e log */
+
+#sniperModal #sniperRules {
+  flex: 0 0 auto;
+  max-height: 30vh;
+  overflow: auto;
+}
+
+/* O log leva o espaço que sobra: é a parte que cresce e a que se fica olhando. */
+#sniperModal #sniperLog {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  /* Área de rolagem isolada, como na tabela de preços: sem isto cada quadro
+     de rolagem reavaliaria a página inteira. */
+  contain: layout paint style;
+}
+
+#sniperModal .sn-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+#sniperModal .sn-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  font-weight: 700;
+  text-align: right;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border-strong);
+  white-space: nowrap;
+}
+
+#sniperModal .sn-table thead th.sn-c-name {
+  text-align: left;
+}
+
+#sniperModal .sn-table td {
+  padding: 6px 8px;
+  text-align: right;
+  /* Dígitos de largura fixa: os preços do log só se comparam alinhados. */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, .05));
+}
+
+#sniperModal .sn-c-name {
+  text-align: left !important;
+  min-width: 200px;
+  max-width: 360px;
+}
+
+#sniperModal .sn-c-name b {
+  display: block;
+  color: var(--color-text-primary);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#sniperModal .sn-c-name small {
+  display: block;
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  font-weight: 400;
+  white-space: normal;
+}
+
+#sniperModal .sn-c-who {
+  text-align: left !important;
+}
+
+#sniperModal .sn-c-act {
+  white-space: nowrap;
+}
+
+#sniperModal .sn-c-act button {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--color-text-secondary);
+  border-radius: 7px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  cursor: pointer;
+  margin-left: 4px;
+}
+
+#sniperModal .sn-c-act button:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+/* Regra pausada continua na lista, apagada: removê-la da vista faria parecer
+   que foi apagada. */
+#sniperModal .sn-table tr.is-off td {
+  opacity: .45;
+}
+
+#sniperModal .sn-table td.is-done {
+  color: var(--color-text-secondary);
+}
+
+/* Etiqueta de estado no log. A cor carrega o significado para quem só passa
+   os olhos, e o texto fica do lado para quem não distingue as cores. */
+#sniperModal .sn-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  border: 1px solid currentColor;
+}
+
+#sniperModal .is-ok {
+  color: var(--color-ok, #58c470);
+}
+
+#sniperModal .is-lost {
+  color: var(--color-danger, #e06c6c);
+}
+
+#sniperModal .is-err {
+  color: var(--color-warn, #e8b339);
+}
+
+#sniperModal .is-wait,
+#sniperModal .is-gone {
+  color: var(--color-text-secondary);
+}
+
+#sniperModal .sn-empty {
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  margin: 8px 0;
+}
+
+#sniperModal .lv-status-bar {
+  flex: 0 0 auto;
+}
+
+#sniperModal .modal-actions {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 760px) {
+
+  /* Horário do anúncio sai primeiro: com a tela estreita, o que importa é
+     quanto custou e quem levou. */
+  #sniperModal .sn-log th:nth-child(5),
+  #sniperModal .sn-log td:nth-child(5) {
+    display: none;
+  }
+}

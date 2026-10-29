@@ -26,6 +26,7 @@ const fs = require('fs');
 const { levelingHeadlessManager } = require('./src/domain/leveling-headless-service');
 const levelingRefill = require('./src/domain/leveling-refill');
 const marketDb = require('./src/domain/leveling-market-db');
+const levelingSniper = require('./src/domain/leveling-sniper');
 const { levelingCredentials } = require('./src/domain/leveling-credentials');
 const { createMemoryProbe, parseArgs: parseMemArgs } = require('./src/main/memory-probe');
 
@@ -118,7 +119,14 @@ const defaultPrefs = () => ({
    * O que varia entre contas é o ouro, não o mínimo de poção que o usuário
    * quer manter, e dez campos por conta seriam um formulário impossível.
    */
-  refill: levelingRefill.defaultConfig()
+  refill: levelingRefill.defaultConfig(),
+  /**
+   * Sniper de mercado: itens que o launcher compra sozinho quando entram
+   * abaixo do teto. Fica aqui, e não só em memória, porque o contador de
+   * comprados de cada regra tem de sobreviver a um reinício — sem isso um
+   * alvo de 10 unidades viraria 10 por sessão.
+   */
+  sniper: levelingSniper.defaultConfig()
 });
 
 function readPrefs() {
@@ -157,6 +165,10 @@ function normalizePrefs(raw) {
   // Gasta ouro da conta: nada aqui entra em execução sem passar pela validação
   // do planejador, nem vindo de um `prefs.json` editado à mão.
   raw.refill = levelingRefill.normalizeConfig(raw.refill);
+  // Gasta ouro e diamante das contas, e por iniciativa própria: pelo mesmo
+  // motivo do refill, nada entra em execução sem passar pela normalização,
+  // nem vindo de um `prefs.json` editado à mão.
+  raw.sniper = levelingSniper.normalizeConfig(raw.sniper);
   return raw;
 }
 
@@ -375,6 +387,40 @@ function syncMarketPoll() {
 levelingHeadlessManager.on('status', syncMarketPoll);
 levelingHeadlessManager.on('market', data => broadcast('leveling:market', data));
 
+// ----------------------------------------------------------------- sniper
+
+/**
+ * Grava o contador de comprados depois de cada compra.
+ *
+ * É a única parte da configuração do sniper que o processo principal escreve
+ * sem o usuário ter mexido na tela, e existe porque o alvo é um total, não um
+ * total por sessão: sem gravar, fechar o launcher soltaria o limite.
+ */
+levelingHeadlessManager.sniperSink = config => {
+  try {
+    writePrefs({ sniper: config });
+  } catch (e) {
+    logErro('sniper', e.message);
+  }
+};
+
+/**
+ * O sniper, ao contrário do coletor, não liga só por haver conta conectada:
+ * ele gasta dinheiro, então depende do interruptor da tela. O que o status
+ * decide é o oposto — desligar o laço quando a última conta sai, para não
+ * acumular erro de "conta offline" de segundo em segundo.
+ */
+function syncSniperPoll() {
+  const cfg = levelingHeadlessManager.getSniperConfig();
+  const ativa = [...levelingHeadlessManager.clients.values()]
+    .some(c => c && c.status === 'connected');
+  if (ativa && levelingSniper.isConfigured(cfg)) levelingHeadlessManager.startSniperPoll();
+  else levelingHeadlessManager.stopSniperPoll();
+}
+
+levelingHeadlessManager.on('status', syncSniperPoll);
+levelingHeadlessManager.on('sniper', data => broadcast('leveling:sniper', data));
+
 /**
  * Venda da própria conta. O feed público anonimiza vendedor e comprador, então
  * esta é a única via que traz quem comprou. `MarketSold` não tem id de venda
@@ -403,7 +449,7 @@ levelingHeadlessManager.on('market-sold', ({ index, sold }) => {
  *
  * O frame tem de ser o principal: um iframe dentro da página não fala.
  */
-const LAUNCHER_PAGES = ['index.html', 'market.html'].map(
+const LAUNCHER_PAGES = ['index.html', 'market.html', 'sniper.html'].map(
   f => require('url').pathToFileURL(path.join(__dirname, f)).href
 );
 
@@ -795,6 +841,84 @@ ipcMain.handle('leveling:refill:set', (event, config) => {
   return { ok: true, config: saved };
 });
 
+/**
+ * Estado do sniper para a tela: regras salvas, o log da sessão e quais contas
+ * podem pagar.
+ *
+ * As contas vêm juntas porque cada regra escolhe a sua — e o seletor precisa
+ * saber não só o nome, mas se o monitor daquela conta está conectado: uma
+ * regra apontada para uma conta offline nunca compra, e dizer isso na hora de
+ * configurar é melhor que descobrir no log.
+ */
+function sniperAccounts() {
+  const creds = levelingCredentials.getPublicStatus();
+  return (creds.accounts || []).map((entry, index) => {
+    const client = levelingHeadlessManager.getClient(index);
+    return {
+      index,
+      username: (entry && entry.username) || '',
+      name: (client && client.state && client.state.name) || '',
+      connected: !!client && client.status === 'connected'
+    };
+  });
+}
+
+ipcMain.handle('leveling:sniper:get', event => {
+  launcherOnly(event);
+  return {
+    config: readPrefs().sniper,
+    accounts: sniperAccounts(),
+    log: levelingHeadlessManager.getSniperLog(),
+    stats: levelingHeadlessManager.getSniperStats(),
+    limits: {
+      minIntervalMs: levelingSniper.MIN_INTERVAL_MS,
+      maxIntervalMs: levelingSniper.MAX_INTERVAL_MS,
+      maxRules: levelingSniper.MAX_RULES
+    }
+  };
+});
+
+/**
+ * Salva as regras e aplica na hora.
+ *
+ * Ligar e desligar passa por aqui, não por um canal próprio: o interruptor é
+ * um campo da configuração, e um canal separado abriria a chance de a tela
+ * mostrar "ligado" com uma lista de regras que não foi salva.
+ */
+ipcMain.handle('leveling:sniper:set', (event, config) => {
+  launcherOnly(event);
+  const saved = writePrefs({ sniper: config }).sniper;
+  levelingHeadlessManager.setSniperConfig(saved);
+  syncSniperPoll();
+  return {
+    ok: true,
+    config: levelingHeadlessManager.getSniperConfig(),
+    stats: levelingHeadlessManager.getSniperStats()
+  };
+});
+
+/** Uma varredura agora, sem esperar o intervalo. */
+ipcMain.handle('leveling:sniper:poll', async event => {
+  launcherOnly(event);
+  const bought = await levelingHeadlessManager.pollSniper();
+  return {
+    bought,
+    stats: levelingHeadlessManager.getSniperStats(),
+    log: levelingHeadlessManager.getSniperLog()
+  };
+});
+
+ipcMain.handle('leveling:sniper:log', event => {
+  launcherOnly(event);
+  return { log: levelingHeadlessManager.getSniperLog(), stats: levelingHeadlessManager.getSniperStats() };
+});
+
+ipcMain.handle('leveling:sniper:log-clear', event => {
+  launcherOnly(event);
+  levelingHeadlessManager.clearSniperLog();
+  return { ok: true };
+});
+
 ipcMain.handle('window:control', (event, action) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return null;
   if (action === 'minimize') mainWindow.minimize();
@@ -904,6 +1028,66 @@ ipcMain.handle('leveling:market:window', event => {
   return openMarketWindow();
 });
 
+/**
+ * Janela do sniper. Mesma decisão do mercado, e por um motivo a mais: o log
+ * só é útil enquanto o jogo está na frente — é lá que o usuário vai ver se o
+ * item chegou. Como modal ele cobriria justamente o que se quer olhar.
+ *
+ * `leveling:sniper:window-close` não existe: a janela fecha por Esc através de
+ * `leveling:market:window-close`, que já fecha a janela do remetente e não a
+ * do mercado especificamente.
+ */
+let sniperWindow = null;
+
+function openSniperWindow() {
+  if (sniperWindow && !sniperWindow.isDestroyed()) {
+    if (sniperWindow.isMinimized()) sniperWindow.restore();
+    sniperWindow.focus();
+    return true;
+  }
+
+  sniperWindow = new BrowserWindow({
+    width: 1100,
+    height: 780,
+    minWidth: 720,
+    minHeight: 460,
+    title: 'Sniper do mercado · Leveling Idle 2D',
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#0b0f14',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      // O laço roda no processo principal e empurra cada linha de log para a
+      // tela. Sem isto a janela em segundo plano juntaria as repinturas e o
+      // log apareceria em blocos ao voltar — e o log é a razão da janela.
+      backgroundThrottling: false,
+      spellcheck: false
+    }
+  });
+
+  sniperWindow.loadFile(path.join(__dirname, 'sniper.html'));
+  sniperWindow.once('ready-to-show', () => sniperWindow.show());
+
+  sniperWindow.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith('file://')) {
+      e.preventDefault();
+      openOutside(url);
+    }
+  });
+  sniperWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openOutside(url);
+    return { action: 'deny' };
+  });
+
+  sniperWindow.on('closed', () => { sniperWindow = null; });
+  return true;
+}
+
+ipcMain.handle('leveling:sniper:window', event => {
+  launcherOnly(event);
+  return openSniperWindow();
+});
+
 ipcMain.handle('leveling:market:window-close', event => {
   launcherOnly(event);
   // Fecha a janela de quem pediu. Vem da própria janela do mercado (Esc), e
@@ -981,6 +1165,10 @@ function createWindow() {
   // O manager guarda a config para que um monitor iniciado por `bootMonitor`
   // já nasça repondo, sem depender de a tela de refill ter sido aberta.
   levelingHeadlessManager.setRefillConfig(prefs.refill);
+  // Mesma razão para o sniper: com `bootMonitor` as contas conectam antes de
+  // qualquer tela abrir, e as regras salvas têm de estar valendo nesse momento
+  // — é justamente o cenário de deixar o launcher caçando pechincha sozinho.
+  levelingHeadlessManager.setSniperConfig(prefs.sniper);
 
   mainWindow = new BrowserWindow({
     width: 1600,

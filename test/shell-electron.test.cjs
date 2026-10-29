@@ -280,6 +280,14 @@ let marketWindowCalls = 0;
 ipcMain.handle('leveling:market:window', () => { marketWindowCalls++; return false; });
 ipcMain.handle('leveling:market:window-close', () => true);
 
+/**
+ * Sniper: só janela própria, sem modal de reserva. O `false` aqui é o caso
+ * ruim — janela negada — e serve para fixar que isso não vira erro no
+ * renderer nem deixa o botão pendurado.
+ */
+let sniperWindowCalls = 0;
+ipcMain.handle('leveling:sniper:window', () => { sniperWindowCalls++; return false; });
+
 let marketOwnersOffline = false;
 ipcMain.handle('leveling:market:owners', (_e, defIds) => {
   marketCalls.push({ op: 'owners', defIds });
@@ -885,6 +893,16 @@ app.whenReady().then(async () => {
   await pause(300);
   assert.equal(await read('document.getElementById("marketOverlay").classList.contains("show")'), false,
     'Esc must close the market');
+
+  // 15. Sniper. O botão só pede a janela: diferente do mercado, aqui não há
+  // modal de reserva, porque o log precisa ficar visível com o jogo na frente.
+  assert.ok(await read('!!document.getElementById("sniperBtn")'), 'The toolbar must carry the sniper button');
+  await read('document.getElementById("sniperBtn").click()');
+  await pause(300);
+  assert.ok(sniperWindowCalls > 0, 'The button must ask the main process for the sniper window');
+  // Janela negada não pode abrir nada por cima do launcher.
+  assert.equal(await read('document.getElementById("marketOverlay").classList.contains("show")'), false,
+    'A denied sniper window must not fall back to a modal');
 
   const fatal = errors.filter(e => !/favicon|ERR_FILE_NOT_FOUND/i.test(e));
   assert.deepEqual(fatal, [], 'Renderer must not log errors: ' + fatal.join('\n'));

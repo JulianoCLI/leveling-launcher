@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<!--
+  Janela própria do sniper.
+
+  Mesma decisão da janela do mercado, e por um motivo a mais: o log só é útil
+  enquanto o jogo está na frente — é no jogo que o usuário vai conferir se o
+  item chegou. Como modal, ele cobriria justamente o que se quer olhar.
+-->
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://levelingidle2d.com.br; connect-src 'none'">
+  <title>Sniper do mercado · Leveling Idle 2D</title>
+  <link rel="stylesheet" href="src/ui/shell.css">
+  <link rel="stylesheet" href="src/ui/leveling.css">
+</head>
+
+<body class="sniper-standalone">
+  <div id="sniperOverlay" class="show">
+    <div id="sniperModal" role="region" aria-labelledby="sniperTitle">
+      <div class="lv-head">
+        <h2><span class="lv-icon" aria-hidden="true">🎯</span><span id="sniperTitle">Sniper do mercado</span></h2>
+      </div>
+      <p class="hint">O launcher verifica o mercado no intervalo escolhido e <b>compra sozinho</b> o item
+        da lista que entrar <b>abaixo do teto</b>. A quantidade alvo em <b>zero</b> significa comprar
+        sempre. Cada regra tem a sua conta: é dela que sai o ouro.</p>
+
+      <div class="lv-warn">
+        ⚠️ Isto <b>gasta ouro e diamante</b> das contas sem pedir confirmação a cada compra. Enquanto o
+        interruptor estiver ligado, toda oferta dentro do teto é comprada.
+      </div>
+
+      <div id="sniperControls"></div>
+      <div id="sniperForm"></div>
+
+      <h3 class="sn-section">Itens caçados</h3>
+      <div id="sniperRules"></div>
+
+      <h3 class="sn-section">Log</h3>
+      <div id="sniperLog"></div>
+
+      <div class="lv-status-bar" id="sniperStatusBar" role="status" aria-live="polite"></div>
+
+      <div class="modal-actions">
+        <button type="button" id="sniperPoll" class="primary">Verificar agora</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="src/ui/leveling-sniper-ui.js"></script>
+  <script src="src/ui/sniper-window.js"></script>
+</body>
+
+</html>

@@ -692,3 +692,286 @@ test('o enriquecedor sob demanda pergunta só os anúncios pedidos', async () =>
   await promessa;
   manager.stopAll();
 });
+
+// ------------------------------------------------------------------- sniper
+
+/**
+ * O sniper é a única escrita de mercado do launcher. Estes testes cobrem o que
+ * o domínio puro não alcança: que a busca sai com os filtros certos, que a
+ * compra sai com o id convertido, que o log distingue "comprei" de "outra
+ * pessoa levou", e que o contador do alvo é gravado — sem isso, reabrir o
+ * launcher soltaria o limite de compra.
+ */
+
+/** Um `MarketListing` ativo, como a busca devolve. */
+const anuncio = (id, defId, preco, extra = {}) => ({
+  id,
+  kind: 1,
+  status: 1,
+  currency: 1,
+  unit_price: preco,
+  quantity: 1,
+  total: preco,
+  name: defId,
+  category: 'materiais',
+  def_id: defId,
+  ...extra
+});
+
+const regra = patch => ({ defId: 'topazio', maxGold: 1000, account: 0, ...patch });
+
+/** Manager com uma conta conectada e o sniper já configurado. */
+async function comSniper(sniperConfig, opts = {}) {
+  const mgr = new LevelingHeadlessManager({
+    WebSocket: MockWebSocket,
+    autoReconnect: false,
+    requestTimeoutMs: 200,
+    sniperConfig,
+    ...opts
+  });
+  mgr.start(0, { username: 'a', password: 'b' });
+  await sleep(10);
+  const ws = MockWebSocket.last;
+  ws.reply('login', 'auth_ok', { token: 't', account_id: 1, username: 'eu' });
+  await sleep(5);
+  return { mgr, ws };
+}
+
+test('a busca do sniper manda o teto de preço e a moeda pelo número do enum', async () => {
+  // `verify` recusa o nome do enum na codificação, medido: "enum value
+  // expected". Mandar o teto ao servidor é o que faz a pechincha caber na
+  // primeira página em vez de obrigar a paginar o mercado inteiro.
+  const { mgr, ws } = await comSniper({ enabled: true, rules: [regra({ minLevel: 2 })] });
+
+  const promessa = mgr.pollSniper();
+  await sleep(5);
+  assert.deepEqual(ws.lastMarket(), {
+    search: {
+      def_id: 'topazio',
+      currency: 'MARKET_CURRENCY_GOLD',
+      price_max: '1000',
+      level_min: 2,
+      sort: 'preco-asc',
+      page: 1
+    }
+  });
+
+  ws.reply('market_request', 'market_response', { page: { listings: [] } });
+  await promessa;
+  mgr.stopAll();
+});
+
+test('anúncio dentro do teto é comprado, e a compra sai com id e quantidade', async () => {
+  const gravadas = [];
+  const { mgr, ws } = await comSniper(
+    { enabled: true, rules: [regra({ target: 5 })] },
+    { sniperSink: cfg => gravadas.push(cfg) }
+  );
+
+  const promessa = mgr.pollSniper();
+  await sleep(5);
+  ws.reply('market_request', 'market_response', {
+    page: { listings: [anuncio(501, 'topazio', 900, { quantity: 2, total: 1800 })] }
+  });
+  await sleep(5);
+
+  assert.deepEqual(ws.lastMarket(), { buy: { id: '501', quantity: '2' } });
+  ws.reply('market_request', 'market_response', {
+    bought: { id: 501, currency: 1, total: 1800, quantity: 2, remaining: 0 }
+  });
+
+  assert.equal(await promessa, 2);
+  const [log] = mgr.getSniperLog();
+  assert.equal(log.status, 'bought');
+  assert.equal(log.mine, true);
+  assert.equal(log.quantity, 2);
+  assert.equal(log.total, 1800);
+  assert.ok(log.closedAtMs > 0, 'o horário da compra fica no log');
+  assert.equal(mgr.getSniperStats().spentGold, 1800);
+  // O contador do alvo é gravado: só em memória, reabrir o launcher zeraria o
+  // limite e a compra aconteceria de novo.
+  assert.equal(gravadas.length, 1);
+  assert.equal(gravadas[0].rules[0].bought, 2);
+  mgr.stopAll();
+});
+
+test('a quantidade comprada é a do servidor, não a pedida', async () => {
+  // Compra parcial: contar o pedido inflaria o alvo e pararia a caça antes.
+  const { mgr, ws } = await comSniper({ enabled: true, rules: [regra({ target: 10 })] });
+
+  const promessa = mgr.pollSniper();
+  await sleep(5);
+  ws.reply('market_request', 'market_response', {
+    page: { listings: [anuncio(502, 'topazio', 100, { quantity: 8, total: 800 })] }
+  });
+  await sleep(5);
+  ws.reply('market_request', 'market_response', {
+    bought: { id: 502, currency: 1, total: 300, quantity: 3, remaining: 5 }
+  });
+
+  assert.equal(await promessa, 3);
+  assert.equal(mgr.getSniperConfig().rules[0].bought, 3);
+  mgr.stopAll();
+});
+
+test('anúncio acima do teto não gera compra nenhuma', async () => {
+  const { mgr, ws } = await comSniper({ enabled: true, rules: [regra({ maxGold: 500 })] });
+
+  const promessa = mgr.pollSniper();
+  await sleep(5);
+  // O servidor pode devolver o que quiser: o filtro local não confia na
+  // resposta, e é ele que impede a compra de um preço fora do teto.
+  ws.reply('market_request', 'market_response', {
+    page: { listings: [anuncio(503, 'topazio', 9000)] }
+  });
+
+  assert.equal(await promessa, 0);
+  assert.deepEqual(mgr.getSniperLog(), [], 'o que não casa não entra no log');
+  assert.equal(mgr.getSniperStats().buys, 0);
+  mgr.stopAll();
+});
+
+test('perder a corrida é registrado como "outra pessoa levou", não como erro', async () => {
+  const { mgr, ws } = await comSniper({ enabled: true, rules: [regra()] });
+
+  const promessa = mgr.pollSniper();
+  await sleep(5);
+  ws.reply('market_request', 'market_response', {
+    page: { listings: [anuncio(504, 'topazio', 100)] }
+  });
+  await sleep(5);
+  ws.reply('market_request', 'error', { code: 'market.notFound' });
+
+  assert.equal(await promessa, 0);
+  const [log] = mgr.getSniperLog();
+  assert.equal(log.status, 'lost');
+  assert.equal(log.mine, false);
+  assert.equal(log.error, 'market.notFound');
+  // Não é falha do launcher: ocupar `lastError` com isso faria a tela acusar
+  // erro a cada item disputado.
+  assert.equal(mgr.getSniperStats().lastError, '');
+  mgr.stopAll();
+});
+
+test('recusa por ouro insuficiente é falha, e aparece como tal', async () => {
+  const { mgr, ws } = await comSniper({ enabled: true, rules: [regra()] });
+
+  const promessa = mgr.pollSniper();
+  await sleep(5);
+  ws.reply('market_request', 'market_response', {
+    page: { listings: [anuncio(505, 'topazio', 100)] }
+  });
+  await sleep(5);
+  ws.reply('market_request', 'error', { code: 'market.gold' });
+
+  await promessa;
+  assert.equal(mgr.getSniperLog()[0].status, 'failed');
+  assert.equal(mgr.getSniperStats().lastError, 'market.gold');
+  mgr.stopAll();
+});
+
+test('o anúncio que sumiu é investigado, e o comprador vai para o log', async () => {
+  // Sumir da busca não diz o quê: vendido, expirado ou cancelado. Só
+  // `market_request{get}` traz `buyer_name`, e sem a pergunta o log diria
+  // "desapareceu" em vez de dar o aviso que o usuário pediu.
+  const { mgr, ws } = await comSniper({ enabled: true, rules: [regra({ maxGold: 50 })] });
+
+  // Primeira rodada: o item aparece, mas acima do teto não entra no log nem
+  // em observação — então forçamos a observação com um casamento de verdade.
+  mgr.sniperSeen.set('506', { rule: mgr.getSniperConfig().rules[0].id, account: 0, atMs: Date.now() });
+  mgr.sniperLogEntry({ id: '506', status: 'announced', name: 'Topázio' });
+
+  const promessa = mgr.pollSniper();
+  await sleep(5);
+  ws.reply('market_request', 'market_response', { page: { listings: [] } });
+  await sleep(5);
+  assert.deepEqual(ws.lastMarket(), { get: { id: '506' } }, 'o anúncio sumido é perguntado');
+  ws.reply('market_request', 'market_response', {
+    detail: { listing: { id: 506, status: 2, buyer_name: 'OutroJogador', closed_at_ms: 1700 } }
+  });
+  await promessa;
+
+  const log = mgr.getSniperLog().find(e => e.id === '506');
+  assert.equal(log.status, 'lost');
+  assert.equal(log.buyer, 'OutroJogador');
+  assert.equal(log.mine, false);
+  // A linha é a mesma do anúncio, não uma segunda: os dois horários só se
+  // comparam quando estão lado a lado.
+  assert.equal(log.name, 'Topázio');
+  assert.equal(mgr.getSniperLog().filter(e => e.id === '506').length, 1);
+  mgr.stopAll();
+});
+
+test('regra apontada para conta offline não busca nem compra', async () => {
+  const { mgr, ws } = await comSniper({ enabled: true, rules: [regra({ account: 3 })] });
+
+  assert.equal(await mgr.pollSniper(), 0);
+  assert.equal(ws.lastMarket(), null, 'nenhum pedido sai sem conta para pagar');
+  assert.equal(mgr.getSniperStats().lastError, 'sniper.accountOffline');
+  mgr.stopAll();
+});
+
+test('sniper desligado não gera tráfego nenhum', async () => {
+  const { mgr, ws } = await comSniper({ enabled: false, rules: [regra()] });
+  assert.equal(await mgr.pollSniper(), 0);
+  assert.equal(ws.lastMarket(), null);
+  assert.equal(mgr.startSniperPoll(), false, 'o laço não liga desligado');
+  mgr.stopAll();
+});
+
+test('uma rodada por vez: o tique seguinte não entra no meio da anterior', async () => {
+  const { mgr, ws } = await comSniper({ enabled: true, rules: [regra()] });
+
+  const primeira = mgr.pollSniper();
+  await sleep(5);
+  assert.equal(await mgr.pollSniper(), 0, 'a segunda desiste em vez de duplicar a busca');
+
+  ws.reply('market_request', 'market_response', { page: { listings: [] } });
+  await primeira;
+  mgr.stopAll();
+});
+
+test('mudar o intervalo com o laço em curso recria o temporizador', async () => {
+  const { mgr, ws } = await comSniper({ enabled: true, intervalMs: 30000, rules: [regra()] });
+
+  assert.equal(mgr.startSniperPoll(), true);
+  await sleep(5);
+  ws.reply('market_request', 'market_response', { page: { listings: [] } });
+  await sleep(5);
+
+  mgr.setSniperConfig({ enabled: true, intervalMs: 2000, rules: [regra()] });
+  assert.equal(mgr.getSniperStats().intervalMs, 2000);
+  assert.equal(mgr.getSniperStats().running, true);
+
+  mgr.stopSniperPoll();
+  assert.equal(mgr.getSniperStats().running, false);
+  mgr.stopAll();
+});
+
+test('o log tem teto e pode ser limpo', async () => {
+  const { mgr } = await comSniper({ enabled: true, rules: [regra()] });
+  for (let i = 0; i < 350; i++) mgr.sniperLogEntry({ id: String(i), status: 'announced' });
+  assert.equal(mgr.getSniperLog().length, 300);
+  assert.equal(mgr.getSniperLog()[0].id, '349', 'o mais recente em cima');
+  mgr.clearSniperLog();
+  assert.deepEqual(mgr.getSniperLog(), []);
+  mgr.stopAll();
+});
+
+test('mochila cheia é dita no log: o item foi para o correio', async () => {
+  const { mgr, ws } = await comSniper({ enabled: true, rules: [regra()] });
+
+  const promessa = mgr.pollSniper();
+  await sleep(5);
+  ws.reply('market_request', 'market_response', {
+    page: { listings: [anuncio(507, 'topazio', 100)] }
+  });
+  await sleep(5);
+  ws.reply('market_request', 'market_response', {
+    bought: { id: 507, currency: 1, total: 100, quantity: 1, to_mail: true }
+  });
+  await promessa;
+
+  assert.equal(mgr.getSniperLog()[0].toMail, true);
+  mgr.stopAll();
+});

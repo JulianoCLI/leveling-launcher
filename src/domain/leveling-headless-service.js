@@ -60,6 +60,7 @@ const refill = require('./leveling-refill');
 const party = require('./leveling-party');
 const hunts = require('./leveling-hunts');
 const marketCatalog = require('./leveling-market-catalog');
+const sniper = require('./leveling-sniper');
 
 const WS_URL = 'wss://game.levelingidle2d.com.br:8443/ws';
 const ORIGIN = 'https://levelingidle2d.com.br';
@@ -120,6 +121,42 @@ const NPC_REACH = 700;
  * repetição pela chave primária da venda.
  */
 const MARKET_POLL_MS = 60000;
+
+/**
+ * Tamanho do log do sniper. Fica em memória de propósito: é o registro de uma
+ * sessão de caça, não histórico — o que importa de verdade (a venda) o banco
+ * do mercado já guarda.
+ */
+const SNIPER_LOG_MAX = 300;
+
+/**
+ * Anúncios que sumiram e são investigados por rodada. Um pedido por anúncio,
+ * em série, igual ao enriquecedor de nível: um teto evita que uma lista grande
+ * de regras vire uma rajada de dezenas de pedidos num tique de poucos
+ * segundos.
+ */
+const SNIPER_RESOLVE_MAX = 10;
+
+/**
+ * Recusas de compra que significam "outra pessoa levou", não "deu erro". O
+ * sniper corre contra outros compradores por desenho, então perder é o caso
+ * comum e o log tem de dizer isso em vez de mostrar falha.
+ */
+/**
+ * Moedas do mercado por número. O nome é como o enum chega no `decode`, e o
+ * número é o que `encode` aceita — `verify` recusa o nome, igual às tiers de
+ * poção no refill.
+ */
+const MARKET_CURRENCY_NUM = {
+  MARKET_CURRENCY_GOLD: 1,
+  MARKET_CURRENCY_DIAMOND: 2,
+  MARKET_CURRENCY_TOKEN: 3
+};
+
+const SNIPER_LOST_CODES = new Set([
+  'market.notFound', 'market.notActive', 'market.sold', 'market.gone',
+  'market.quantity', 'market.expired'
+]);
 
 /**
  * Tráfego de simulação de mundo: chega a 20 Hz e não alimenta nenhum número do
@@ -1709,9 +1746,10 @@ class LevelingHeadlessClient extends EventEmitter {
    * não é o mesmo da operação (`get` responde `detail`, `search` responde
    * `page`), então devolvemos a chave junto.
    *
-   * Nenhuma operação de escrita passa por aqui. `create`, `buy`, `cancel` e
-   * as ofertas ficam fora: o monitor é de leitura, e mexer no inventário da
-   * conta sem o usuário pedir seria outra coisa.
+   * A única escrita que passa por aqui é `buy`, e só a pedido do sniper, que
+   * o usuário liga por botão e configura item por item com teto de preço.
+   * `create`, `cancel` e as ofertas continuam fora: o monitor é de leitura, e
+   * mexer no inventário da conta sem o usuário pedir seria outra coisa.
    */
   async marketRequest(op, value = {}) {
     const res = await this.request('market_request', { [op]: value });
@@ -1767,10 +1805,53 @@ class LevelingHeadlessClient extends EventEmitter {
     if (filtros.defId) value.def_id = String(filtros.defId);
     if (filtros.rarity) value.rarity = String(filtros.rarity);
     if (filtros.sort) value.sort = String(filtros.sort);
+    // Moeda pelo número, não pelo nome. `decode` entrega enums como string,
+    // mas `ClientMessage.verify` recusa string na codificação — medido:
+    // "enum value expected". O mesmo cuidado que `leveling-refill.js` já toma
+    // com as tiers de poção.
+    if (filtros.currency) {
+      const n = MARKET_CURRENCY_NUM[filtros.currency];
+      if (n) value.currency = n;
+    }
+    // Faixas de preço e de nível. São `optional` no proto, então mandar zero
+    // não é o mesmo que omitir: `price_max: 0` pediria o que custa nada. Só
+    // entram quando positivas, e é o sniper quem as usa — filtrar no servidor
+    // é o que faz uma pechincha caber na primeira página, em vez de obrigar a
+    // paginar o mercado inteiro atrás dela.
+    for (const [chave, campo] of [
+      ['priceMin', 'price_min'], ['priceMax', 'price_max'],
+      ['levelMin', 'level_min'], ['levelMax', 'level_max']
+    ]) {
+      const n = Math.floor(Number(filtros[chave]));
+      if (Number.isFinite(n) && n > 0) value[campo] = n;
+    }
     value.page = Math.max(Number(filtros.page) || 1, 1);
     const res = await this.marketRequest('search', value);
     if (res.errorCode) return { errorCode: res.errorCode, listings: [] };
     return res.value || { listings: [] };
+  }
+
+  /**
+   * Compra um anúncio. É a única escrita de mercado do launcher, e existe para
+   * o sniper: a tela de preços não compra nada.
+   *
+   * Compra parcial é suportada pelo servidor — `MarketBought.remaining` diz o
+   * que sobrou no anúncio —, e é o que permite respeitar um alvo de quantidade
+   * menor que o lote anunciado.
+   *
+   * `id` e `quantity` são uint64 e o codec recusa string, mas `decode` entrega
+   * os ids de anúncio como string: a conversão tem de acontecer aqui.
+   *
+   * Perder a corrida pelo anúncio é esperado, não é erro de programa: entre a
+   * busca e a compra alguém pode ter levado o item. O servidor responde com
+   * código, e quem chamou decide o que dizer no log.
+   */
+  async marketBuy(listingId, quantity = 1) {
+    const id = Number(listingId);
+    if (!Number.isFinite(id) || id <= 0) return { errorCode: 'market.badId' };
+    const qty = Math.max(1, Math.floor(Number(quantity) || 1));
+    const res = await this.marketRequest('buy', { id, quantity: qty });
+    return res.errorCode ? { errorCode: res.errorCode } : (res.value || {});
   }
 
   /**
@@ -2064,6 +2145,33 @@ class LevelingHeadlessManager extends EventEmitter {
     this.marketDb = null;
     this.levelBusy = false;
     this.levelStats = { consultas: 0, achados: 0, falhas: 0, lastAtMs: 0, lastError: '' };
+
+    /**
+     * Sniper de mercado: compra o que entrar abaixo do teto configurado.
+     *
+     * O laço vive no manager, não nos clientes, porque a busca é global — o
+     * mercado é o mesmo para qualquer sessão — e só a compra pertence à conta
+     * da regra. Uma configuração por cliente faria N buscas do mesmo item.
+     *
+     * O intervalo é curto, ao contrário do coletor: aqui o atraso é a
+     * diferença entre comprar e ver que alguém comprou.
+     */
+    this.sniperConfig = sniper.normalizeConfig(options.sniperConfig);
+    this.sniperIntervalMs = this.sniperConfig.intervalMs;
+    this.sniperTimer = null;
+    this.sniperBusy = false;
+    /**
+     * Grava a configuração depois de uma compra. O contador de comprados fica
+     * junto da regra em disco: só em memória, reabrir o launcher zeraria o
+     * alvo e a compra aconteceria de novo.
+     */
+    this.sniperSink = typeof options.sniperSink === 'function' ? options.sniperSink : null;
+    /** Anúncios já logados e ainda abertos, por `listing_id`. */
+    this.sniperSeen = new Map();
+    this.sniperLog = [];
+    this.sniperStats = {
+      polls: 0, buys: 0, spentGold: 0, spentDiamond: 0, lastAtMs: 0, lastError: ''
+    };
   }
 
   // ------------------------------------------------------------- mercado
@@ -2218,6 +2326,292 @@ class LevelingHeadlessManager extends EventEmitter {
       this.levelBusy = false;
     }
     return gravadas;
+  }
+
+  // --------------------------------------------------------------- sniper
+
+  /**
+   * Regras do sniper nos monitores. Diferente do refill, a configuração não
+   * vai para os clientes: o laço vive aqui, porque a busca é global (qualquer
+   * conta vê o mesmo mercado) e só a compra é da conta da regra. Mandar a
+   * configuração para oito clientes faria oito buscas do mesmo item.
+   */
+  setSniperConfig(config) {
+    this.sniperConfig = sniper.normalizeConfig(config);
+    this.sniperIntervalMs = this.sniperConfig.intervalMs;
+    // Intervalo novo só vale no tique seguinte se o temporizador não for
+    // recriado; o usuário acabou de mexer no campo e espera o efeito agora.
+    if (this.sniperTimer) {
+      this.stopSniperPoll();
+      this.startSniperPoll();
+    }
+    return this.sniperConfig;
+  }
+
+  getSniperConfig() {
+    return this.sniperConfig;
+  }
+
+  /** Cliente que paga por esta regra. Conta fixa: o ouro é de quem o usuário escolheu. */
+  sniperClient(rule) {
+    const client = this.clients.get(Number(rule && rule.account) || 0);
+    return client && client.status === 'connected' ? client : null;
+  }
+
+  /**
+   * Uma linha do log, por anúncio.
+   *
+   * Entrada por `listing_id`, atualizada no lugar, não um evento por
+   * acontecimento: a pergunta do log é "o que apareceu, por quanto, e quem
+   * levou" — e com dois eventos separados o horário do anúncio ficaria numa
+   * linha e o da compra em outra, que é justamente a comparação que interessa.
+   */
+  sniperLogEntry(patch) {
+    const id = String(patch.id);
+    const i = this.sniperLog.findIndex(e => e.id === id);
+    const base = i >= 0 ? this.sniperLog[i] : { id, seenAtMs: Date.now() };
+    const entry = { ...base, ...patch, id };
+    if (i >= 0) this.sniperLog.splice(i, 1);
+    this.sniperLog.unshift(entry);
+    // Teto: o log é de memória e o mercado nunca para de anunciar.
+    if (this.sniperLog.length > SNIPER_LOG_MAX) this.sniperLog.length = SNIPER_LOG_MAX;
+    this.emit('sniper', { entry, stats: this.getSniperStats() });
+    return entry;
+  }
+
+  getSniperLog() {
+    return this.sniperLog.slice();
+  }
+
+  clearSniperLog() {
+    this.sniperLog = [];
+    return true;
+  }
+
+  getSniperStats() {
+    return {
+      ...this.sniperStats,
+      running: !!this.sniperTimer,
+      intervalMs: this.sniperIntervalMs,
+      rules: this.sniperConfig.rules.length,
+      watching: this.sniperSeen.size
+    };
+  }
+
+  /**
+   * Uma rodada: busca o que cada regra pede, compra o que couber no teto.
+   *
+   * Nunca lança, pelo mesmo motivo do coletor: roda para sempre em segundo
+   * plano e uma falha de rede não pode derrubar o temporizador.
+   *
+   * As regras são percorridas em série. Em paralelo seriam N buscas
+   * simultâneas a cada poucos segundos — e o intervalo aqui é de segundos, não
+   * do minuto folgado do coletor, então a rajada se repetiria o tempo todo.
+   */
+  async pollSniper() {
+    if (this.sniperBusy) return 0;
+    const cfg = this.sniperConfig;
+    if (!cfg.enabled) return 0;
+
+    this.sniperBusy = true;
+    let compradas = 0;
+    /** Anúncios vistos nesta rodada, para saber quais desapareceram. */
+    const vistos = new Set();
+    try {
+      this.sniperStats.polls++;
+      this.sniperStats.lastAtMs = Date.now();
+      this.sniperStats.lastError = '';
+
+      for (const rule of cfg.rules) {
+        if (!rule.enabled || sniper.remainingOf(rule) <= 0) continue;
+
+        const client = this.sniperClient(rule);
+        if (!client) {
+          this.sniperStats.lastError = 'sniper.accountOffline';
+          continue;
+        }
+
+        const encontrados = [];
+        for (const filtros of sniper.searchesFor(rule)) {
+          const res = await client.marketSearch(filtros);
+          if (res.errorCode) {
+            this.sniperStats.lastError = res.errorCode;
+            continue;
+          }
+          for (const listing of res.listings || []) encontrados.push(listing);
+        }
+        for (const listing of encontrados) vistos.add(String(listing.id));
+
+        const { buys } = sniper.plan(encontrados, rule);
+
+        // O anúncio entra no log antes da compra: se o item for levado por
+        // outra pessoa no meio, a linha já existe para receber a notícia.
+        for (const buy of buys) this.sniperAnnounce(buy, rule, client);
+
+        for (const buy of buys) {
+          if (sniper.remainingOf(rule) <= 0) break;
+          compradas += await this.sniperBuy(buy, rule, client);
+        }
+      }
+
+      await this.sniperResolve(vistos);
+      return compradas;
+    } catch (e) {
+      this.sniperStats.lastError = (e && e.message) || String(e);
+      return compradas;
+    } finally {
+      this.sniperBusy = false;
+    }
+  }
+
+  /** Registra o anúncio visto, com a hora em que o vendedor o criou. */
+  sniperAnnounce(buy, rule, client) {
+    const id = String(buy.id);
+    const l = buy.listing || {};
+    if (this.sniperSeen.has(id)) return;
+    this.sniperSeen.set(id, { rule: rule.id, account: rule.account, atMs: Date.now() });
+    this.sniperLogEntry({
+      id,
+      status: 'announced',
+      rule: rule.id,
+      defId: String(l.def_id || ''),
+      name: String(l.name || ''),
+      rarity: String(l.rarity || ''),
+      kind: String(l.kind || ''),
+      level: Number(l.level) || 0,
+      currency: buy.currency,
+      unitPrice: buy.unitPrice,
+      quantity: buy.quantity,
+      total: buy.total,
+      seller: String(l.seller_name || ''),
+      // Hora do anúncio é a do vendedor, não a da nossa busca: o atraso entre
+      // as duas é o que diz se o intervalo de verificação está largo demais.
+      announcedAtMs: Number(l.created_at_ms) || 0,
+      account: rule.account,
+      accountName: (client && client.state && client.state.name) || ''
+    });
+  }
+
+  /**
+   * Tenta a compra. Devolve quantas unidades entraram.
+   *
+   * Perder a corrida é o caso normal, não exceção: entre a busca e a compra o
+   * anúncio pode ter sido levado. O log diz isso com o código do servidor, em
+   * vez de tratar como erro do launcher.
+   */
+  async sniperBuy(buy, rule, client) {
+    const res = await client.marketBuy(buy.id, buy.quantity).catch(err => ({
+      errorCode: (err && err.message) || 'market.buyFailed'
+    }));
+
+    if (res.errorCode) {
+      const perdido = SNIPER_LOST_CODES.has(res.errorCode);
+      this.sniperLogEntry({
+        id: String(buy.id),
+        status: perdido ? 'lost' : 'failed',
+        mine: false,
+        error: res.errorCode,
+        closedAtMs: Date.now()
+      });
+      // Resolvido: ou alguém levou, ou a compra é impossível. Em nenhum dos
+      // dois casos vale perguntar de novo pelo mesmo anúncio.
+      this.sniperSeen.delete(String(buy.id));
+      if (!perdido) this.sniperStats.lastError = res.errorCode;
+      return 0;
+    }
+
+    // O servidor é a fonte da quantidade: numa compra parcial ela pode ser
+    // menor que a pedida, e contar o pedido inflaria o alvo.
+    const qty = Math.max(1, Number(res.quantity) || buy.quantity);
+    const total = Number(res.total) || buy.unitPrice * qty;
+    rule.bought = Number(rule.bought || 0) + qty;
+    this.sniperStats.buys++;
+    if (buy.currency === 'diamond') this.sniperStats.spentDiamond += total;
+    else this.sniperStats.spentGold += total;
+
+    this.sniperLogEntry({
+      id: String(buy.id),
+      status: 'bought',
+      mine: true,
+      quantity: qty,
+      total,
+      // `to_mail` é o aviso de mochila cheia: o item foi para o correio do
+      // jogo, e sem isto no log ele pareceria não ter chegado.
+      toMail: !!res.to_mail,
+      closedAtMs: Date.now()
+    });
+    this.sniperSeen.delete(String(buy.id));
+
+    // O contador vivo em memória não basta: sem gravar, reabrir o launcher
+    // zeraria o alvo e a compra aconteceria de novo.
+    if (this.sniperSink) {
+      try { this.sniperSink(this.sniperConfig); } catch {}
+    }
+    this.emit('sniper-bought', { index: rule.account, rule: rule.id, bought: rule.bought, total });
+    return qty;
+  }
+
+  /**
+   * O que foi do anúncio que sumiu da busca.
+   *
+   * Sumir não diz o quê: pode ter sido vendido para outra pessoa, expirado ou
+   * cancelado pelo vendedor. `market_request{get}` num anúncio já fechado
+   * continua respondendo — é o mesmo achado que dá o nível das vendas —, e é
+   * ele que traz `buyer_name`. Sem esta pergunta o log diria "desapareceu",
+   * que não é o aviso que o usuário pediu.
+   *
+   * Em série e com teto por rodada, pelo mesmo motivo do enriquecedor de
+   * nível: é um pedido por anúncio.
+   */
+  async sniperResolve(vistos) {
+    const sumidos = [...this.sniperSeen.keys()].filter(id => !vistos.has(id));
+    if (!sumidos.length) return 0;
+
+    let resolvidos = 0;
+    for (const id of sumidos.slice(0, SNIPER_RESOLVE_MAX)) {
+      const pendente = this.sniperSeen.get(id);
+      this.sniperSeen.delete(id);
+      const client = this.sniperClient({ account: pendente && pendente.account })
+        || this.marketClient();
+      if (!client) continue;
+
+      const res = await client.marketGet(Number(id)).catch(() => ({ errorCode: 'market.gone' }));
+      const l = (res && res.listing) || {};
+      const status = String(l.status || '');
+      const comprador = String(l.buyer_name || '');
+
+      this.sniperLogEntry({
+        id,
+        // Comprador nomeado também conta como vendido, não só o status: é a
+        // informação mais específica das duas, e é ela que o log mostra.
+        status: status.endsWith('_SOLD') || comprador ? 'lost' : 'gone',
+        mine: false,
+        buyer: comprador,
+        closedAtMs: Number(l.closed_at_ms) || Date.now()
+      });
+      resolvidos++;
+    }
+    return resolvidos;
+  }
+
+  /**
+   * Liga o sniper. `unref` como no coletor: ele não é motivo para o processo
+   * continuar vivo.
+   */
+  startSniperPoll() {
+    if (this.sniperTimer) return false;
+    if (!sniper.isConfigured(this.sniperConfig)) return false;
+    this.sniperTimer = setInterval(() => { this.pollSniper(); }, this.sniperIntervalMs);
+    if (this.sniperTimer.unref) this.sniperTimer.unref();
+    this.pollSniper();
+    return true;
+  }
+
+  stopSniperPoll() {
+    if (!this.sniperTimer) return false;
+    clearInterval(this.sniperTimer);
+    this.sniperTimer = null;
+    return true;
   }
 
   /**
@@ -2560,6 +2954,9 @@ module.exports = {
   REFILL_INTERVAL_MS,
   REFILL_BACKOFF_MS,
   MARKET_POLL_MS,
+  SNIPER_LOG_MAX,
+  SNIPER_RESOLVE_MAX,
+  SNIPER_LOST_CODES,
   TRIP_TIMEOUT_MS,
   TRIP_CASES,
   NPC_REACH,
