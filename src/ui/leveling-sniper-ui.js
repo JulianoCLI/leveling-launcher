@@ -7,6 +7,10 @@
  * baixo porque é o que se consulta depois, mas é a parte maior — é dele que
  * sai a resposta "o item entrou e eu perdi?".
  *
+ * O log é gravado em disco pelo processo principal: sobrevive a fechar a
+ * janela e a fechar o launcher, porque a pergunta dele se faz na manhã
+ * seguinte, depois de uma noite de automação. Só o botão de limpar o apaga.
+ *
  * O catálogo do mercado é a fonte da lista de itens. Digitar o nome e escolher
  * da lista grava o `def_id`, que é o que o servidor filtra de verdade: regra
  * por nome é busca por texto, casa com "Poção Pequena" e "Poção Grande" ao
@@ -27,13 +31,23 @@
 
   const moeda = c => (c === 'diamond' ? '💎' : '🪙');
 
-  /** Hora do dia. O log é de uma sessão: a data seria ruído em toda linha. */
+  /**
+   * Hora do dia, com o dia na frente quando não é hoje.
+   *
+   * O log sobrevive a reiniciar o launcher, então "03:14:07" sozinho é
+   * ambíguo: pode ser de hoje ou de três dias atrás. A data só aparece quando
+   * precisa — em toda linha seria ruído, e o caso comum é o de hoje.
+   */
   const hora = ms => {
     const n = Number(ms);
     if (!n) return '—';
     const d = new Date(n);
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes())
+    const hms = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes())
       .padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+    const hoje = new Date();
+    if (d.toDateString() === hoje.toDateString()) return hms;
+    return `<small>${String(d.getDate()).padStart(2, '0')}/${
+      String(d.getMonth() + 1).padStart(2, '0')}</small> ${hms}`;
   };
 
   /**
@@ -50,7 +64,15 @@
     bought: { label: 'comprado', css: 'is-ok' },
     lost: { label: 'outra pessoa levou', css: 'is-lost' },
     gone: { label: 'saiu do mercado', css: 'is-gone' },
-    failed: { label: 'recusado', css: 'is-err' }
+    failed: { label: 'recusado', css: 'is-err' },
+    /**
+     * Linha que ficou em `announced` quando o launcher fechou.
+     *
+     * Estado próprio porque as alternativas mentem: "anunciado" prometeria uma
+     * resposta que ninguém mais vai dar — a lista de anúncios em observação é
+     * de sessão —, e "saiu do mercado" afirmaria algo que o launcher não viu.
+     */
+    unknown: { label: 'sem desfecho', css: 'is-gone' }
   };
 
   /** Recusas do servidor, em português. O código cru fica no `title`. */
@@ -371,10 +393,20 @@
         : 'Varredura concluída: nada dentro do teto.');
     },
 
+    /**
+     * Apaga o log, com confirmação.
+     *
+     * O log é de disco agora: um clique sem aviso jogaria fora dias de
+     * registro, e não há como desfazer.
+     */
     async clearLog() {
+      if (this.log.length && !window.confirm(
+        `Apagar as ${this.log.length} linhas do log? Isto não pode ser desfeito.`)) return;
       await this.api.sniperLogClear().catch(() => {});
       this.log = [];
       this.renderLog();
+      this.renderStatus();
+      this.say('Log apagado.');
     },
 
     // ------------------------------------------------------------- pintura
@@ -614,13 +646,16 @@
      * anúncio e o do fecho. A distância entre eles é o que diz se o intervalo
      * de verificação está largo demais — e é a única forma de entender por que
      * um item apareceu e outra pessoa levou.
+     *
+     * O que está aqui vem de disco: sobrevive a fechar a janela e a fechar o
+     * launcher, e só sai pelo botão de limpar.
      */
     renderLog() {
       const host = document.getElementById('sniperLog');
       if (!host) return;
 
       if (!this.log.length) {
-        host.innerHTML = '<p class="sn-empty">O log está vazio. Ele se preenche quando um item da lista entra no mercado.</p>';
+        host.innerHTML = '<p class="sn-empty">O log está vazio. Ele se preenche quando um item da lista entra no mercado, e fica gravado entre sessões.</p>';
         return;
       }
 
@@ -646,7 +681,7 @@
         // diferentes: a primeira é "ainda aberto".
         const quem = e.mine
           ? `<b class="is-ok">eu · ${escape(this.accountLabel(e.account))}</b>`
-          : (e.status === 'announced'
+          : (e.status === 'announced' || e.status === 'unknown'
             ? '<small>—</small>'
             : `<span>${escape(e.buyer || 'outra pessoa')}</span>`);
         return `
@@ -709,7 +744,10 @@
             gasto 🪙 ${num(s.spentGold)}${s.spentDiamond ? ` · 💎 ${num(s.spentDiamond)}` : ''}
             ${s.running ? '' : ' · <b>parado</b>'}
           </span>
-          <button type="button" id="snClear">Limpar o log</button>
+          <button type="button" id="snClear"${this.log.length ? '' : ' disabled'}
+            title="O log fica gravado entre sessões; isto apaga tudo e não pode ser desfeito">
+            Limpar o log${this.log.length ? ` (${num(this.log.length)})` : ''}
+          </button>
         </div>
         ${semConta
           ? '<p class="sn-warn">Alguma regra ativa aponta para uma conta que não está em modo monitor: ela não compra nada até a conta conectar.</p>'

@@ -27,6 +27,7 @@ const { levelingHeadlessManager } = require('./src/domain/leveling-headless-serv
 const levelingRefill = require('./src/domain/leveling-refill');
 const marketDb = require('./src/domain/leveling-market-db');
 const levelingSniper = require('./src/domain/leveling-sniper');
+const levelingExpedition = require('./src/domain/leveling-expedition');
 const levelingListing = require('./src/domain/leveling-listing');
 const { levelingCredentials } = require('./src/domain/leveling-credentials');
 const { createMemoryProbe, parseArgs: parseMemArgs } = require('./src/main/memory-probe');
@@ -127,7 +128,16 @@ const defaultPrefs = () => ({
    * comprados de cada regra tem de sobreviver a um reinício — sem isso um
    * alvo de 10 unidades viraria 10 por sessão.
    */
-  sniper: levelingSniper.defaultConfig()
+  sniper: levelingSniper.defaultConfig(),
+  /**
+   * Auto-expedição: coleta o que terminou e manda a sombra mais forte do
+   * armazém para o destino mais baixo, pelo maior tempo que a conta alcança.
+   *
+   * Uma configuração para o launcher inteiro, com a lista de contas excluídas
+   * dentro dela — o que varia entre contas não é a política, é quais contas o
+   * usuário quer de fora.
+   */
+  expedition: levelingExpedition.defaultConfig()
 });
 
 function readPrefs() {
@@ -170,6 +180,9 @@ function normalizePrefs(raw) {
   // motivo do refill, nada entra em execução sem passar pela normalização,
   // nem vindo de um `prefs.json` editado à mão.
   raw.sniper = levelingSniper.normalizeConfig(raw.sniper);
+  // Não gasta moeda, mas ocupa as sombras do armazém por até 24 h: um
+  // `prefs.json` editado à mão não entra em execução sem passar por aqui.
+  raw.expedition = levelingExpedition.normalizeConfig(raw.expedition);
   return raw;
 }
 
@@ -327,6 +340,9 @@ levelingHeadlessManager.on('ended', ({ index, code, handoff }) => broadcast('lev
 levelingHeadlessManager.on('death', ({ index, death }) => broadcast('leveling:death', { index, death }));
 levelingHeadlessManager.on('arise', data => broadcast('leveling:arise', data));
 levelingHeadlessManager.on('refill', data => broadcast('leveling:refill', data));
+// Coleta e envio da auto-expedição. A janela pode estar fechada; quem a abrir
+// depois lê o estado completo por `expedition:get`.
+levelingHeadlessManager.on('expedition', data => broadcast('leveling:expedition', data));
 levelingHeadlessManager.on('error', ({ index, error }) => logErro('headless', `conta ${index}: ${error.message}`));
 // Guardar o token permite reconectar por `resume`, que não gasta tentativa de login.
 levelingHeadlessManager.on('token', ({ index, token }) => levelingCredentials.setToken(index, token));
@@ -406,6 +422,44 @@ levelingHeadlessManager.sniperSink = config => {
 };
 
 /**
+ * Log do sniper em disco.
+ *
+ * Diferente do catálogo e da lista de portais, que são cópias de algo que o
+ * servidor manda: aqui o arquivo **é** o dado. O launcher roda a noite toda e
+ * a pergunta do log — "entrou dentro do teto e quem levou?" — é a que se faz
+ * na manhã seguinte; só em memória, fechar a janela ou o launcher apagava a
+ * resposta.
+ *
+ * São 300 linhas de poucos campos, algumas dezenas de kilobytes.
+ */
+const SNIPER_LOG_FILE = () => path.join(app.getPath('userData'), 'sniper-log.json');
+
+function readSniperLogFile() {
+  try {
+    const lido = JSON.parse(fs.readFileSync(SNIPER_LOG_FILE(), 'utf-8'));
+    return Array.isArray(lido) ? lido : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Grava a cada linha, não de minuto em minuto.
+ *
+ * Uma compra é o acontecimento que o usuário quer ver registrado, e uma queda
+ * do launcher logo depois dela é justamente o caso em que ele vai procurar o
+ * log. A escrita é de poucas dezenas de kilobytes e só acontece quando algo
+ * entra no mercado dentro do teto — não é um laço.
+ */
+levelingHeadlessManager.sniperLogSink = entries => {
+  try {
+    fs.writeFileSync(SNIPER_LOG_FILE(), JSON.stringify(entries));
+  } catch (e) {
+    logErro('sniper', e.message);
+  }
+};
+
+/**
  * O sniper, ao contrário do coletor, não liga só por haver conta conectada:
  * ele gasta dinheiro, então depende do interruptor da tela. O que o status
  * decide é o oposto — desligar o laço quando a última conta sai, para não
@@ -455,7 +509,7 @@ levelingHeadlessManager.on('market-sold', ({ index, sold }) => {
  *
  * O frame tem de ser o principal: um iframe dentro da página não fala.
  */
-const LAUNCHER_PAGES = ['index.html', 'market.html', 'sniper.html'].map(
+const LAUNCHER_PAGES = ['index.html', 'market.html', 'sniper.html', 'expedition.html'].map(
   f => require('url').pathToFileURL(path.join(__dirname, f)).href
 );
 
@@ -1031,6 +1085,74 @@ ipcMain.handle('leveling:refill:set', (event, config) => {
   return { ok: true, config: saved };
 });
 
+// ------------------------------------------------------------- expedição
+
+/**
+ * Estado da auto-expedição para a janela: a configuração salva e uma linha por
+ * conta com quantas sombras estão fora e quando a primeira volta.
+ *
+ * As contas vêm junto, como no sniper, porque a tela tem uma caixinha por
+ * conta: a lista de exceções precisa de nomes, e saber se o monitor daquela
+ * conta está conectado é o que distingue "nenhuma expedição" de "não sei".
+ *
+ * `force` relê o painel no servidor. Sem ele a resposta usa o último painel
+ * que o laço já leu — o normal ao abrir a janela, porque o painel vale por um
+ * minuto e uma releitura por conta a cada abertura seria tráfego para mostrar
+ * o mesmo número.
+ */
+async function expeditionState(force) {
+  const creds = levelingCredentials.getPublicStatus();
+  const report = await levelingHeadlessManager.expeditionReport({ force });
+  const porIndice = new Map(report.accounts.map(a => [a.index, a]));
+
+  // A lista é a das contas **configuradas**, não a dos monitores ativos: uma
+  // conta sem monitor tem de aparecer para poder ser marcada, e some da tela
+  // só quando as credenciais dela são apagadas.
+  const accounts = (creds.accounts || []).map((entry, index) => {
+    const vivo = porIndice.get(index);
+    return {
+      index,
+      username: (entry && entry.username) || '',
+      name: (vivo && vivo.name) || '',
+      connected: !!(vivo && vivo.connected),
+      enabled: !levelingHeadlessManager.getExpeditionConfig().disabled.includes(index),
+      errorCode: (vivo && vivo.errorCode) || '',
+      summary: (vivo && vivo.summary) || null,
+      stats: (vivo && vivo.stats) || null
+    };
+  });
+
+  return {
+    config: levelingHeadlessManager.getExpeditionConfig(),
+    accounts,
+    limits: {
+      minIntervalMs: levelingExpedition.MIN_INTERVAL_MS,
+      maxIntervalMs: levelingExpedition.MAX_INTERVAL_MS
+    }
+  };
+}
+
+ipcMain.handle('leveling:expedition:get', async (event, opts) => {
+  launcherOnly(event);
+  return expeditionState(!!(opts && opts.force));
+});
+
+ipcMain.handle('leveling:expedition:set', async (event, config) => {
+  launcherOnly(event);
+  const saved = writePrefs({ expedition: config }).expedition;
+  // Aplica nos monitores em execução: o usuário acabou de mexer na janela,
+  // esperar o próximo login da conta seria inexplicável.
+  levelingHeadlessManager.setExpeditionConfig(saved);
+  return { ok: true, ...(await expeditionState(false)) };
+});
+
+/** Uma rodada agora em todas as contas que participam, sem esperar o relógio. */
+ipcMain.handle('leveling:expedition:poll', async event => {
+  launcherOnly(event);
+  await levelingHeadlessManager.pollExpedition();
+  return expeditionState(false);
+});
+
 /**
  * Estado do sniper para a tela: regras salvas, o log da sessão e quais contas
  * podem pagar.
@@ -1338,6 +1460,66 @@ ipcMain.handle('leveling:sniper:window', event => {
   return openSniperWindow();
 });
 
+/**
+ * Janela da auto-expedição. Mesma decisão do sniper: a tela diz quando cada
+ * conta volta a ter sombra livre, e isso se consulta *enquanto* o jogo está na
+ * frente. Como modal ela cobriria os painéis justamente para mostrar um prazo
+ * de horas.
+ *
+ * Fecha por Esc através de `leveling:market:window-close`, que fecha a janela
+ * do remetente — não a do mercado especificamente.
+ */
+let expeditionWindow = null;
+
+function openExpeditionWindow() {
+  if (expeditionWindow && !expeditionWindow.isDestroyed()) {
+    if (expeditionWindow.isMinimized()) expeditionWindow.restore();
+    expeditionWindow.focus();
+    return true;
+  }
+
+  expeditionWindow = new BrowserWindow({
+    width: 1000,
+    height: 740,
+    minWidth: 680,
+    minHeight: 440,
+    title: 'Auto-expedição · Leveling Idle 2D',
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#0b0f14',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      // Os prazos correm na tela de segundo em segundo e o laço empurra cada
+      // coleta. Sem isto a janela em segundo plano juntaria as repinturas e o
+      // relógio apareceria aos saltos ao voltar.
+      backgroundThrottling: false,
+      spellcheck: false
+    }
+  });
+
+  expeditionWindow.loadFile(path.join(__dirname, 'expedition.html'));
+  expeditionWindow.once('ready-to-show', () => expeditionWindow.show());
+
+  expeditionWindow.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith('file://')) {
+      e.preventDefault();
+      openOutside(url);
+    }
+  });
+  expeditionWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openOutside(url);
+    return { action: 'deny' };
+  });
+
+  expeditionWindow.on('closed', () => { expeditionWindow = null; });
+  return true;
+}
+
+ipcMain.handle('leveling:expedition:window', event => {
+  launcherOnly(event);
+  return openExpeditionWindow();
+});
+
 ipcMain.handle('leveling:market:window-close', event => {
   launcherOnly(event);
   // Fecha a janela de quem pediu. Vem da própria janela do mercado (Esc), e
@@ -1419,6 +1601,16 @@ function createWindow() {
   // qualquer tela abrir, e as regras salvas têm de estar valendo nesse momento
   // — é justamente o cenário de deixar o launcher caçando pechincha sozinho.
   levelingHeadlessManager.setSniperConfig(prefs.sniper);
+  // E para a expedição: com `bootMonitor` as contas conectam antes de qualquer
+  // janela abrir, e é justamente o cenário de deixar o launcher recolhendo e
+  // reenviando expedições sozinho por horas.
+  levelingHeadlessManager.setExpeditionConfig(prefs.expedition);
+  // Repõe o log gravado antes de qualquer tela abrir. Aqui, e não no topo do
+  // arquivo, porque `app.getPath('userData')` só é confiável depois do ready —
+  // e `sniper:get` responde com este log: sem a reposição a janela diria "o
+  // log está vazio" por cima de um arquivo que existe.
+  const sniperLogSalvo = readSniperLogFile();
+  if (sniperLogSalvo) levelingHeadlessManager.setSniperLog(sniperLogSalvo);
 
   mainWindow = new BrowserWindow({
     width: 1600,

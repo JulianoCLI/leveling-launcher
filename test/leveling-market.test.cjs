@@ -1015,6 +1015,60 @@ test('o log tem teto e pode ser limpo', async () => {
   mgr.stopAll();
 });
 
+test('o log é entregue a quem grava, a cada linha e também ao limpar', async () => {
+  const { mgr } = await comSniper({ enabled: true, rules: [regra()] });
+  const escritas = [];
+  mgr.sniperLogSink = entries => escritas.push(entries.length);
+
+  mgr.sniperLogEntry({ id: '601', status: 'announced', name: 'Topázio' });
+  mgr.sniperLogEntry({ id: '602', status: 'bought', name: 'Rubi' });
+  // Mesmo anúncio outra vez é atualização no lugar, não linha nova: o log
+  // continua com duas, e a gravação acontece de novo.
+  mgr.sniperLogEntry({ id: '601', status: 'lost' });
+  assert.deepEqual(escritas, [1, 2, 2]);
+
+  mgr.clearSniperLog();
+  assert.deepEqual(escritas, [1, 2, 2, 0], 'limpar também grava, senão o arquivo ressuscitaria');
+  mgr.stopAll();
+});
+
+test('uma falha ao gravar não derruba o log', async () => {
+  const { mgr } = await comSniper({ enabled: true, rules: [regra()] });
+  mgr.sniperLogSink = () => { throw new Error('disco cheio'); };
+  // A linha é o que o usuário quer ver; o arquivo é conveniência. Uma exceção
+  // aqui subiria pela compra e a abortaria depois do ouro já ter saído.
+  assert.doesNotThrow(() => mgr.sniperLogEntry({ id: '610', status: 'bought' }));
+  assert.equal(mgr.getSniperLog().length, 1);
+  mgr.stopAll();
+});
+
+test('o log gravado volta, com o teto e sem desfecho pendente', async () => {
+  const { mgr } = await comSniper({ enabled: true, rules: [regra()] });
+
+  assert.equal(mgr.setSniperLog([
+    { id: 701, status: 'bought', name: 'Topázio' },
+    { id: '702', status: 'announced', name: 'Rubi' },
+    null,
+    { status: 'bought', name: 'sem id' }
+  ]), true);
+
+  const log = mgr.getSniperLog();
+  assert.equal(log.length, 2, 'linha sem id não volta: ela é a chave do anúncio');
+  assert.equal(log[0].id, '701', 'o id volta como texto, como o resto do log usa');
+  assert.equal(log[0].status, 'bought');
+  // `sniperSeen` é de sessão: ninguém mais vai resolver aquele anúncio, e
+  // deixá-lo em "anunciado" prometeria uma resposta que não vem.
+  assert.equal(log[1].status, 'unknown');
+
+  assert.equal(mgr.setSniperLog('nada disso'), false, 'o que não é lista é recusado');
+  assert.equal(mgr.getSniperLog().length, 2, 'e o log em memória fica como estava');
+
+  mgr.setSniperLog(Array.from({ length: 400 }, (_, i) => ({ id: i, status: 'bought' })));
+  assert.equal(mgr.getSniperLog().length, 300, 'o teto vale também para o que vem do disco');
+
+  mgr.stopAll();
+});
+
 test('mochila cheia é dita no log: o item foi para o correio', async () => {
   const { mgr, ws } = await comSniper({ enabled: true, rules: [regra()] });
 

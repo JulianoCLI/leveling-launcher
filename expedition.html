@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<!--
+  Janela própria da auto-expedição.
+
+  Mesma decisão da janela do sniper: a pergunta desta tela é "quando cada conta
+  volta a ter sombra livre", e isso se consulta enquanto o jogo está na frente.
+  Como modal ela cobriria os painéis justamente para mostrar um prazo de horas.
+-->
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://levelingidle2d.com.br; connect-src 'none'">
+  <title>Auto-expedição · Leveling Idle 2D</title>
+  <link rel="stylesheet" href="src/ui/shell.css">
+  <link rel="stylesheet" href="src/ui/leveling.css">
+</head>
+
+<body class="expedition-standalone">
+  <div id="expOverlay" class="show">
+    <div id="expModal" role="region" aria-labelledby="expTitle">
+      <div class="lv-head">
+        <h2><span class="lv-icon" aria-hidden="true">🗡️</span><span id="expTitle">Auto-expedição</span></h2>
+      </div>
+      <p class="hint">O launcher recolhe as expedições que terminarem e manda outras no lugar: sempre o
+        <b>destino de nível mais baixo</b> liberado, com as <b>sombras mais fortes do armazém</b>, uma por
+        expedição e pelo <b>maior tempo</b> que a conta alcança — <b>24h</b> em conta VIP, <b>12h</b> sem VIP.
+      </p>
+
+      <div class="lv-warn">
+        ⚠️ As sombras do <b>time</b> nunca saem. Sombra em expedição fica <b>indisponível</b> até voltar: não dá
+        para fundir, equipar nem vender. Só contas em <b>modo monitor</b> participam.
+      </div>
+
+      <div id="expControls"></div>
+
+      <h3 class="xp-section">Contas</h3>
+      <div id="expAccounts"></div>
+
+      <h3 class="xp-section">O que aconteceu</h3>
+      <div id="expLog"></div>
+
+      <div class="lv-status-bar" id="expStatusBar" role="status" aria-live="polite"></div>
+
+      <div class="modal-actions">
+        <button type="button" id="expPoll" class="primary">Verificar agora</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="src/ui/leveling-expedition-ui.js"></script>
+  <script src="src/ui/expedition-window.js"></script>
+</body>
+
+</html>

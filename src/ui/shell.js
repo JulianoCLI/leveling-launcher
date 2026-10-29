@@ -612,6 +612,17 @@
     api.sniperWindow().catch(e => report('sniper', e));
   }
 
+  /**
+   * Auto-expedição. Janela própria, pelo mesmo motivo do sniper: a tela diz
+   * quando cada conta volta a ter sombra livre, e esse prazo se consulta
+   * enquanto o jogo está na frente. Sem modal de reserva — um prazo de horas
+   * coberto pelos painéis não serviria para nada.
+   */
+  function openExpedition() {
+    if (!api.expeditionWindow) return;
+    api.expeditionWindow().catch(e => report('expedition', e));
+  }
+
   // ------------------------------------------------------------------- grupo
 
   /**
@@ -741,6 +752,8 @@
     if (marketBtn) marketBtn.onclick = () => openMarket();
     const sniperBtn = document.getElementById('sniperBtn');
     if (sniperBtn) sniperBtn.onclick = () => openSniper();
+    const expeditionBtn = document.getElementById('expeditionBtn');
+    if (expeditionBtn) expeditionBtn.onclick = () => openExpedition();
     if (marketOverlay) {
       document.getElementById('marketCloseBtn').onclick = closeMarket;
       document.getElementById('marketClose').onclick = closeMarket;

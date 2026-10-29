@@ -22,6 +22,10 @@
  *   `market_request{history|config|price_hint|search|get}`
  *                        ler preços do mercado. Só leitura: `create`, `buy`,
  *                        `cancel` e as ofertas continuam fora da lista
+ *   `expedition{panel|collect|send}`
+ *                        auto-expedição: lê o painel, recolhe o que terminou e
+ *                        manda a sombra mais forte do armazém para o destino
+ *                        mais baixo, pelo maior tempo que a conta alcança
  *
  * Os quatro últimos existem porque o servidor não vende à distância: medido
  * contra ele, `buy_consumable` numa cena de caçada responde `shop.npcRequired`,
@@ -61,6 +65,7 @@ const party = require('./leveling-party');
 const hunts = require('./leveling-hunts');
 const marketCatalog = require('./leveling-market-catalog');
 const sniper = require('./leveling-sniper');
+const expedition = require('./leveling-expedition');
 
 const WS_URL = 'wss://game.levelingidle2d.com.br:8443/ws';
 const ORIGIN = 'https://levelingidle2d.com.br';
@@ -123,9 +128,31 @@ const NPC_REACH = 700;
 const MARKET_POLL_MS = 60000;
 
 /**
- * Tamanho do log do sniper. Fica em memória de propósito: é o registro de uma
- * sessão de caça, não histórico — o que importa de verdade (a venda) o banco
- * do mercado já guarda.
+ * Intervalo entre leituras do painel de expedição de uma conta.
+ *
+ * Folgado de propósito: a expedição mais curta que a automação manda dura
+ * horas, então o que este número decide não é "quando mandar" — é quanto
+ * tempo uma vaga fica vazia depois de terminar. Um minuto de vaga ociosa em
+ * doze horas não muda o rendimento, e ler de segundo em segundo seria tráfego
+ * puro.
+ */
+const EXPEDITION_POLL_MS = 60000;
+
+/**
+ * Recuo após o servidor recusar um envio. O painel continuaria pedindo o mesmo
+ * envio no tique seguinte, então sem isto uma recusa viraria um erro por
+ * minuto para sempre.
+ */
+const EXPEDITION_BACKOFF_MS = 600000;
+
+/**
+ * Tamanho do log do sniper.
+ *
+ * O log é gravado em disco (`sniperLogSink`) porque a pergunta que ele responde
+ * — "o item entrou dentro do teto e quem levou?" — é a que se faz na manhã
+ * seguinte, depois de deixar o launcher rodando. O teto é o que o mantém um
+ * registro recente e não um histórico: o mercado nunca para de anunciar, e o
+ * que importa de verdade (a venda) o banco do mercado já guarda.
  */
 const SNIPER_LOG_MAX = 300;
 
@@ -261,6 +288,27 @@ const FATAL_AUTH_CODES = new Set([
  */
 const dispatchers = new Map();
 
+/**
+ * Converte um uid para o que o `verify` do codec aceita num campo `uint64`.
+ *
+ * Medido: `verify` responde `integer|Long[] expected` a uma string, e o
+ * inventário e o painel de sombras entregam uid como string — `decode` roda
+ * com `longs: String` justamente para não perder precisão. Número cru só vale
+ * até 2^53; acima disso a conversão passa por `Long`, que é o que o
+ * protobufjs usa internamente.
+ */
+function uint64(value) {
+  const texto = String(value == null ? '' : value).trim();
+  if (!/^\d+$/.test(texto)) return null;
+  const n = Number(texto);
+  if (Number.isSafeInteger(n)) return n > 0 ? n : null;
+  try {
+    return require('protobufjs').util.Long.fromString(texto, true);
+  } catch {
+    return null;
+  }
+}
+
 function proxyDispatcher(proxyUrl) {
   if (!proxyUrl) return null;
   if (dispatchers.has(proxyUrl)) return dispatchers.get(proxyUrl);
@@ -301,6 +349,8 @@ class LevelingHeadlessClient extends EventEmitter {
     this.requestTimeoutMs = options.requestTimeoutMs || REQUEST_TIMEOUT_MS;
     this.refillIntervalMs = options.refillIntervalMs || REFILL_INTERVAL_MS;
     this.refillBackoffMs = options.refillBackoffMs || REFILL_BACKOFF_MS;
+    this.expeditionIntervalMs = options.expeditionIntervalMs || EXPEDITION_POLL_MS;
+    this.expeditionBackoffMs = options.expeditionBackoffMs || EXPEDITION_BACKOFF_MS;
 
     /**
      * Auto-refill. Desligado por padrão: o monitor não deve gastar ouro de uma
@@ -344,6 +394,20 @@ class LevelingHeadlessClient extends EventEmitter {
     this.trip = null;
     /** Esperas por push, só abertas durante o ciclo: `caseName` → entradas. */
     this.waiters = new Map();
+
+    /**
+     * Auto-expedição. Desligada por padrão, pelo mesmo princípio do refill: ela
+     * ocupa as sombras do armazém por até 24 h, e sombra em expedição não pode
+     * ser fundida nem equipada — ligar isso sozinho atrapalharia quem está
+     * mexendo no exército.
+     */
+    this.expeditionConfig = expedition.normalizeConfig(options.expeditionConfig);
+    /** Último painel lido, já recortado. `null` até a primeira leitura. */
+    this.expeditionPanel = null;
+    this.expeditionAt = 0;
+    this.expeditionBusy = false;
+    this.expeditionTimer = null;
+    this.expeditionStats = { polls: 0, collected: 0, sent: 0, lastAtMs: 0, lastError: '' };
 
     this.ws = null;
     this.status = 'disconnected';
@@ -448,6 +512,13 @@ class LevelingHeadlessClient extends EventEmitter {
       },
       /** Último refill executado, para o HUD mostrar o que foi comprado. */
       refill: null,
+      /**
+       * Expedições da conta: quantas sombras estão fora e quando a primeira
+       * volta. É o que a janela de auto-expedição mostra por conta, e fica no
+       * estado — e não só numa resposta de IPC — para a tela acompanhar sem
+       * perguntar, mesmo com a janela aberta em segundo plano.
+       */
+      expedition: null,
       /**
        * Viagem de reposição em curso. O HUD mostra isto porque é o único
        * momento em que a conta está fora da caçada por decisão do launcher: sem
@@ -594,6 +665,12 @@ class LevelingHeadlessClient extends EventEmitter {
     this.startTimers();
     this.fetchParty();
     this.rescueTrip();
+    // A expedição é a única automação que precisa de um relógio próprio: ela
+    // não é disparada por nenhum push, e o que a aciona é um prazo de horas
+    // vencendo. Ligar aqui, e não no construtor, garante que ela só começa com
+    // a sessão de pé.
+    this.syncExpeditionTimer();
+    this.maybeExpedition();
     this.emitUpdate();
   }
 
@@ -1623,6 +1700,233 @@ class LevelingHeadlessClient extends EventEmitter {
     if (cost) this.state.gold = Math.max(0, this.state.gold - cost);
   }
 
+  // -------------------------------------------------------------- expedição
+
+  /**
+   * Operação de expedição. Tudo viaja dentro de `expedition`, e a resposta é
+   * sempre `expedition_result`.
+   *
+   * Três das seis operações do `oneof` são escalares (`panel` é `bool`,
+   * `collect` e `cancel` são `uint32`), então o valor vai direto em vez de num
+   * objeto — mandar `{}` ali faria o `verify` do codec recusar o payload.
+   *
+   * `cancel`, `collect_all` e `finish_now` nunca saem daqui: cancelar perde o
+   * tempo já corrido, `finish_now` gasta diamante, e `collect_all` recolheria
+   * também a expedição que o usuário mandou à mão e ainda está correndo.
+   */
+  async expeditionRequest(op, value) {
+    const res = await this.request('expedition', { [op]: value });
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'exp.failed' };
+    }
+    return res.value || {};
+  }
+
+  /**
+   * Lê o painel e guarda o recorte. É a única leitura: destinos, durações,
+   * vagas, o que está correndo e quais sombras podem sair chegam todos juntos
+   * num `ExpeditionPanel`.
+   */
+  async expeditionPanelRead() {
+    const res = await this.expeditionRequest('panel', true);
+    if (res.errorCode) return { errorCode: res.errorCode };
+    const panel = expedition.readPanel(res.panel);
+    this.expeditionPanel = panel;
+    this.applyExpedition(panel);
+    return { panel };
+  }
+
+  /** Reflete o painel no estado do painel do launcher. */
+  applyExpedition(panel) {
+    const resumo = expedition.summarize(panel);
+    const antes = JSON.stringify(this.state.expedition);
+    this.state.expedition = resumo;
+    if (JSON.stringify(resumo) !== antes) this.emitUpdate();
+    return resumo;
+  }
+
+  /** Troca a configuração em execução, sem derrubar a sessão. */
+  setExpeditionConfig(config) {
+    this.expeditionConfig = expedition.normalizeConfig(config);
+    // Mudar a configuração é pedido explícito: não esperar o intervalo.
+    this.expeditionAt = 0;
+    this.syncExpeditionTimer();
+    if (this.status === 'connected') this.maybeExpedition();
+  }
+
+  /**
+   * Liga e desliga o relógio da expedição conforme a configuração.
+   *
+   * Temporizador por conta, ao contrário do sniper: o painel é da conta — as
+   * sombras, as vagas e o VIP são dela —, então não há leitura compartilhada
+   * para economizar. Um relógio no manager teria de percorrer as contas de
+   * qualquer forma.
+   */
+  syncExpeditionTimer() {
+    const quer = expedition.accountEnabled(this.expeditionConfig, this.index);
+    if (!quer) {
+      if (this.expeditionTimer) {
+        clearInterval(this.expeditionTimer);
+        this.expeditionTimer = null;
+      }
+      return;
+    }
+    if (this.expeditionTimer) return;
+    const ms = this.expeditionConfig.intervalMs || this.expeditionIntervalMs;
+    this.expeditionTimer = setInterval(() => this.maybeExpedition(), ms);
+    // Como o ping e o tique: a expedição não é motivo para o processo viver.
+    if (this.expeditionTimer.unref) this.expeditionTimer.unref();
+  }
+
+  /**
+   * Guardas de execução. O que fazer é decisão de `leveling-expedition`; aqui
+   * só mora "uma rodada por vez, respeitando o intervalo e o recuo".
+   */
+  maybeExpedition() {
+    if (this.expeditionBusy || !this.isOpen() || this.status !== 'connected') return;
+    if (!expedition.accountEnabled(this.expeditionConfig, this.index)) return;
+    if (Date.now() < this.expeditionAt) return;
+    // Durante a viagem de refill a conta está fora da caçada e no meio de uma
+    // sequência encadeada por push; um pedido a mais no socket não quebra nada,
+    // mas esperar o fim mantém o ciclo de compra com o log limpo.
+    if (this.trip) return;
+
+    this.expeditionBusy = true;
+    this.expeditionAt = Date.now() + (this.expeditionConfig.intervalMs || this.expeditionIntervalMs);
+    this.runExpedition().finally(() => { this.expeditionBusy = false; });
+  }
+
+  /**
+   * Uma rodada: lê o painel, recolhe o que terminou, manda as sombras que
+   * couberem nas vagas livres.
+   *
+   * Coletar vem antes de enviar, e em série, porque a vaga só abre depois do
+   * recolhimento: enviar primeiro tomaria `exp.full` do servidor.
+   *
+   * Nunca lança. Roda para sempre em segundo plano, e uma falha de rede não
+   * pode derrubar o temporizador — o erro fica em `expeditionStats` e no
+   * evento, para a janela mostrar.
+   */
+  async runExpedition() {
+    const stats = this.expeditionStats;
+    stats.polls++;
+    stats.lastAtMs = Date.now();
+
+    let colhidas = 0;
+    let enviadas = 0;
+    const reports = [];
+    let erro = '';
+
+    try {
+      const leitura = await this.expeditionPanelRead();
+      if (leitura.errorCode) {
+        stats.lastError = leitura.errorCode;
+        this.emit('expedition', {
+          index: this.index, ok: false, error: leitura.errorCode,
+          summary: this.state.expedition, stats: this.getExpeditionStats()
+        });
+        return;
+      }
+
+      const plano = expedition.plan({
+        panel: leitura.panel, config: this.expeditionConfig, index: this.index
+      });
+
+      for (const id of plano.collect) {
+        const res = await this.expeditionRequest('collect', id);
+        if (res.errorCode) { erro = res.errorCode; continue; }
+        colhidas++;
+        // O relatório diz o que a expedição trouxe; é a única via, o painel
+        // seguinte já vem sem ela.
+        for (const r of (res.reports || [])) {
+          reports.push({
+            gate: r.gate || '',
+            difficulty: r.difficulty || '',
+            minutes: Number(r.minutes) || 0,
+            outcome: String(r.outcome || ''),
+            stones: Number(r.stones) || 0,
+            potions: Number(r.potions) || 0,
+            revives: Number(r.revives) || 0
+          });
+        }
+      }
+
+      // Replanejar depois de coletar, e não reaproveitar o plano: o `collect`
+      // devolve o painel novo, e as vagas e os candidatos de verdade são os
+      // dele. O plano anterior contava as vagas antes do recolhimento.
+      const atual = colhidas
+        ? expedition.plan({
+          panel: this.expeditionPanel, config: this.expeditionConfig, index: this.index
+        })
+        : plano;
+
+      for (const send of atual.sends) {
+        // `ExpeditionSend.uids` é `repeated uint64`, e o painel entrega o uid
+        // como string: sem a conversão o `verify` do codec recusa o payload.
+        const uids = send.uids.map(uint64).filter(u => u !== null);
+        if (uids.length !== send.uids.length) {
+          erro = 'exp.badUid';
+          break;
+        }
+
+        const res = await this.expeditionRequest('send', {
+          gate: send.gate,
+          difficulty: send.difficulty,
+          minutes: send.minutes,
+          uids
+        });
+        if (res.errorCode) {
+          erro = res.errorCode;
+          // Recuo: a recusa se repetiria idêntica no tique seguinte, porque o
+          // painel continua pedindo o mesmo envio.
+          this.expeditionAt = Date.now() + this.expeditionBackoffMs;
+          break;
+        }
+        enviadas++;
+        // A resposta do envio traz o painel novo; guardá-lo mantém a tela e o
+        // plano da próxima rodada em dia sem outra leitura.
+        if (res.panel) {
+          this.expeditionPanel = expedition.readPanel(res.panel);
+          this.applyExpedition(this.expeditionPanel);
+        }
+      }
+
+      stats.collected += colhidas;
+      stats.sent += enviadas;
+      stats.lastError = erro;
+
+      if (colhidas || enviadas || erro) {
+        this.emit('expedition', {
+          index: this.index,
+          ok: !erro,
+          error: erro,
+          collected: colhidas,
+          sent: enviadas,
+          reports,
+          sends: atual.sends.slice(0, enviadas).map(s => ({
+            gate: s.gate, difficulty: s.difficulty, minutes: s.minutes, shadow: s.shadow
+          })),
+          summary: this.state.expedition,
+          stats: this.getExpeditionStats()
+        });
+      }
+    } catch (err) {
+      stats.lastError = (err && err.message) || String(err);
+      this.emit('expedition', {
+        index: this.index, ok: false, error: stats.lastError,
+        summary: this.state.expedition, stats: this.getExpeditionStats()
+      });
+    }
+  }
+
+  getExpeditionStats() {
+    return {
+      ...this.expeditionStats,
+      running: !!this.expeditionTimer,
+      intervalMs: this.expeditionConfig.intervalMs || this.expeditionIntervalMs
+    };
+  }
+
   // ------------------------------------------------------------------- grupo
 
   /**
@@ -2209,6 +2513,9 @@ class LevelingHeadlessClient extends EventEmitter {
     this.pingTimer = null;
     clearInterval(this.tickTimer);
     this.tickTimer = null;
+    // Sem socket não há painel para ler; `authenticate` religa o relógio.
+    clearInterval(this.expeditionTimer);
+    this.expeditionTimer = null;
     for (const entry of this.pending.values()) entry.reject(new Error('conexão perdida'));
     this.pending.clear();
     // Um ciclo de compra em curso ficaria preso esperando pacotes que não vêm
@@ -2246,6 +2553,13 @@ class LevelingHeadlessManager extends EventEmitter {
     this.clientOptions = options;
     /** Auto-refill: uma configuração para todas as contas, não por conta. */
     this.refillConfig = refill.normalizeConfig(options.refillConfig);
+    /**
+     * Auto-expedição: uma configuração para o launcher inteiro, com a lista de
+     * contas excluídas dentro dela. O laço vive nos clientes, ao contrário do
+     * sniper, porque o painel é da conta — sombras, vagas e VIP não são
+     * compartilhados, então não há leitura para economizar aqui.
+     */
+    this.expeditionConfig = expedition.normalizeConfig(options.expeditionConfig);
     /** Montagem de grupo em curso; uma por vez em todo o launcher. */
     this.partyBusy = false;
     /**
@@ -2311,6 +2625,16 @@ class LevelingHeadlessManager extends EventEmitter {
      * alvo e a compra aconteceria de novo.
      */
     this.sniperSink = typeof options.sniperSink === 'function' ? options.sniperSink : null;
+    /**
+     * Grava o log depois de cada linha. Mesma forma do `sniperSink`, e pelo
+     * mesmo motivo de quem está do outro lado: o processo principal é que sabe
+     * onde é `userData`, e o serviço não toca em disco.
+     *
+     * Sem isto o log era de sessão, e a pergunta que ele responde — "o item
+     * entrou dentro do teto e quem levou?" — é justamente a que se faz depois
+     * de deixar o launcher rodando a noite toda.
+     */
+    this.sniperLogSink = typeof options.sniperLogSink === 'function' ? options.sniperLogSink : null;
     /** Anúncios já logados e ainda abertos, por `listing_id`. */
     this.sniperSeen = new Map();
     this.sniperLog = [];
@@ -2549,8 +2873,9 @@ class LevelingHeadlessManager extends EventEmitter {
     const entry = { ...base, ...patch, id };
     if (i >= 0) this.sniperLog.splice(i, 1);
     this.sniperLog.unshift(entry);
-    // Teto: o log é de memória e o mercado nunca para de anunciar.
+    // Teto: o mercado nunca para de anunciar, e o log agora é de disco.
     if (this.sniperLog.length > SNIPER_LOG_MAX) this.sniperLog.length = SNIPER_LOG_MAX;
+    this.saveSniperLog();
     this.emit('sniper', { entry, stats: this.getSniperStats() });
     return entry;
   }
@@ -2559,9 +2884,37 @@ class LevelingHeadlessManager extends EventEmitter {
     return this.sniperLog.slice();
   }
 
+  /**
+   * Repõe o log gravado, na abertura do launcher.
+   *
+   * Linha que ficou em `announced` vira `unknown`: `sniperSeen` é de sessão, e
+   * ninguém mais vai resolver aquele anúncio. Deixá-la em "anunciado" faria a
+   * tela prometer uma resposta que não vem; chamá-la de `gone` afirmaria que
+   * saiu do mercado, o que o launcher não viu acontecer.
+   */
+  setSniperLog(entries) {
+    if (!Array.isArray(entries)) return false;
+    this.sniperLog = entries
+      .filter(e => e && e.id !== undefined && e.id !== null)
+      .slice(0, SNIPER_LOG_MAX)
+      .map(e => ({
+        ...e,
+        id: String(e.id),
+        status: e.status === 'announced' ? 'unknown' : e.status
+      }));
+    return true;
+  }
+
   clearSniperLog() {
     this.sniperLog = [];
+    this.saveSniperLog();
     return true;
+  }
+
+  /** Entrega o log a quem sabe escrever em disco, se houver alguém. */
+  saveSniperLog() {
+    if (!this.sniperLogSink) return;
+    try { this.sniperLogSink(this.sniperLog); } catch {}
   }
 
   getSniperStats() {
@@ -2932,6 +3285,96 @@ class LevelingHeadlessManager extends EventEmitter {
     return this.refillConfig;
   }
 
+  /** Aplica a configuração de expedição nos monitores já em execução. */
+  setExpeditionConfig(config) {
+    this.expeditionConfig = expedition.normalizeConfig(config);
+    for (const client of this.clients.values()) {
+      client.setExpeditionConfig(this.expeditionConfig);
+    }
+    return this.expeditionConfig;
+  }
+
+  getExpeditionConfig() {
+    return this.expeditionConfig;
+  }
+
+  /**
+   * O estado de expedição de cada conta, para a janela.
+   *
+   * As contas são consultadas em paralelo, como em `inventoryBags`: são
+   * sockets independentes, e em série oito contas somariam a latência oito
+   * vezes para mostrar a mesma tela.
+   *
+   * Conta desconectada aparece com `connected: false` em vez de sumir:
+   * esconder faria parecer que ela não existe, quando o que falta é ligar o
+   * monitor nela.
+   *
+   * `force` relê o painel no servidor. Sem ele a tela usa o último painel que
+   * o laço já leu, que é o caminho normal de abrir a janela — o painel vale
+   * por um minuto, e uma releitura por conta a cada abertura seria tráfego
+   * para mostrar o mesmo número.
+   */
+  async expeditionReport(options = {}) {
+    const force = !!options.force;
+    const indices = [...this.clients.keys()].sort((a, b) => a - b);
+
+    const contas = await Promise.all(indices.map(async index => {
+      const client = this.clients.get(index);
+      const base = {
+        index,
+        name: (client && client.state && client.state.name) || '',
+        connected: !!client && client.status === 'connected',
+        enabled: expedition.accountEnabled(this.expeditionConfig, index),
+        errorCode: '',
+        summary: null,
+        stats: client ? client.getExpeditionStats() : null
+      };
+      if (!base.connected) return base;
+
+      if (force || !client.expeditionPanel) {
+        const res = await client.expeditionPanelRead().catch(err => ({
+          errorCode: (err && err.message) || 'exp.failed'
+        }));
+        if (res.errorCode) return { ...base, errorCode: res.errorCode };
+      }
+      return {
+        ...base,
+        summary: client.state.expedition,
+        stats: client.getExpeditionStats()
+      };
+    }));
+
+    return { accounts: contas, config: this.expeditionConfig };
+  }
+
+  /** Uma rodada agora em todas as contas que participam, sem esperar o relógio. */
+  async pollExpedition() {
+    const alvos = [...this.clients.values()].filter(c =>
+      c && c.status === 'connected'
+      && expedition.accountEnabled(this.expeditionConfig, c.index));
+
+    // Em paralelo: uma conta não depende da outra, e o painel de cada uma sai
+    // pelo seu próprio socket.
+    //
+    // `runExpedition` direto, e não `maybeExpedition`: este caminho é o botão
+    // "rodar agora" da janela, e passar pelas guardas de intervalo faria o
+    // clique não fazer nada quando o laço acabou de rodar. A trava de
+    // concorrência continua valendo — ela é o que impede duas rodadas na mesma
+    // conta.
+    await Promise.all(alvos.map(async client => {
+      if (client.expeditionBusy) return;
+      client.expeditionBusy = true;
+      client.expeditionAt = Date.now() + (this.expeditionConfig.intervalMs || EXPEDITION_POLL_MS);
+      try {
+        await client.runExpedition();
+      } finally {
+        client.expeditionBusy = false;
+      }
+    }));
+
+    return this.expeditionReport();
+  }
+
   start(accountIndex, options = {}) {
     this.stop(accountIndex);
     const client = new LevelingHeadlessClient(accountIndex, {
@@ -2939,6 +3382,10 @@ class LevelingHeadlessManager extends EventEmitter {
       // A configuração de refill é uma só para todas as contas; o manager a
       // guarda para que um monitor iniciado depois já nasça com ela.
       refillConfig: this.refillConfig,
+      // Mesma razão para a expedição: um monitor iniciado depois — por
+      // `bootMonitor` ou por um clique no painel — já nasce participando, sem
+      // depender de a janela de expedição ter sido aberta.
+      expeditionConfig: this.expeditionConfig,
       // O catálogo de caçadas é do jogo, não da conta: a primeira conta a logar
       // o preenche e as outras já nascem com a lista pronta.
       huntStore: this.huntStore,
@@ -2949,7 +3396,7 @@ class LevelingHeadlessManager extends EventEmitter {
     });
     this.clients.set(accountIndex, client);
 
-    for (const event of ['update', 'status', 'error', 'ended', 'death', 'notice', 'token', 'arise', 'refill', 'hunts', 'market-catalog', 'market-sold']) {
+    for (const event of ['update', 'status', 'error', 'ended', 'death', 'notice', 'token', 'arise', 'refill', 'expedition', 'hunts', 'market-catalog', 'market-sold']) {
       client.on(event, data => this.emit(event, data));
     }
     // Só a sessão substituída encerra o monitor: a conta está sendo usada

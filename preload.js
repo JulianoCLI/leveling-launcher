@@ -99,6 +99,17 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   levelingGetRefill: () => ipcRenderer.invoke('leveling:refill:get'),
   levelingSetRefill: (config) => ipcRenderer.invoke('leveling:refill:set', config),
 
+  // Auto-expedição: recolhe o que terminou e manda a sombra mais forte do
+  // armazém para o destino mais baixo, pelo maior tempo que a conta alcança.
+  // `force` relê o painel de cada conta no servidor; sem ele a resposta usa o
+  // último painel que o laço já leu, que vale por um minuto.
+  expeditionGet: (opts) => ipcRenderer.invoke('leveling:expedition:get', opts),
+  expeditionSet: (config) => ipcRenderer.invoke('leveling:expedition:set', config),
+  expeditionPoll: () => ipcRenderer.invoke('leveling:expedition:poll'),
+  expeditionWindow: () => ipcRenderer.invoke('leveling:expedition:window'),
+  // Uma coleta ou um envio aconteceu: a janela aberta se atualiza sozinha.
+  onExpedition: (cb) => ipcRenderer.on('leveling:expedition', (_e, data) => cb(data)),
+
   // O principal envia um lote por janela de tempo; aceitar também o formato
   // avulso mantém `leveling-panel.js` compartilhado com o launcher irmão.
   onLevelingUpdate: (cb) => ipcRenderer.on('leveling:update', (_e, data) => {

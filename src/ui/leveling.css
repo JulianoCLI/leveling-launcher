@@ -2241,3 +2241,306 @@ body.sniper-standalone {
     display: none;
   }
 }
+
+/* ========================================================================
+   AUTO-EXPEDIÇÃO
+
+   Mesma moldura do sniper: janela própria, sem overlay escurecido nem
+   largura máxima. A diferença é o que a tela responde — aqui a pergunta é
+   "quando esta conta volta a ter sombra livre", então a coluna de prazo é a
+   que precisa ser lida de longe e é a única repintada a cada segundo. */
+
+body.expedition-standalone {
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-bg-elevated);
+}
+
+#expOverlay {
+  display: none;
+  height: 100vh;
+}
+
+#expOverlay.show {
+  display: block;
+}
+
+#expModal {
+  height: 100vh;
+  box-sizing: border-box;
+  padding: 16px 18px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  color-scheme: var(--theme-color-scheme);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#expModal .lv-head h2 {
+  color: var(--color-text-primary);
+  font-size: 21px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 2px;
+  font-weight: 700;
+}
+
+#expModal .hint {
+  color: var(--color-text-secondary);
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+#expModal .lv-warn {
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-warn, #e8b339);
+}
+
+#expModal .xp-section {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--color-text-secondary);
+  flex: 0 0 auto;
+}
+
+/* ---------------------------------------------------- interruptor e ritmo */
+
+#expModal #expControls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, .08));
+  flex: 0 0 auto;
+}
+
+#expModal .xp-master {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+#expModal .xp-interval {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin-left: auto;
+}
+
+#expModal .xp-interval input {
+  background: var(--color-bg-input, rgba(0, 0, 0, .25));
+  border: 1px solid var(--border-strong);
+  color: var(--color-text-primary);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 13px;
+  width: 72px;
+  font-variant-numeric: tabular-nums;
+}
+
+#expModal .xp-interval input:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* ------------------------------------------------------ tabela de contas */
+
+#expModal #expAccounts {
+  flex: 0 0 auto;
+  overflow: auto;
+  max-height: 46vh;
+  contain: layout paint style;
+}
+
+#expModal .xp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+#expModal .xp-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  font-weight: 700;
+  text-align: right;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border-strong);
+  white-space: nowrap;
+}
+
+#expModal .xp-table td {
+  padding: 6px 8px;
+  text-align: right;
+  /* Prazos e contagens só se comparam entre contas se os dígitos alinharem. */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, .05));
+}
+
+#expModal .xp-table th.xp-th-on,
+#expModal .xp-table td.xp-th-on {
+  text-align: center;
+  width: 1%;
+  padding-right: 4px;
+}
+
+#expModal .xp-table td.xp-th-on input {
+  cursor: pointer;
+  margin: 0;
+}
+
+#expModal .xp-table th:nth-child(2),
+#expModal .xp-name {
+  text-align: left;
+}
+
+#expModal .xp-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-primary);
+  font-weight: 600;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Bolinha de monitor ligado. Vem acompanhada do texto "monitor desligado" na
+   própria linha, para não deixar o estado só na cor. */
+#expModal .xp-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-secondary);
+  opacity: .4;
+}
+
+#expModal .xp-dot.is-on {
+  background: var(--color-ok, #58c470);
+  opacity: 1;
+}
+
+#expModal .xp-num {
+  color: var(--color-text-primary);
+}
+
+#expModal .xp-num.is-ready,
+#expModal .xp-next .is-ready {
+  color: var(--color-ok, #58c470);
+  font-weight: 700;
+}
+
+#expModal .xp-next {
+  min-width: 150px;
+}
+
+/* Horário de término em segundo plano: o que se lê é quanto falta, o relógio
+   serve só para conferir. */
+#expModal .xp-at {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+#expModal .xp-vip {
+  color: var(--color-accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+/* Linha sem dado útil (monitor desligado, lendo, expedição não liberada):
+   apagada e à esquerda, porque é frase e não número. */
+#expModal .xp-off {
+  text-align: left !important;
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+#expModal .xp-err {
+  text-align: left !important;
+  color: var(--color-warn, #e8b339);
+}
+
+/* ----------------------------------------------------------------- o log */
+
+/* O log leva o espaço que sobra: é a parte que cresce. */
+#expModal #expLog {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  contain: layout paint style;
+}
+
+#expModal #expLog .hint {
+  margin: 4px 0;
+}
+
+#expModal .xp-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 4px 0;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, .05));
+}
+
+#expModal .xp-line.is-err .xp-line-text {
+  color: var(--color-warn, #e8b339);
+}
+
+#expModal .xp-time {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+#expModal .xp-line-acc {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  min-width: 68px;
+}
+
+#expModal .xp-line-text {
+  color: var(--color-text-primary);
+}
+
+#expModal .lv-status-bar {
+  flex: 0 0 auto;
+}
+
+#expModal .modal-actions {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 760px) {
+
+  /* Com a tela estreita o armazém sai primeiro: é informação de folga, não de
+     prazo. */
+  #expModal .xp-table th:nth-child(5),
+  #expModal .xp-table td:nth-child(5) {
+    display: none;
+  }
+}
