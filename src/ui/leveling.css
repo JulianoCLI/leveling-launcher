@@ -1235,6 +1235,31 @@ body.market-standalone #marketModal {
 
 /* --------------------------------------------------------- minha bolsa */
 
+/* Seletor de conta e caixa de vestidos na mesma linha. Ficam dentro da aba, e
+   não na barra do topo como os da aba Anunciar: aqui não há campo de texto, e
+   um `select` não perde foco por repintura. */
+#marketModal .mk-bolsa-filtros {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+#marketModal .mk-bolsa-filtros .mk-check {
+  margin-bottom: 0;
+}
+
+/* Subabas de "Meus anúncios". Mesma aparência das abas do topo porque fazem a
+   mesma coisa — trocam o conteúdo —, mas empurradas para a direita: as de
+   cima escolhem a visão, estas escolhem dentro dela, e alinhá-las na mesma
+   margem sugeriria que são do mesmo nível. */
+#marketModal .mk-subtabs {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
 #marketModal .mk-check {
   display: inline-flex;
   align-items: center;
@@ -1692,7 +1717,10 @@ body.market-standalone #marketModal {
   min-width: 22px;
 }
 
-#marketModal .mk-bar {
+/* `mk-bar-fill`, e não `mk-bar`: o nome curto já era o da barra de filtros do
+   topo, e este gradiente vazava para lá — a barra de abas inteira ficava
+   pintada de verde-água. Dois lugares diferentes não podem dividir o nome. */
+#marketModal .mk-bar-fill {
   width: 100%;
   background: linear-gradient(180deg, var(--color-accent), rgba(120, 190, 255, .45));
   border-radius: 3px 3px 0 0;
@@ -1887,6 +1915,92 @@ body.sniper-standalone {
   letter-spacing: 0;
   font-size: 10.5px;
   color: var(--color-text-secondary);
+}
+
+/* "Adicionar ao sniper", no canto da ficha do item. Discreto por padrão: é uma
+   ação que gasta dinheiro sozinha depois, e um botão chamativo convida ao
+   clique acidental. A confirmação é que carrega o peso. */
+#marketModal .mk-snipe {
+  margin-left: auto;
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--color-text-secondary);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#marketModal .mk-snipe:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
+}
+
+#marketModal .mk-snipe:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
+/* A confirmação da regra. Emoldurada e logo abaixo da ficha: é um formulário
+   que interrompe a leitura de propósito, porque o próximo clique cria uma
+   regra que compra sozinha. */
+#marketModal .mk-snipe-box {
+  border: 1px solid var(--color-accent);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  background: rgba(255, 255, 255, .02);
+}
+
+#marketModal .mk-snipe-campos {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
+#marketModal .mk-snipe-acoes {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+#marketModal .mk-snipe-acoes button {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--color-text-secondary);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#marketModal .mk-snipe-acoes button.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #0b0f14;
+}
+
+#marketModal .mk-snipe-acoes button:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
+/* Saldo da conta que paga. Monoespaçado porque é número que se compara com o
+   teto digitado logo acima, e com fonte proporcional os dígitos não alinham. */
+#sniperModal .sn-wallet {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+#sniperModal .sn-wallet.is-off {
+  font-weight: 400;
+  color: var(--color-warn, #e8b339);
 }
 
 /* O item escolhido do catálogo é dito com o id; a regra por nome é dita com

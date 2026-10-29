@@ -12,6 +12,8 @@ const {
   plan,
   isExchange,
   unitPriceOf,
+  suggestCeiling,
+  SNIPE_DISCOUNT,
   EXCHANGE_DEFS,
   MIN_INTERVAL_MS,
   MAX_INTERVAL_MS,
@@ -33,6 +35,43 @@ const listing = patch => ({
   unit_price: 900,
   quantity: 1,
   ...patch
+});
+
+// ------------------------------------------------------------- teto sugerido
+
+test('o teto sugerido fica 20% abaixo da mediana', () => {
+  // O sniper existe para pegar o que entra barato. Um teto *na* mediana
+  // compraria metade do mercado — a metade de baixo é o preço normal, não
+  // pechincha —, e a regra viraria uma torneira de ouro aberta.
+  assert.equal(suggestCeiling(1000), 800);
+  assert.equal(SNIPE_DISCOUNT, 0.2);
+});
+
+test('o teto arredonda para baixo', () => {
+  // Um ouro a mais compra caro; um ouro a menos só deixa passar o anúncio
+  // exatamente no limite. O erro barato é o de baixo.
+  assert.equal(suggestCeiling(999), 799);
+});
+
+test('sem mediana não há teto: zero, e não um teto de zero', () => {
+  // Zero é "não sei", e quem chama trata isso desligando o botão. Devolver 1
+  // criaria uma regra que nunca compra e que o usuário acha que está armada.
+  assert.equal(suggestCeiling(0), 0);
+  assert.equal(suggestCeiling(null), 0);
+});
+
+test('mediana minúscula ainda produz um teto que existe', () => {
+  // 20% de 1 arredondado para baixo é 0, e um teto de 0 seria uma regra
+  // morta. O piso de 1 mantém a regra executável.
+  assert.equal(suggestCeiling(1), 1);
+});
+
+test('um desconto fora de faixa cai no padrão', () => {
+  // Desconto de 100% daria teto 0; negativo daria teto acima da mediana, que
+  // é o oposto do que o botão promete.
+  assert.equal(suggestCeiling(1000, 1), 800);
+  assert.equal(suggestCeiling(1000, -1), 800);
+  assert.equal(suggestCeiling(1000, 0.5), 500);
 });
 
 // ------------------------------------------------------------- configuração

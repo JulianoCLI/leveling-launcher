@@ -431,7 +431,12 @@ levelingHeadlessManager.on('sniper', data => broadcast('leveling:sniper', data))
 levelingHeadlessManager.on('market-sold', ({ index, sold }) => {
   if (!sold) return;
   try {
-    market().insertSales([{ ...sold, id: sold.listing_id, sold_at_ms: Date.now() }]);
+    // `seller_index` é o que separa "eu vendi" de "o mercado vendeu". O feed
+    // público é global e anônimo; este push é a única via que sabe de quem é
+    // a venda, e sem o carimbo a aba de anúncios não teria o que listar.
+    market().insertSales([{
+      ...sold, id: sold.listing_id, sold_at_ms: Date.now(), seller_index: index
+    }]);
   } catch (e) {
     logErro('market', e.message);
   }
@@ -958,6 +963,54 @@ ipcMain.handle('leveling:market:announce', async (event, payload) => {
   return { results, blocked: plano.blocked };
 });
 
+/**
+ * A aba "Meus anúncios": o que cada conta tem à venda e o que já vendeu.
+ *
+ * Todas as contas conectadas de uma vez, ao contrário de "Anunciar". A
+ * pergunta aqui é de acompanhamento — "o que está de pé, o que saiu" —, e
+ * respondê-la uma conta por vez faria o usuário clicar oito vezes para ter a
+ * visão que ele queria desde o começo.
+ *
+ * Os anúncios ativos vêm do servidor (`mine`), que é a verdade do momento.
+ * As vendas vêm do banco local, porque o servidor não guarda a lista das
+ * vendas de uma conta — só o contador, que vem junto em `overview` e deixa a
+ * aba admitir quanto do histórico ela não tem.
+ */
+ipcMain.handle('leveling:market:mine', async (event, opts) => {
+  launcherOnly(event);
+  const accounts = sniperAccounts();
+  const dias = Number(opts && opts.days) || 0;
+  const db = market();
+  const contas = [];
+
+  for (const conta of accounts) {
+    const client = levelingHeadlessManager.getClient(conta.index);
+    const vendas = db.mySales({ index: conta.index, days: dias });
+    if (!client || client.status !== 'connected') {
+      // Conta fora do monitor entra assim mesmo, com os anúncios
+      // desconhecidos e as vendas que o banco guardou. Omiti-la diria que ela
+      // não tem nada à venda, que é diferente de não saber.
+      contas.push({ ...conta, offline: true, listings: [], sales: vendas });
+      continue;
+    }
+    const [mine, overview] = await Promise.all([
+      client.marketMine().catch(() => ({ listings: [] })),
+      client.marketOverview().catch(() => ({}))
+    ]);
+    contas.push({
+      ...conta,
+      offline: false,
+      listings: mine.listings || [],
+      active: mine.active || 0,
+      limit: mine.limit || 0,
+      sales: vendas,
+      overview: overview && !overview.errorCode ? overview : null
+    });
+  }
+
+  return { contas, readAtMs: Date.now() };
+});
+
 /** Saúde do acúmulo: desde quando, quantas vendas, tamanho do arquivo. */
 ipcMain.handle('leveling:market:stats', event => {
   launcherOnly(event);
@@ -991,11 +1044,19 @@ function sniperAccounts() {
   const creds = levelingCredentials.getPublicStatus();
   return (creds.accounts || []).map((entry, index) => {
     const client = levelingHeadlessManager.getClient(index);
+    const state = (client && client.state) || null;
+    const conectada = !!client && client.status === 'connected';
     return {
       index,
       username: (entry && entry.username) || '',
-      name: (client && client.state && client.state.name) || '',
-      connected: !!client && client.status === 'connected'
+      name: (state && state.name) || '',
+      connected: conectada,
+      // Saldo da conta, para o seletor dizer com o que ela pode pagar. `null`
+      // quando ela está fora do monitor: o saldo vem do snapshot da sessão, e
+      // mostrar o último conhecido como se fosse o de agora faria o usuário
+      // pôr um teto de compra em cima de um ouro que já foi gasto.
+      gold: conectada ? Number(state && state.gold) || 0 : null,
+      diamonds: conectada ? Number(state && state.diamonds) || 0 : null
     };
   });
 }
@@ -1044,6 +1105,46 @@ ipcMain.handle('leveling:sniper:set', (event, config) => {
     config: levelingHeadlessManager.getSniperConfig(),
     stats: levelingHeadlessManager.getSniperStats()
   };
+});
+
+/**
+ * Acrescenta uma regra ao sniper, vinda da janela do mercado.
+ *
+ * Canal próprio, e não `sniper:set`: aquele recebe a configuração **inteira**
+ * e é da tela do sniper, que a tem completa. A janela do mercado não tem — e
+ * se mandasse a sua ideia de configuração apagaria as regras que não conhece.
+ * Aqui só se acrescenta.
+ *
+ * A regra nasce desligada do alvo de ninguém e habilitada: o usuário já
+ * confirmou o teto e a quantidade numa tela antes de chegar aqui.
+ */
+ipcMain.handle('leveling:sniper:add', (event, rule) => {
+  launcherOnly(event);
+  const atual = levelingHeadlessManager.getSniperConfig();
+  const nova = levelingSniper.normalizeRule({
+    defId: (rule && rule.defId) || '',
+    name: (rule && rule.name) || '',
+    maxGold: (rule && rule.maxGold) || 0,
+    maxDiamond: (rule && rule.maxDiamond) || 0,
+    target: (rule && rule.target) || 0,
+    account: (rule && rule.account) || 0,
+    enabled: true
+  });
+  if (!nova) return { ok: false, error: 'sniper.ruleInvalid' };
+
+  // Item que já tem regra é substituição, não duplicata: `normalizeConfig`
+  // funde pela chave de qualquer forma, e dizer qual dos dois casos aconteceu
+  // é o que faz a tela saber se escreveu "adicionada" ou "atualizada".
+  const existia = atual.rules.some(r => r.id === nova.id);
+  const rules = atual.rules.filter(r => r.id !== nova.id).concat(nova);
+  if (rules.length > levelingSniper.MAX_RULES) {
+    return { ok: false, error: 'sniper.tooManyRules' };
+  }
+
+  const aplicada = levelingHeadlessManager.setSniperConfig({ ...atual, rules });
+  writePrefs({ sniper: aplicada });
+  syncSniperPoll();
+  return { ok: true, replaced: existia, rule: nova, config: aplicada };
 });
 
 /** Uma varredura agora, sem esperar o intervalo. */

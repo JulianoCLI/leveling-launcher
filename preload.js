@@ -67,6 +67,10 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   marketLevelsFor: (listingIds) => ipcRenderer.invoke('leveling:market:levels-for', listingIds),
   // Abre o mercado em janela própria, para dar para olhar o preço e mexer no
   // jogo ao mesmo tempo — o que um modal sobre o launcher não permitia.
+  // Anúncios ativos e vendas de cada conta: a aba "Meus anúncios". Os ativos
+  // vêm do servidor; as vendas, do banco local, porque o servidor não guarda
+  // a lista das vendas de uma conta.
+  marketMine: (opts) => ipcRenderer.invoke('leveling:market:mine', opts),
   marketWindow: () => ipcRenderer.invoke('leveling:market:window'),
   marketWindowClose: () => ipcRenderer.invoke('leveling:market:window-close'),
   onMarketCatalog: (cb) => ipcRenderer.on('leveling:market-catalog', (_e, data) => cb(data)),
@@ -79,6 +83,10 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   // próprio, para a tela nunca mostrar "ligado" com regras não salvas.
   sniperGet: () => ipcRenderer.invoke('leveling:sniper:get'),
   sniperSet: (config) => ipcRenderer.invoke('leveling:sniper:set', config),
+  // Acrescenta uma regra sem mandar a configuração inteira. É o caminho do
+  // botão "Adicionar ao sniper" da janela do mercado, que não conhece as
+  // outras regras e as apagaria se usasse `sniperSet`.
+  sniperAdd: (rule) => ipcRenderer.invoke('leveling:sniper:add', rule),
   sniperPoll: () => ipcRenderer.invoke('leveling:sniper:poll'),
   sniperLog: () => ipcRenderer.invoke('leveling:sniper:log'),
   sniperLogClear: () => ipcRenderer.invoke('leveling:sniper:log-clear'),

@@ -1783,6 +1783,52 @@ class LevelingHeadlessClient extends EventEmitter {
     return { sales: (res.value && res.value.sales) || [] };
   }
 
+  /**
+   * Os anúncios desta conta que ainda estão de pé.
+   *
+   * Leitura pura, e por conta: `mine` não leva argumento nenhum, quem decide
+   * de quem são os anúncios é a sessão que faz o pedido. É por isso que a aba
+   * percorre as contas uma a uma em vez de pedir tudo de uma vez.
+   *
+   * `limit` vem junto e importa: o jogo tem teto de anúncios simultâneos, e
+   * saber que faltam duas vagas muda o que vale a pena anunciar.
+   */
+  async marketMine() {
+    const res = await this.marketRequest('mine');
+    if (res.errorCode) return { errorCode: res.errorCode, listings: [] };
+    const v = res.value || {};
+    return {
+      listings: v.listings || [],
+      active: Number(v.active) || 0,
+      limit: Number(v.limit) || 0
+    };
+  }
+
+  /**
+   * Os totais desta conta no mercado: anúncios ativos, vendas, giro.
+   *
+   * É o que o servidor tem de venda **por conta** — e é só contador. Não
+   * existe pedido que devolva a lista das vendas de uma conta: `history` é o
+   * feed global anonimizado, idêntico em qualquer sessão, e `mine` só traz o
+   * que ainda está de pé. Quem vendeu o quê, linha a linha, só o launcher
+   * sabe, pelo push `market_push` que ele grava.
+   *
+   * Por isso o total vem daqui e a lista vem do banco: assim a aba consegue
+   * dizer "o servidor contou 48 vendas, eu registrei 12" em vez de fingir que
+   * as doze são tudo.
+   */
+  async marketOverview() {
+    const res = await this.marketRequest('overview');
+    if (res.errorCode) return { errorCode: res.errorCode };
+    const v = res.value || {};
+    return {
+      activeListings: Number(v.active_listings) || 0,
+      totalSales: Number(v.total_sales) || 0,
+      goldMoved: Number(v.gold_moved) || 0,
+      diamondsMoved: Number(v.diamonds_moved) || 0
+    };
+  }
+
   /** Vocabulário do mercado: categorias, ordenações, taxa de venda. */
   async marketConfig() {
     const res = await this.marketRequest('config');

@@ -125,6 +125,16 @@
   };
 
   /**
+   * Desconto do teto sugerido ao criar uma regra de sniper a partir do item.
+   *
+   * Espelha `SNIPE_DISCOUNT` de `leveling-sniper.js`, onde a regra é testada;
+   * a cópia existe porque este arquivo é script de navegador e não tem
+   * `require`. O cálculo real da regra gravada é o do domínio — aqui ele só
+   * preenche o campo que o usuário vai conferir.
+   */
+  const SNIPE_DESCONTO = 0.2;
+
+  /**
    * Ordens da aba Anunciar.
    *
    * "Valor do lote" é o padrão porque é a pergunta da aba: num inventário de
@@ -211,6 +221,32 @@
      * caixa existe porque às vezes a resposta é vender a armadura mesmo.
      */
     showEquip: false,
+    /**
+     * Conta filtrada na bolsa. `null` = todas.
+     *
+     * Peneira local sobre `bolsa`, que já traz todas as contas: a varredura
+     * custa quatro páginas por conta, e refazê-la a cada troca de seletor
+     * pagaria o preço de ler as outras sete para mostrar uma.
+     */
+    bolsaConta: null,
+    /**
+     * Aba "Meus anúncios": o que cada conta tem à venda e o que já vendeu.
+     *
+     * Duas fontes com honestidades diferentes, e a aba diz qual é qual: os
+     * anúncios vêm do servidor e são a verdade do momento; as vendas vêm do
+     * banco local e só existem a partir do primeiro dia de launcher aberto,
+     * porque o servidor não guarda a lista das vendas de uma conta.
+     */
+    mine: null,
+    /** Conta filtrada na aba de anúncios. `null` = todas. */
+    mineConta: null,
+    /** `ativos` ou `vendas`. São duas perguntas, e misturá-las confunde. */
+    mineAba: 'ativos',
+    /**
+     * Regra de sniper em confirmação, criada a partir do item aberto.
+     * `null` quando não há nenhuma — o botão só a abre.
+     */
+    snipe: null,
 
     /**
      * Aba "Anunciar". Uma conta por vez, e por instância de item.
@@ -465,6 +501,16 @@
           await this.loadSellable();
           return;
         }
+        if (this.view === 'mine') {
+          // Todas as contas de uma vez, ao contrário de "Anunciar": a
+          // pergunta é de acompanhamento, e respondê-la conta a conta faria o
+          // usuário clicar oito vezes pela visão que ele já queria inteira.
+          const res = this.api.marketMine
+            ? await this.api.marketMine({ days: this.query.days }).catch(() => null)
+            : null;
+          this.mine = res || { contas: [], errorCode: 'mine.failed' };
+          return;
+        }
         if (this.view === 'live') {
           const res = await this.api.marketRecent({
             limit: 200, days: this.query.days,
@@ -488,7 +534,7 @@
         // nome do monstro — não casaria com nada.
         // A bolsa já traz posse e preço juntos: perguntar de novo seria uma
         // segunda varredura para repetir o que acabou de chegar.
-        if (this.view === 'bolsa' || this.view === 'sell') return;
+        if (this.view === 'bolsa' || this.view === 'sell' || this.view === 'mine') return;
         const visiveis = (this.view === 'live' ? this.data.sales : this.data.items)
           .filter(r => r.kind !== 'MARKET_KIND_SHADOW' && r.category !== 'sombra')
           .map(r => r.def_id);
@@ -1026,6 +1072,7 @@
       vista.innerHTML = this.view === 'detail' ? this.detailHtml()
         : this.view === 'bolsa' ? this.bolsaHtml()
         : this.view === 'sell' ? this.sellHtml()
+        : this.view === 'mine' ? this.mineHtml()
         : this.view === 'live' ? this.liveHtml()
         : this.itemsHtml();
 
@@ -1076,7 +1123,8 @@
         { id: 'items', label: 'Itens' },
         { id: 'live', label: 'Ao vivo' },
         { id: 'bolsa', label: 'Minha bolsa' },
-        { id: 'sell', label: 'Anunciar' }
+        { id: 'sell', label: 'Anunciar' },
+        { id: 'mine', label: 'Meus anúncios' }
       ];
       return `
         <div class="mk-bar">
@@ -1097,7 +1145,7 @@
               </select>
             </label>
             ${this.view === 'sell' ? this.sellFiltersHtml() : ''}
-            ${this.view === 'detail' || this.view === 'bolsa' || this.view === 'sell' ? '' : `
+            ${this.view === 'detail' || this.view === 'bolsa' || this.view === 'sell' || this.view === 'mine' ? '' : `
               <label class="mk-field">
                 <span>Categoria</span>
                 <select data-role="category">
@@ -1271,6 +1319,11 @@
         const caixa = alvo.closest('[data-role="equip"]');
         if (caixa) { this.showEquip = !!caixa.checked; this.render(); return; }
         if (this.view === 'sell' && this.wireSellClick(alvo)) return;
+        if (this.view === 'detail' && this.wireSnipeClick(alvo)) return;
+        if (this.view === 'mine') {
+          const sub = alvo.closest('[data-role="mine-aba"]');
+          if (sub) { this.mineAba = sub.dataset.aba; this.render(); return; }
+        }
         const linha = alvo.closest('[data-item]');
         if (linha) this.show(linha.dataset.item);
       };
@@ -1292,8 +1345,96 @@
           this.sell.account = v === '' ? null : Number(v);
           this.sell.items = [];
           this.load();
+          return;
         }
+        // Bolsa: filtro local, sem releitura. `render`, não `load`.
+        const conta = alvo.closest && alvo.closest('[data-role="bolsa-conta"]');
+        if (conta) {
+          this.bolsaConta = conta.value === 'todas' ? null : Number(conta.value);
+          this.render();
+          return;
+        }
+        const contaMine = alvo.closest && alvo.closest('[data-role="mine-conta"]');
+        if (contaMine) {
+          this.mineConta = contaMine.value === 'todas' ? null : Number(contaMine.value);
+          this.render();
+          return;
+        }
+
+        // Campos da regra de sniper. Guardados sem repintar: a confirmação
+        // está aberta e repintá-la tiraria o cursor do campo no meio do
+        // número. O botão "Criar regra" lê o estado, que já está atualizado.
+        const s = this.snipe;
+        if (!s) return;
+        const papel = alvo.dataset.role;
+        if (papel === 'snipe-max') s.maxGold = Math.max(0, Math.floor(Number(alvo.value) || 0));
+        else if (papel === 'snipe-target') s.target = Math.max(0, Math.floor(Number(alvo.value) || 0));
+        else if (papel === 'snipe-account') s.account = Number(alvo.value) || 0;
       };
+    },
+
+    /**
+     * Cliques do botão de sniper, no detalhe. Devolve `true` quando tratou.
+     */
+    wireSnipeClick(alvo) {
+      const papel = alvo.closest && alvo.closest('[data-role]');
+      const role = papel && papel.dataset.role;
+      if (role === 'snipe') { this.openSnipe(); return true; }
+      if (role === 'snipe-cancel') { this.snipe = null; this.render(); return true; }
+      if (role === 'snipe-ok') { this.confirmSnipe(); return true; }
+      return false;
+    },
+
+    /**
+     * Prepara a regra com o teto já calculado.
+     *
+     * As contas vêm de `marketSellable` sem índice, que é o pedido barato que
+     * devolve só a lista — a aba Anunciar já o usa para montar o seletor
+     * dela, e aqui a pergunta é a mesma: quem está em modo monitor.
+     */
+    async openSnipe() {
+      const it = this.data.item;
+      if (!it) return;
+      const mediana = Number(it.mediana) || 0;
+      if (!mediana) return;
+
+      if (!this.sell.accounts.length && this.api.marketSellable) {
+        const res = await this.api.marketSellable({ index: null }).catch(() => null);
+        if (res && res.accounts) this.sell.accounts = res.accounts;
+      }
+      const viva = (this.sell.accounts || []).find(a => a.connected);
+
+      this.snipe = {
+        defId: it.def_id,
+        name: it.name || it.def_id,
+        median: mediana,
+        maxGold: Math.max(1, Math.floor(mediana * (1 - SNIPE_DESCONTO))),
+        target: 1,
+        account: viva ? viva.index : 0
+      };
+      this.render();
+    },
+
+    /** Grava a regra. O canal acrescenta — nunca manda a configuração inteira. */
+    async confirmSnipe() {
+      const s = this.snipe;
+      if (!s || !s.maxGold) return;
+      const res = await this.api.sniperAdd({
+        defId: s.defId,
+        name: s.name,
+        maxGold: s.maxGold,
+        target: s.target,
+        account: s.account
+      }).catch(e => ({ ok: false, error: (e && e.message) || 'falhou' }));
+
+      this.snipe = null;
+      this.render();
+      if (res && res.ok) {
+        this.say(`${res.replaced ? 'Regra atualizada' : 'Regra criada'}: compra ${
+          s.target ? `${s.target} unidade(s)` : 'sem limite'} de ${s.name} até ${cheio(s.maxGold)} 🪙.`);
+      } else {
+        this.say('Não foi possível criar a regra: ' + ((res && res.error) || 'erro'), true);
+      }
     },
 
     /**
@@ -1423,11 +1564,28 @@
       const b = this.bolsa;
       if (!b) return `<p class="hint">Lendo o inventário das contas…</p>`;
 
+      // Filtro por conta. Com oito contas a tabela passa de mil linhas, e a
+      // pergunta quase sempre é sobre uma delas — "o que esta conta tem para
+      // vender". É peneira sobre o que já foi lido, não uma releitura: trocar
+      // de conta não pode custar uma varredura nova de inventário.
+      const contas = b.contas || [];
       const caixa = `
-        <label class="mk-check">
-          <input type="checkbox" data-role="equip" ${this.showEquip ? 'checked' : ''}>
-          <span>Mostrar equipamentos vestidos</span>
-        </label>`;
+        <div class="mk-bolsa-filtros">
+          ${contas.length > 1 ? `
+            <label class="mk-field">
+              <span>Conta</span>
+              <select data-role="bolsa-conta">
+                <option value="todas"${this.bolsaConta === null ? ' selected' : ''}>todas (${contas.length})</option>
+                ${contas.map(c => `
+                  <option value="${c.index}"${this.bolsaConta === c.index ? ' selected' : ''}>${
+            escape(`${c.index + 1} · ${c.name || 'conta ' + (c.index + 1)}`)}</option>`).join('')}
+              </select>
+            </label>` : ''}
+          <label class="mk-check">
+            <input type="checkbox" data-role="equip" ${this.showEquip ? 'checked' : ''}>
+            <span>Mostrar equipamentos vestidos</span>
+          </label>
+        </div>`;
 
       if (!b.contas.length) {
         return `
@@ -1445,6 +1603,10 @@
       const linhas = [];
       const totalPorConta = new Map();
       for (const conta of b.contas) {
+        // O filtro corta aqui, antes de somar: o total tem de ser o da conta
+        // escolhida, senão o card diria um número que não corresponde à
+        // tabela logo abaixo.
+        if (this.bolsaConta !== null && conta.index !== this.bolsaConta) continue;
         let soma = 0;
         for (const [defId, d] of Object.entries(conta.owned)) {
           const vestido = !d.qty && d.equipped;
@@ -1475,7 +1637,11 @@
       const semPreco = linhas.filter(l => !l.unit).length;
 
       if (!linhas.length) {
-        return `${caixa}<p class="hint">Nada vendável nas contas lidas.</p>`;
+        // "A conta está vazia" e "o filtro não deixou passar" mandam o
+        // usuário para lados opostos.
+        return `${caixa}<p class="hint">${this.bolsaConta !== null
+          ? 'Nada vendável nesta conta. Escolha "todas" para ver as outras.'
+          : 'Nada vendável nas contas lidas.'}</p>`;
       }
 
       return `
@@ -1485,8 +1651,10 @@
             ${this.cardHtml('Total vendável', total, 'pela mediana de cada item, sem o que está vestido')}
             <div class="mk-card">
               <span class="mk-card-label">Contas lidas</span>
-              <b class="mk-card-value">${b.contas.length}</b>
-              <small>${b.offline && b.offline.length ? `${b.offline.length} fora do monitor` : 'todas em monitor'}</small>
+              <b class="mk-card-value">${this.bolsaConta === null ? b.contas.length : 1}</b>
+              <small>${this.bolsaConta === null
+          ? (b.offline && b.offline.length ? `${b.offline.length} fora do monitor` : 'todas em monitor')
+          : `de ${b.contas.length} lidas · filtrando`}</small>
             </div>
             <div class="mk-card">
               <span class="mk-card-label">Linhas</span>
@@ -1529,6 +1697,201 @@
         ${semPreco ? `<p class="hint">${semPreco} linha(s) sem cotação: o item não foi vendido no período
         escolhido. Troque o período para "tudo" — o banco guarda desde o primeiro dia de uso.</p>` : ''}
       `;
+    },
+
+    /**
+     * Aba "Meus anúncios".
+     *
+     * Duas perguntas que não se misturam: "o que está de pé agora" e "o que
+     * já saiu". A primeira é acionável — anúncio parado perto de expirar pede
+     * decisão; a segunda é histórico. Numa tabela só, a segunda enterraria a
+     * primeira, porque vendas acumulam para sempre e anúncios ativos são
+     * poucos por conta.
+     */
+    mineHtml() {
+      const m = this.mine;
+      if (!m) return `<p class="hint">Lendo os anúncios das contas…</p>`;
+
+      const contas = (m.contas || []).filter(
+        c => this.mineConta === null || c.index === this.mineConta
+      );
+      const vivas = (m.contas || []).filter(c => !c.offline);
+
+      const filtros = `
+        <div class="mk-bolsa-filtros">
+          ${(m.contas || []).length > 1 ? `
+            <label class="mk-field">
+              <span>Conta</span>
+              <select data-role="mine-conta">
+                <option value="todas"${this.mineConta === null ? ' selected' : ''}>todas (${m.contas.length})</option>
+                ${m.contas.map(c => `
+                  <option value="${c.index}"${this.mineConta === c.index ? ' selected' : ''}>${
+            escape(`${c.index + 1} · ${c.name || c.username || 'conta ' + (c.index + 1)}`)}${
+            c.offline ? ' (offline)' : ''}</option>`).join('')}
+              </select>
+            </label>` : ''}
+          <div class="mk-subtabs" role="tablist">
+            <button type="button" class="mk-tab${this.mineAba === 'ativos' ? ' is-on' : ''}"
+              data-role="mine-aba" data-aba="ativos">À venda agora</button>
+            <button type="button" class="mk-tab${this.mineAba === 'vendas' ? ' is-on' : ''}"
+              data-role="mine-aba" data-aba="vendas">Vendidos</button>
+          </div>
+        </div>`;
+
+      if (!vivas.length) {
+        return `${filtros}<p class="hint">Nenhuma conta em modo monitor. Os anúncios ativos são lidos
+          pela sessão de cada conta, então sem monitor só o histórico já gravado aparece.</p>
+          ${this.mineAba === 'vendas' ? this.mineSalesHtml(contas) : ''}`;
+      }
+
+      return `${filtros}${this.mineAba === 'ativos'
+        ? this.mineListingsHtml(contas)
+        : this.mineSalesHtml(contas)}`;
+    },
+
+    /** Os anúncios de pé, por conta. Vindos do servidor: é o estado de agora. */
+    mineListingsHtml(contas) {
+      const linhas = [];
+      for (const c of contas) {
+        for (const l of c.listings || []) linhas.push({ ...l, conta: c });
+      }
+      // Quem expira primeiro no topo: é a única linha que pede decisão hoje.
+      linhas.sort((a, b) => Number(a.expires_at_ms || 0) - Number(b.expires_at_ms || 0));
+
+      const totalOuro = linhas
+        .filter(l => !String(l.currency || '').includes('DIAMOND'))
+        .reduce((s, l) => s + (Number(l.total) || 0), 0);
+
+      if (!linhas.length) {
+        return `<p class="hint">Nenhum anúncio ativo${
+          this.mineConta !== null ? ' nesta conta' : ''}. Use a aba <b>Anunciar</b> para criar.</p>`;
+      }
+
+      return `
+        <div class="mk-cards">
+          ${this.cardHtml('Pedido em aberto', totalOuro, 'soma do que está à venda, em ouro')}
+          <div class="mk-card">
+            <span class="mk-card-label">Anúncios</span>
+            <b class="mk-card-value">${linhas.length}</b>
+            <small>${contas.map(c => c.limit
+          ? `${c.active || 0}/${c.limit}`
+          : `${(c.listings || []).length}`).join(' · ')} por conta</small>
+          </div>
+        </div>
+
+        <table class="mk-table">
+          <thead>
+            <tr>
+              <th class="mk-c-ic" aria-label="Ícone"></th>
+              <th class="mk-c-name">Item</th>
+              <th class="mk-c-name">Conta</th>
+              <th class="mk-c-n">Qtd</th>
+              <th class="mk-c-p">Unitário</th>
+              <th class="mk-c-p mk-strong">Total</th>
+              <th class="mk-c-t" title="Quando o anúncio sai do mercado">Expira</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${linhas.map(l => {
+          const resta = Number(l.expires_at_ms || 0) - Date.now();
+          // Menos de seis horas é o que ainda dá para reagir; depois disso o
+          // item volta para a mochila e o anúncio precisa ser refeito.
+          const urgente = resta > 0 && resta < 6 * 3600000;
+          return `
+              <tr data-item="${escape(l.def_id || '')}" tabindex="0">
+                <td class="mk-c-ic">${this.iconHtml(l)}</td>
+                <td class="mk-c-name">
+                  ${this.nameHtml(l, l.level ? ` <span class="mk-nv">nv. ${l.level}</span>` : '')}
+                  ${this.subHtml(l)}
+                </td>
+                <td class="mk-c-name">${escape(l.conta.name || 'conta ' + (l.conta.index + 1))}</td>
+                <td class="mk-c-n">${curto(l.quantity)}</td>
+                <td class="mk-c-p" title="${cheio(unitPedido(l))}">${moeda(l.currency)} ${curto(unitPedido(l))}</td>
+                <td class="mk-c-p mk-strong" title="${cheio(l.total)}">${curto(l.total)}</td>
+                <td class="mk-c-t ${urgente ? 'is-warn' : ''}"
+                  title="${l.expires_at_ms ? new Date(Number(l.expires_at_ms)).toLocaleString('pt-BR') : 'sem data'}">${
+            resta > 0 ? `em ${quando(Date.now() - resta)}` : '—'}</td>
+              </tr>`;
+        }).join('')}
+          </tbody>
+        </table>
+        <p class="hint">O launcher não cancela anúncios: isso é feito no jogo.</p>`;
+    },
+
+    /**
+     * O que já foi vendido, por conta.
+     *
+     * Do banco local, e a aba diz isso. A venda só é registrada pelo push que
+     * o servidor manda a quem vendeu, então o histórico começa no primeiro
+     * dia de launcher aberto — e `total_sales` do servidor, quando a conta
+     * está conectada, mostra o tamanho do que falta.
+     */
+    mineSalesHtml(contas) {
+      const linhas = [];
+      for (const c of contas) {
+        for (const s of c.sales || []) linhas.push({ ...s, conta: c });
+      }
+      linhas.sort((a, b) => Number(b.sold_at_ms || 0) - Number(a.sold_at_ms || 0));
+
+      const liquido = linhas
+        .filter(l => !String(l.currency || '').includes('DIAMOND'))
+        .reduce((s, l) => s + (Number(l.net) || Number(l.total) || 0), 0);
+      const servidor = contas.reduce(
+        (s, c) => s + ((c.overview && c.overview.totalSales) || 0), 0
+      );
+
+      if (!linhas.length) {
+        return `<p class="hint">Nenhuma venda registrada${
+          this.mineConta !== null ? ' nesta conta' : ''} no período escolhido.${
+          servidor ? ` O servidor conta <b>${cheio(servidor)}</b> no total — o launcher só registra
+            o que acontece com ele aberto.` : ''}</p>`;
+      }
+
+      return `
+        <div class="mk-cards">
+          ${this.cardHtml('Recebido', liquido, 'líquido, já sem a taxa do jogo')}
+          <div class="mk-card">
+            <span class="mk-card-label">Vendas</span>
+            <b class="mk-card-value">${linhas.length}</b>
+            <small>${servidor
+          ? `de ${cheio(servidor)} que o servidor conta`
+          : 'registradas pelo launcher'}</small>
+          </div>
+        </div>
+
+        <table class="mk-table">
+          <thead>
+            <tr>
+              <th class="mk-c-ic" aria-label="Ícone"></th>
+              <th class="mk-c-name">Item</th>
+              <th class="mk-c-name">Conta</th>
+              <th class="mk-c-n">Qtd</th>
+              <th class="mk-c-p">Total</th>
+              <th class="mk-c-p mk-strong" title="O que entrou na conta, já sem a taxa">Líquido</th>
+              <th class="mk-c-name">Comprador</th>
+              <th class="mk-c-t">Quando</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${linhas.map(l => `
+              <tr data-item="${escape(l.def_id || '')}" tabindex="0">
+                <td class="mk-c-ic">${this.iconHtml(l)}</td>
+                <td class="mk-c-name">
+                  ${this.nameHtml(l, l.level ? ` <span class="mk-nv">nv. ${l.level}</span>` : '')}
+                  ${this.subHtml(l)}
+                </td>
+                <td class="mk-c-name">${escape(l.conta.name || 'conta ' + (l.conta.index + 1))}</td>
+                <td class="mk-c-n">${curto(l.quantity)}</td>
+                <td class="mk-c-p" title="${cheio(l.total)}">${moeda(l.currency)} ${curto(l.total)}</td>
+                <td class="mk-c-p mk-strong" title="${l.fee ? `taxa de ${cheio(l.fee)}` : cheio(l.net || l.total)}">${
+          curto(l.net || l.total)}</td>
+                <td class="mk-c-name">${escape(l.buyer_name || '—')}</td>
+                <td class="mk-c-t" title="${new Date(Number(l.sold_at_ms)).toLocaleString('pt-BR')}">${quando(l.sold_at_ms)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+        <p class="hint">O histórico é do launcher: uma venda só é registrada se ele estava aberto
+          quando ela aconteceu. O servidor não guarda a lista das vendas de uma conta, só o total.</p>`;
     },
 
     /**
@@ -1629,6 +1992,76 @@
       return `<td class="mk-c-p mk-c-dia" title="${escape(dica)}">💎 ${curto(n)}</td>`;
     },
 
+    /**
+     * "Adicionar ao sniper", no canto da ficha do item.
+     *
+     * Aqui é onde a decisão acontece: o usuário acabou de ver a mediana, o
+     * mínimo e o histórico. Obrigá-lo a abrir outra janela e redigitar o nome
+     * do item para transformar isso numa regra perderia o contexto no
+     * caminho.
+     *
+     * Sombra fica de fora: a regra do sniper casa por `def_id`, e uma sombra
+     * não é um item do catálogo — a busca nunca a encontraria.
+     */
+    snipeButtonHtml(it) {
+      if (!this.api || !this.api.sniperAdd) return '';
+      const sombra = String(it.kind || '') === 'MARKET_KIND_SHADOW' || it.category === 'sombra';
+      if (sombra) return '';
+      const mediana = Number(it.mediana) || 0;
+      if (!mediana) {
+        return `<button type="button" class="mk-snipe" disabled
+          title="Sem mediana no período: não há de onde tirar um teto">Adicionar ao sniper</button>`;
+      }
+      return `<button type="button" class="mk-snipe" data-role="snipe"
+        title="Cria uma regra de compra automática com teto 20% abaixo da mediana">Adicionar ao sniper</button>`;
+    },
+
+    /**
+     * A confirmação da regra: teto, quantidade e conta, antes de gravar.
+     *
+     * O teto já vem preenchido com 20% abaixo da mediana, que é o pedido, mas
+     * editável — é dinheiro gastando sozinho, e um número que o usuário não
+     * pôde conferir não deveria virar regra. A quantidade é perguntada aqui
+     * porque é a única coisa que a tela do item não tem como adivinhar.
+     */
+    snipeConfirmHtml() {
+      const s = this.snipe;
+      if (!s) return '';
+      const contas = (this.sell.accounts || []).filter(a => a.connected);
+      return `
+        <div class="mk-snipe-box">
+          <h3 class="mk-group">Adicionar ao sniper <small>${escape(s.name)}</small></h3>
+          <p class="hint">O sniper compra sozinho, sem perguntar de novo, qualquer anúncio deste
+            item que entrar <b>igual ou abaixo</b> do teto. A sugestão é ${Math.round(SNIPE_DESCONTO * 100)}%
+            abaixo da mediana de ${cheio(s.median)}.</p>
+          <div class="mk-snipe-campos">
+            <label class="mk-field">
+              <span>Teto 🪙 por unidade</span>
+              <input type="number" class="mk-snipe-in" data-role="snipe-max" min="1" step="1" value="${s.maxGold}">
+            </label>
+            <label class="mk-field">
+              <span>Quantidade alvo</span>
+              <input type="number" class="mk-snipe-in" data-role="snipe-target" min="0" step="1" value="${s.target}">
+              <small>0 = sem limite, compra sempre</small>
+            </label>
+            <label class="mk-field">
+              <span>Conta que paga</span>
+              <select data-role="snipe-account">
+                ${contas.length
+          ? contas.map(a => `<option value="${a.index}"${a.index === s.account ? ' selected' : ''}>${
+            escape(`${a.index + 1} · ${a.name || a.username || 'conta'}`)}</option>`).join('')
+          : '<option value="">nenhuma conta em modo monitor</option>'}
+              </select>
+            </label>
+          </div>
+          <div class="mk-snipe-acoes">
+            <button type="button" data-role="snipe-cancel">Cancelar</button>
+            <button type="button" class="primary" data-role="snipe-ok"
+              ${contas.length && s.maxGold > 0 ? '' : 'disabled'}>Criar regra</button>
+          </div>
+        </div>`;
+    },
+
     detailHtml() {
       const it = this.data.item;
       if (!it) return `<p class="hint">Nenhuma venda deste item no período escolhido. Tente "tudo".</p>`;
@@ -1637,6 +2070,7 @@
       return `
         <div class="mk-detail">
           ${this.fichaHtml(it)}
+          ${this.snipeConfirmHtml()}
           <div class="mk-cards">
             ${this.cardHtml('Mediana', it.mediana, 'o preço do meio — é este o número a usar')}
             ${this.cardHtml('Média', it.media, 'ponderada pela quantidade vendida')}
@@ -1779,6 +2213,7 @@
               atributos.map(a => `<em>${escape(a)}</em>`).join('')
             }</span>` : ''}
           </div>
+          ${this.snipeButtonHtml(it)}
         </div>`;
     },
 
@@ -2220,7 +2655,7 @@
             const dia = new Date(Number(p.dia_ms)).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
             return `
               <div class="mk-bar-wrap" title="${dia}: média ${cheio(p.media)} em ${p.vendas} vendas (de ${cheio(p.minimo)} a ${cheio(p.maximo)})">
-                <div class="mk-bar" style="height:${altura}%"></div>
+                <div class="mk-bar-fill" style="height:${altura}%"></div>
                 <span class="mk-bar-label">${dia.slice(0, 5)}</span>
               </div>`;
           }).join('')}
@@ -2249,10 +2684,32 @@
       return (it && it.name) || this.defId || 'item';
     },
 
+    /**
+     * Um recado na barra de rodapé, por alguns segundos.
+     *
+     * A barra normalmente mostra o estado do banco; um recado a ocupa e ela
+     * volta sozinha ao normal. É o lugar certo para "regra criada": a ação
+     * aconteceu em outra janela, e sem confirmação o clique pareceria não ter
+     * feito nada.
+     */
+    say(texto, aviso) {
+      const barra = document.getElementById('marketStatusBar');
+      if (!barra) return;
+      barra.textContent = texto;
+      barra.className = aviso ? 'lv-status-bar is-warn' : 'lv-status-bar';
+      clearTimeout(this.sayTimer);
+      this.sayTimer = setTimeout(() => { this.sayTimer = null; this.paintStatus(); }, 6000);
+    },
+
     /** Barra de rodapé: diz o que o banco tem e se o coletor está vivo. */
     paintStatus() {
       const barra = document.getElementById('marketStatusBar');
       if (!barra) return;
+
+      // Um recado em curso tem precedência: ele responde a um clique que o
+      // usuário acabou de dar, e o estado do banco pode esperar seis
+      // segundos. Sem isto o coletor apagaria a confirmação ao repintar.
+      if (this.sayTimer) return;
 
       if (this.erro) {
         barra.textContent = this.erro;

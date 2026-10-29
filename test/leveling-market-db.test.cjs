@@ -690,6 +690,62 @@ test('o nível por listing_id devolve só o que tem resposta', () => {
   assert.deepEqual(db.levelsOf([999999]), {}, "id inexistente não quebra nada");
 });
 
+// ------------------------------------------------------- vendas das contas
+
+test('o feed global não vira venda de ninguém', () => {
+  // `seller_index` NULL é quase o banco inteiro: o feed é anônimo, e tratar
+  // ausência como conta 0 atribuiria cem mil vendas alheias à primeira conta.
+  const db = abrir();
+  db.insertSales([venda(1, 'arco', 100, 1, Date.now())]);
+  assert.deepEqual(db.mySales(), []);
+  assert.deepEqual(db.mySales({ index: 0 }), []);
+});
+
+test('a venda própria é carimbada com a conta que vendeu', () => {
+  const db = abrir();
+  db.insertSales([{ ...venda(1, 'arco', 100, 1, Date.now()), seller_index: 2 }]);
+  const minhas = db.mySales();
+  assert.equal(minhas.length, 1);
+  assert.equal(minhas[0].seller_index, 2);
+  assert.deepEqual(db.mySales({ index: 2 }).length, 1);
+  assert.deepEqual(db.mySales({ index: 1 }), []);
+});
+
+test('o feed ganhar a corrida não perde o dono da venda', () => {
+  // O feed global e o push `market_push` descrevem a mesma venda, e qual chega
+  // primeiro é corrida. Com `INSERT OR IGNORE` sozinho, o feed vencendo
+  // deixaria a venda para sempre sem conta — a aba diria que ninguém vendeu.
+  const db = abrir();
+  const agora = Date.now();
+  db.insertSales([venda(1, 'arco', 100, 1, agora)]);
+  db.insertSales([{ ...venda(1, 'arco', 100, 1, agora), seller_index: 0, buyer_name: 'Ana' }]);
+  const minhas = db.mySales();
+  assert.equal(minhas.length, 1, 'continua uma linha só: a venda é a mesma');
+  assert.equal(minhas[0].seller_index, 0);
+  assert.equal(minhas[0].buyer_name, 'Ana', 'o comprador só o push conhece');
+});
+
+test('o feed chegando depois não apaga o comprador já gravado', () => {
+  // O feed anonimiza: deixar a string vazia sobrescrever perderia o único
+  // dado que o push trazia de novo.
+  const db = abrir();
+  const agora = Date.now();
+  db.insertSales([{ ...venda(1, 'arco', 100, 1, agora), seller_index: 0, buyer_name: 'Ana' }]);
+  db.insertSales([venda(1, 'arco', 100, 1, agora)]);
+  assert.equal(db.mySales()[0].buyer_name, 'Ana');
+});
+
+test('as minhas vendas vêm da mais recente e respeitam o período', () => {
+  const db = abrir();
+  const agora = Date.now();
+  db.insertSales([
+    { ...venda(1, 'arco', 100, 1, agora - 10 * DIA), seller_index: 0 },
+    { ...venda(2, 'elmo', 100, 1, agora - DIA), seller_index: 0 }
+  ]);
+  assert.deepEqual(db.mySales().map(v => v.def_id), ['elmo', 'arco']);
+  assert.deepEqual(db.mySales({ days: 3 }).map(v => v.def_id), ['elmo']);
+});
+
 test('nível 0 volta como 0, e é a tela que decide não mostrar', () => {
   // O banco não pode esconder a diferença: 0 é "perguntei e não tem nível",
   // e ausência do mapa é "ainda não perguntei". São fatos diferentes.
@@ -698,3 +754,4 @@ test('nível 0 volta como 0, e é a tela que decide não mostrar', () => {
   db.setLevels([{ listing_id: 7, level: 0 }]);
   assert.equal(db.levelsOf([7])["7"].level, 0);
 });
+

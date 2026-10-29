@@ -171,7 +171,10 @@ function normalizeSale(sale) {
     net: num(sale.net),
     sold_at_ms: num(sale.sold_at_ms),
     seller_name: str(sale.seller_name),
-    buyer_name: str(sale.buyer_name)
+    buyer_name: str(sale.buyer_name),
+    // Só a venda própria sabe de quem é. `null` é a resposta honesta para o
+    // feed global, não um zero — zero é o índice da primeira conta.
+    seller_index: Number.isInteger(sale.seller_index) ? sale.seller_index : null
   };
 }
 
@@ -258,7 +261,15 @@ class MarketDatabase {
     const novas = [
       ['level', 'INTEGER'],
       ['slot', 'TEXT'],
-      ['level_at_ms', 'INTEGER']
+      ['level_at_ms', 'INTEGER'],
+      // Qual conta do launcher vendeu. NULL em tudo que veio do feed público,
+      // que é quase o banco inteiro: o feed é global e anônimo, ninguém sabe
+      // de quem é a venda. Só o push `market_push` chega endereçado, e é
+      // dele que esta coluna se preenche.
+      //
+      // Sem ela a aba de anúncios não teria como separar "o que eu vendi" de
+      // "o que o mercado vendeu" — e o segundo tem cem mil linhas.
+      ['seller_index', 'INTEGER']
     ];
     for (const [nome, tipo] of novas) {
       if (colunas.has(nome)) continue;
@@ -271,6 +282,17 @@ class MarketDatabase {
       this.db.exec(`
         CREATE INDEX IF NOT EXISTS idx_sales_sem_nivel
         ON sales(sold_at_ms DESC) WHERE level IS NULL
+      `);
+    } catch {}
+
+    // "As minhas vendas, da mais recente para a mais velha". Parcial pelo
+    // mesmo motivo do anterior: as vendas próprias são um punhado dentro de
+    // um banco que é quase todo feed global, e um índice cheio pagaria o
+    // preço de indexar as cem mil que nunca são consultadas por aqui.
+    try {
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_sales_minhas
+        ON sales(seller_index, sold_at_ms DESC) WHERE seller_index IS NOT NULL
       `);
     } catch {}
 
@@ -312,9 +334,19 @@ class MarketDatabase {
     const stmt = this.db.prepare(`
       INSERT OR IGNORE INTO sales
         (id, listing_id, kind, def_id, name, category, rarity, enchant, currency,
-         quantity, unit_price, total, fee, net, sold_at_ms, seller_name, buyer_name, seen_at_ms)
+         quantity, unit_price, total, fee, net, sold_at_ms, seller_name, buyer_name,
+         seen_at_ms, seller_index)
       VALUES
-        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    // O comprador entra junto porque o feed o apaga: `COALESCE` mantém o que
+    // já houver em vez de trocar um nome por uma string vazia.
+    const marcar = this.db.prepare(`
+      UPDATE sales
+         SET seller_index = ?,
+             buyer_name = COALESCE(NULLIF(?, ''), buyer_name)
+       WHERE (id = ? OR (listing_id = ? AND listing_id > 0))
+         AND seller_index IS NULL
     `);
     const agora = Date.now();
     let novas = 0;
@@ -324,9 +356,17 @@ class MarketDatabase {
         const r = stmt.run(
           l.id, l.listing_id, l.kind, l.def_id, l.name, l.category, l.rarity,
           l.enchant, l.currency, l.quantity, l.unit_price, l.total, l.fee,
-          l.net, l.sold_at_ms, l.seller_name, l.buyer_name, agora
+          l.net, l.sold_at_ms, l.seller_name, l.buyer_name, agora, l.seller_index
         );
-        if (r && r.changes) novas++;
+        if (r && r.changes) { novas++; continue; }
+        // A linha já existia e esta é a venda própria: carimba o dono.
+        //
+        // `INSERT OR IGNORE` sozinho perderia o carimbo. O feed global e o
+        // push descrevem a mesma venda, e qual dos dois chega primeiro é
+        // corrida — se o feed vence, a venda fica para sempre sem conta, e a
+        // aba diria que a pessoa não vendeu nada.
+        if (l.seller_index === null) continue;
+        marcar.run(l.seller_index, l.buyer_name || null, l.id, l.listing_id || 0);
       }
       this.db.exec('COMMIT');
     } catch (err) {
@@ -696,6 +736,44 @@ class MarketDatabase {
     try {
       return this.db
         .prepare(`SELECT * FROM sales ${filtro} ORDER BY sold_at_ms DESC, id DESC LIMIT ?`)
+        .all(...params, limit);
+    } catch (err) {
+      this.error = err && err.message || String(err);
+      return [];
+    }
+  }
+
+  /**
+   * O que as contas do launcher venderam, da mais recente para a mais velha.
+   *
+   * Só o que tem dono: `seller_index IS NULL` é o feed global, que é quase
+   * todo o banco e não é venda de ninguém daqui. O carimbo vem do push
+   * `market_push`, a única mensagem do servidor dirigida a quem vendeu — e
+   * por isso o registro começa no primeiro dia de launcher aberto, nunca
+   * antes. A aba diz isso em voz alta comparando com o total do servidor.
+   *
+   * @param {{index?:number, days?:number, limit?:number}} opts `index`
+   *   ausente traz todas as contas.
+   */
+  mySales(opts = {}) {
+    if (!this.open()) return [];
+    const limit = Math.min(Math.max(num(opts.limit) || 200, 1), 2000);
+    const where = ['seller_index IS NOT NULL'];
+    const params = [];
+    if (Number.isInteger(opts.index)) {
+      where.push('seller_index = ?');
+      params.push(opts.index);
+    }
+    const since = sinceOf(opts.days);
+    if (since) { where.push('sold_at_ms >= ?'); params.push(since); }
+    try {
+      return this.db
+        .prepare(`
+          SELECT * FROM sales
+           WHERE ${where.join(' AND ')}
+           ORDER BY sold_at_ms DESC, id DESC
+           LIMIT ?
+        `)
         .all(...params, limit);
     } catch (err) {
       this.error = err && err.message || String(err);

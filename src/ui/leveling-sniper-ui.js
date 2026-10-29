@@ -150,9 +150,32 @@
       if (res.exchanges) this.exchanges = res.exchanges;
       // Conta padrão do formulário: a primeira em modo monitor, que é a única
       // que pode pagar agora. Sem nenhuma, a primeira configurada.
-      const viva = this.accounts.find(a => a.connected);
-      if (viva) this.draft.account = viva.index;
+      // Só na primeira leitura: depois disso a conta é escolha do usuário, e
+      // sobrescrevê-la a cada recarga trocaria a conta que paga debaixo de
+      // quem está no meio de montar a regra.
+      if (!this.contaEscolhida) {
+        const viva = this.accounts.find(a => a.connected);
+        if (viva) this.draft.account = viva.index;
+      }
       this.render();
+    },
+
+    /**
+     * Relê só os saldos.
+     *
+     * O ouro muda o tempo todo — a conta está caçando, vendendo e repondo
+     * poção enquanto esta tela está aberta. Um saldo que só se atualiza ao
+     * abrir a janela seria um número velho ao lado de uma decisão de compra.
+     *
+     * Não é `load()`: aquele troca a configuração inteira e repinta tudo,
+     * inclusive por cima do que está sendo digitado.
+     */
+    async loadWallets() {
+      const res = await this.api.sniperGet().catch(() => null);
+      if (!res || !res.accounts) return;
+      this.accounts = res.accounts;
+      const campo = document.querySelector('.sn-wallet');
+      if (campo) campo.outerHTML = this.walletHtml(this.draft.account);
     },
 
     /** Substitui a linha do mesmo anúncio em vez de empilhar duas. */
@@ -375,6 +398,27 @@
       return `${conta.index + 1} · ${nome}`;
     },
 
+    /**
+     * O saldo da conta escolhida, debaixo do seletor.
+     *
+     * O teto de compra é um número que só faz sentido contra o que a conta
+     * tem: pôr teto de 2 M numa conta com 300 k é uma regra que nunca
+     * dispara, e descobrir isso pelo log vazio levaria dias. Com o saldo à
+     * vista a conferência é imediata.
+     *
+     * Conta offline mostra um traço, e não o último saldo conhecido: o valor
+     * vem do snapshot da sessão, e exibi-lo como atual seria pior que não
+     * exibir nada.
+     */
+    walletHtml(index) {
+      const conta = this.accounts.find(a => a.index === Number(index));
+      if (!conta) return '';
+      if (!conta.connected) {
+        return `<small class="sn-wallet is-off">saldo desconhecido — a conta não está em modo monitor</small>`;
+      }
+      return `<small class="sn-wallet">🪙 ${num(conta.gold)} · 💎 ${num(conta.diamonds)}</small>`;
+    },
+
     accountOptions(selected) {
       return this.accounts.map(a => {
         const nome = a.name || a.username || `Conta ${a.index + 1}`;
@@ -444,6 +488,7 @@
           <label class="sn-field">
             <span>Conta que compra</span>
             <select id="snAccount">${this.accountOptions(d.account)}</select>
+            ${this.walletHtml(d.account)}
           </label>
           <button type="button" id="snAdd" class="primary">Adicionar</button>
         </div>`;
@@ -471,7 +516,19 @@
         ['snTarget', 'target'], ['snAccount', 'account']
       ]) {
         const campo = document.getElementById(id);
-        if (campo) campo.oninput = () => { this.draft[chave] = campo.value; };
+        if (!campo) continue;
+        campo.oninput = () => { this.draft[chave] = campo.value; };
+      }
+      // A conta é o único campo que repinta ao mudar: o saldo embaixo dela
+      // tem de acompanhar a escolha, senão diria o ouro da conta anterior.
+      const seletorConta = document.getElementById('snAccount');
+      if (seletorConta) {
+        seletorConta.onchange = () => {
+          this.draft.account = seletorConta.value;
+          this.contaEscolhida = true;
+          this.loadWallets();
+          this.renderForm();
+        };
       }
       for (const botao of host.querySelectorAll('[data-pick]')) {
         botao.onclick = () => this.pick(botao.dataset.pick);

@@ -346,8 +346,37 @@ function plan(listings, rule) {
   return { buys, skipped };
 }
 
+/**
+ * Desconto do teto sugerido quando a regra nasce de um item do mercado.
+ *
+ * 20% abaixo da mediana. O sniper existe para pegar o que entra barato, e um
+ * teto *na* mediana compraria metade do mercado — a metade de baixo é o preço
+ * normal, não pechincha. Abaixo disso a compra só dispara quando alguém
+ * anuncia errado ou com pressa, que é o caso que vale automatizar.
+ *
+ * O número é um ponto de partida visível e editável, não uma política: a
+ * confirmação mostra o valor antes de gravar a regra.
+ */
+const SNIPE_DISCOUNT = 0.2;
+
+/**
+ * Teto sugerido a partir da mediana de um item.
+ *
+ * Arredonda para baixo: um teto acima do pretendido compra caro, um teto um
+ * ouro abaixo só deixa passar um anúncio exatamente no limite.
+ */
+function suggestCeiling(median, discount = SNIPE_DISCOUNT) {
+  const m = int(median);
+  if (m <= 0) return 0;
+  const d = Number(discount);
+  const fator = Number.isFinite(d) && d >= 0 && d < 1 ? d : SNIPE_DISCOUNT;
+  return Math.max(1, Math.floor(m * (1 - fator)));
+}
+
 module.exports = {
   defaultConfig,
+  suggestCeiling,
+  SNIPE_DISCOUNT,
   normalizeConfig,
   normalizeRule,
   isConfigured,
