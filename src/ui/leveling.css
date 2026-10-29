@@ -1283,6 +1283,26 @@ body.market-standalone #marketModal {
   margin-bottom: 0;
 }
 
+/* A caixa "só sem preço" mora entre os seletores da barra: precisa alinhar
+   com a base deles, não com o rótulo. */
+#marketModal .mk-field-check {
+  margin-bottom: 0;
+  align-self: flex-end;
+  padding-bottom: 5px;
+}
+
+/* "Limpar filtros" dentro do texto do vazio: é a ação óbvia naquele momento,
+   e um botão de verdade ali competiria com o de anunciar. */
+#marketModal .mk-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--color-accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 #marketModal .mk-c-pick {
   width: 34px;
   text-align: center;

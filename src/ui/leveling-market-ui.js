@@ -124,6 +124,23 @@
     return Math.max(1, Math.round(total / qty));
   };
 
+  /**
+   * Ordens da aba Anunciar.
+   *
+   * "Valor do lote" é o padrão porque é a pergunta da aba: num inventário de
+   * 300 peças o valor está concentrado em poucas, e a ordem de aquisição
+   * esconderia justamente as que compensam anunciar. "Unitário" existe
+   * porque um lote caro de item barato e uma peça cara pedem decisões
+   * diferentes.
+   */
+  const ORDENS_ANUNCIO = [
+    { id: 'valor', label: 'valor do lote' },
+    { id: 'unidade', label: 'valor unitário' },
+    { id: 'nivel', label: 'nível' },
+    { id: 'qtd', label: 'quantidade' },
+    { id: 'nome', label: 'nome' }
+  ];
+
   /** Recusas de anúncio do servidor, em português. O código cru fica à vista. */
   const ERROS_ANUNCIO = {
     'market.limit': 'limite de anúncios atingido',
@@ -214,6 +231,17 @@
       error: '',
       /** Equipamento na lista? Mesma razão da bolsa, e também desligado. */
       showEquip: false,
+      /**
+       * Filtros da lista. Peneira local, não consulta: o inventário já está
+       * todo na memória depois da varredura, e refazer a leitura da conta a
+       * cada troca de categoria seria ida ao servidor para reordenar uma
+       * lista que não mudou.
+       */
+      filter: {
+        category: 'todos', slot: 'todos', rarity: 'todos', search: '', sort: 'valor',
+        /** Só o que o automático não soube precificar — a fila de trabalho manual. */
+        sem: false
+      },
       /** `uid` → preço do pacote digitado. Só os marcados entram. */
       picked: new Map(),
       /** `uid` dos que estão em automático: o preço acompanha a sugestão. */
@@ -613,18 +641,111 @@
       this.sell.auto = new Set();
       this.sell.confirm = null;
       this.sell.results = null;
+      // Os filtros também: categoria e slot que existiam na conta anterior
+      // podem não existir nesta, e um filtro por valor ausente esconderia o
+      // inventário inteiro sem dizer por quê.
+      this.sell.filter = {
+        category: 'todos', slot: 'todos', rarity: 'todos', search: '', sort: 'valor', sem: false
+      };
       this.render();
     },
 
-    /** As linhas que a aba mostra agora, já filtradas pela caixa de equipados. */
+    /**
+     * Categoria, slot e raridade de uma peça, resolvidos pelo catálogo.
+     *
+     * O inventário manda `def_id` e a raridade da instância; categoria e slot
+     * só existem no catálogo do jogo. Quando ele não chegou, tudo cai em
+     * vazio — e os filtros, montados a partir destes mesmos valores, nem
+     * oferecem a opção. A tela nunca filtra por um campo que não sabe ler.
+     */
+    sellFacets(it) {
+      const def = this.catalog.items[it.defId] || {};
+      return {
+        category: String(it.category || def.category || ''),
+        slot: String(def.slot || ''),
+        rarity: String(it.rarity || def.rarity || '')
+      };
+    },
+
+    /**
+     * Os valores que existem de fato no inventário da conta, para os
+     * seletores.
+     *
+     * Montados do que está carregado, não de uma lista fixa de categorias do
+     * jogo: um seletor com trinta opções das quais três têm item é um
+     * seletor que obriga a tentar e errar. Equipado entra na contagem quando
+     * a caixa o revela, senão a opção some ao marcar a caixa.
+     */
+    sellFacetOptions() {
+      const cats = new Set();
+      const slots = new Set();
+      const rars = new Set();
+      for (const it of this.sell.items) {
+        if (it.blocked && !(it.blocked === 'equipped' && this.sell.showEquip)) continue;
+        const f = this.sellFacets(it);
+        if (f.category) cats.add(f.category);
+        if (f.slot) slots.add(f.slot);
+        if (f.rarity) rars.add(f.rarity);
+      }
+      const ord = s => [...s].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+      return { categories: ord(cats), slots: ord(slots), rarities: ord(rars) };
+    },
+
+    /**
+     * As linhas que a aba mostra agora: vendáveis, peneiradas e ordenadas.
+     *
+     * A ordem padrão é por valor sugerido, decrescente. Um inventário de 300
+     * peças tem valor concentrado em poucas delas, e a ordem de `uid` — que é
+     * a de aquisição — esconderia justamente as que compensam anunciar.
+     */
     sellRows() {
-      return this.sell.items.filter(it => {
-        if (it.blocked === 'equipped') return this.sell.showEquip;
+      const f = this.sell.filter;
+      const busca = f.search.toLowerCase();
+
+      const linhas = this.sell.items.filter(it => {
+        if (it.blocked === 'equipped' ? !this.sell.showEquip : it.blocked) return false;
         // Trancado e sem uid nunca aparecem: diferente de equipado, não há
         // nada que o usuário possa fazer na tela a respeito, e a linha só
         // ocuparia espaço entre o que ele pode de fato anunciar.
-        return !it.blocked;
+        const faceta = this.sellFacets(it);
+        if (f.category !== 'todos' && faceta.category !== f.category) return false;
+        if (f.slot !== 'todos' && faceta.slot !== f.slot) return false;
+        if (f.rarity !== 'todos' && faceta.rarity !== f.rarity) return false;
+        if (f.sem && it.suggestion) return false;
+        if (busca && !this.itemLabel(it).toLowerCase().includes(busca)) return false;
+        return true;
       });
+
+      const nome = it => this.itemLabel(it);
+      const ordens = {
+        valor: (a, b) => (b.suggestion * b.qty) - (a.suggestion * a.qty),
+        unidade: (a, b) => b.suggestion - a.suggestion,
+        nome: (a, b) => nome(a).localeCompare(nome(b), 'pt-BR'),
+        nivel: (a, b) => b.level - a.level,
+        qtd: (a, b) => b.qty - a.qty
+      };
+      return linhas.sort(ordens[f.sort] || ordens.valor);
+    },
+
+    /** Algum filtro está peneirando a lista? Separa "conta vazia" de "filtro apertado". */
+    sellFiltered() {
+      const f = this.sell.filter;
+      return f.category !== 'todos' || f.slot !== 'todos' || f.rarity !== 'todos'
+        || !!f.search || !!f.sem;
+    },
+
+    /** Quantos itens a conta tem de vendável, ignorando os filtros. */
+    sellRowsAll() {
+      return this.sell.items.filter(it =>
+        it.blocked === 'equipped' ? this.sell.showEquip : !it.blocked).length;
+    },
+
+    /** Volta os filtros ao estado inicial, preservando a seleção já feita. */
+    clearSellFilter() {
+      this.sell.filter = {
+        category: 'todos', slot: 'todos', rarity: 'todos', search: '', sort: 'valor', sem: false
+      };
+      this.render();
     },
 
     /** Marca ou desmarca um item. Marcar liga o automático por padrão. */
@@ -809,9 +930,16 @@
       const host = document.getElementById('marketBody');
       if (!host) return;
 
+      // O texto buscado fica fora da assinatura de propósito, nas duas abas:
+      // ele muda a cada tecla, e refazer a barra recriaria o input e tiraria
+      // o cursor de dentro dele. O que entra é só o que muda a *estrutura*
+      // da barra — quais campos existem e com que opções.
       const assinatura = [
         this.view, this.itemName(), this.query.days, this.query.sort,
-        this.query.category, this.data.categories.join(',')
+        this.query.category, this.data.categories.join(','),
+        this.sell.account, this.sell.items.length, this.sell.showEquip,
+        this.sell.filter.category, this.sell.filter.slot,
+        this.sell.filter.rarity, this.sell.filter.sort, this.sell.filter.sem
       ].join('|');
 
       let bar = host.querySelector('.mk-bar');
@@ -827,7 +955,7 @@
         // O valor digitado não vem de `this.query.search`: o debounce faz com
         // que eles divirjam por 250 ms, e reescrever a barra nesse intervalo
         // apagaria a última letra digitada.
-        const busca = bar.querySelector('[data-role="search"]');
+        const busca = bar.querySelector('[data-role="search"], [data-role="sell-search"]');
         const digitado = busca ? busca.value : null;
         const tinhaFoco = busca && document.activeElement === busca;
         const caret = tinhaFoco ? busca.selectionStart : 0;
@@ -837,7 +965,7 @@
         this.barSig = assinatura;
         this.wireBar(host);
 
-        const novo = bar.querySelector('[data-role="search"]');
+        const novo = bar.querySelector('[data-role="search"], [data-role="sell-search"]');
         if (novo && digitado != null) {
           novo.value = digitado;
           if (tinhaFoco) { novo.focus(); novo.setSelectionRange(caret, caret); }
@@ -879,6 +1007,7 @@
                 ${PERIODOS.map(p => `<option value="${p.days}" ${p.days === this.query.days ? 'selected' : ''}>${p.label}</option>`).join('')}
               </select>
             </label>
+            ${this.view === 'sell' ? this.sellFiltersHtml() : ''}
             ${this.view === 'detail' || this.view === 'bolsa' || this.view === 'sell' ? '' : `
               <label class="mk-field">
                 <span>Categoria</span>
@@ -903,6 +1032,101 @@
       `;
     },
 
+    /**
+     * Filtros da aba Anunciar.
+     *
+     * Ficam na barra do topo, junto do Período, e não dentro da aba. A aba
+     * se repinta a cada clique de marcar item e a cada preço digitado; um
+     * campo de busca ali dentro perderia o foco no meio da palavra, que é o
+     * mesmo motivo pelo qual a barra é repintada só quando sua estrutura
+     * muda. O Período já estava aqui e serve a aba: é a janela de vendas que
+     * o preço automático olha.
+     *
+     * Só aparecem com conta escolhida e lista carregada — filtro sobre lista
+     * vazia é um seletor que não faz nada.
+     */
+    sellFiltersHtml() {
+      const s = this.sell;
+      if (s.account === null || !s.items.length) return '';
+      const f = s.filter;
+      const op = (lista, atual, rotuloTodos) => `
+        <option value="todos">${rotuloTodos}</option>
+        ${lista.map(v => `<option value="${escape(v)}" ${v === atual ? 'selected' : ''}>${escape(v.toLowerCase())}</option>`).join('')}`;
+      const facetas = this.sellFacetOptions();
+      const semPreco = s.items.filter(i => !i.blocked && !i.suggestion).length;
+
+      return `
+        ${facetas.categories.length > 1 ? `
+          <label class="mk-field">
+            <span>Categoria</span>
+            <select data-role="sell-cat">${op(facetas.categories, f.category, 'todas')}</select>
+          </label>` : ''}
+        ${facetas.slots.length > 1 ? `
+          <label class="mk-field">
+            <span>Slot</span>
+            <select data-role="sell-slot">${op(facetas.slots, f.slot, 'todos')}</select>
+          </label>` : ''}
+        ${facetas.rarities.length > 1 ? `
+          <label class="mk-field">
+            <span>Raridade</span>
+            <select data-role="sell-rar">${op(facetas.rarities, f.rarity, 'todas')}</select>
+          </label>` : ''}
+        <label class="mk-field">
+          <span>Ordem</span>
+          <select data-role="sell-sort">
+            ${ORDENS_ANUNCIO.map(o => `<option value="${o.id}" ${o.id === f.sort ? 'selected' : ''}>${o.label}</option>`).join('')}
+          </select>
+        </label>
+        <label class="mk-field mk-search">
+          <span>Buscar</span>
+          <input type="search" data-role="sell-search" value="${escape(f.search)}" placeholder="nome do item">
+        </label>
+        ${semPreco ? `
+          <label class="mk-check mk-field-check">
+            <input type="checkbox" data-role="sell-sem" ${f.sem ? 'checked' : ''}>
+            <span>Só sem preço (${semPreco})</span>
+          </label>` : ''}`;
+    },
+
+    /** Liga os campos de filtro da aba Anunciar. Peneira local: não relê a conta. */
+    wireSellBar(host) {
+      const liga = (role, fn) => {
+        const el = host.querySelector(`[data-role="${role}"]`);
+        if (el) el.onchange = () => { fn(el); this.render(); };
+      };
+      liga('sell-cat', el => { this.sell.filter.category = el.value; });
+      liga('sell-slot', el => { this.sell.filter.slot = el.value; });
+      liga('sell-rar', el => { this.sell.filter.rarity = el.value; });
+      liga('sell-sort', el => { this.sell.filter.sort = el.value; });
+      liga('sell-sem', el => { this.sell.filter.sem = !!el.checked; });
+
+      const busca = host.querySelector('[data-role="sell-search"]');
+      if (busca) {
+        // Sem debounce, ao contrário da busca das outras abas: aqui não há
+        // consulta nenhuma, só um `filter` sobre uma lista que já está na
+        // memória. Esperar 250 ms seria atrasar de propósito.
+        busca.oninput = () => {
+          this.sell.filter.search = busca.value.trim();
+          this.paintSellView();
+        };
+      }
+    },
+
+    /**
+     * Repinta só a lista, deixando a barra intacta.
+     *
+     * A busca não pode passar por `render`: ele reescreve a barra quando a
+     * assinatura muda, e a assinatura inclui o texto buscado — o input seria
+     * recriado a cada tecla e o cursor sairia dele.
+     */
+    paintSellView() {
+      const vista = document.getElementById('marketBody');
+      const alvo = vista && vista.querySelector('.mk-view');
+      if (!alvo) return;
+      alvo.innerHTML = this.sellHtml();
+      this.wireRows(alvo);
+    },
+
     wireBar(host) {
       for (const botao of host.querySelectorAll('[data-view]')) {
         botao.onclick = () => {
@@ -913,6 +1137,8 @@
       }
       const dias = host.querySelector('[data-role="days"]');
       if (dias) dias.onchange = () => { this.query.days = +dias.value; this.load(); };
+
+      this.wireSellBar(host);
 
       const cat = host.querySelector('[data-role="category"]');
       if (cat) cat.onchange = () => { this.query.category = cat.value; this.load(); };
@@ -985,6 +1211,7 @@
       const role = papel && papel.dataset.role;
       if (role === 'sell-all') { this.toggleSellAll(); return true; }
       if (role === 'sell-equip') { this.sell.showEquip = !!papel.checked; this.render(); return true; }
+      if (role === 'sell-clear') { this.clearSellFilter(); return true; }
       if (role === 'sell-review') { this.openSellConfirm(); return true; }
       if (role === 'sell-back') { this.closeSellConfirm(); return true; }
       if (role === 'sell-go') { this.confirmSell(); return true; }
@@ -1632,13 +1859,25 @@
 
       const linhas = this.sellRows();
       if (!linhas.length) {
-        return `${seletor}<p class="hint">Nada nesta conta pode ir para o mercado agora.</p>`;
+        // Dois vazios diferentes: "a conta não tem nada vendável" e "o
+        // filtro não deixou nada passar". Confundi-los faria o usuário
+        // concluir que a conta está vazia quando ele só escolheu mal a
+        // categoria.
+        return `${seletor}${this.sellFiltered()
+          ? `<p class="hint">Nenhum item com esses filtros.
+              <button type="button" class="mk-link" data-role="sell-clear">Limpar filtros</button></p>`
+          : '<p class="hint">Nada nesta conta pode ir para o mercado agora.</p>'}`;
       }
 
-      const marcados = linhas.filter(l => s.picked.has(l.uid));
-      const soma = marcados.reduce((t, l) => t + (s.picked.get(l.uid) || 0), 0);
-      const semPreco = marcados.filter(l => !s.picked.get(l.uid)).length;
-      const todos = marcados.length === linhas.length;
+      // A conta é de *tudo* que está marcado, não só do que está à vista: o
+      // filtro esconde linha, não desmarca item, e um total que ignorasse o
+      // escondido mentiria sobre o que o botão vai anunciar.
+      const soma = [...s.picked.values()].reduce((t, v) => t + v, 0);
+      const marcadosTotal = s.picked.size;
+      const semPreco = [...s.picked.values()].filter(v => !v).length;
+      const visiveisMarcados = linhas.filter(l => s.picked.has(l.uid)).length;
+      const ocultos = marcadosTotal - visiveisMarcados;
+      const todos = visiveisMarcados === linhas.length;
 
       return `
         ${seletor}
@@ -1647,7 +1886,7 @@
             <tr>
               <th class="mk-c-pick">
                 <input type="checkbox" data-role="sell-all" ${todos ? 'checked' : ''}
-                  aria-label="Marcar todos">
+                  aria-label="Marcar todos" title="Marca os ${linhas.length} itens à vista">
               </th>
               <th class="mk-c-name">Item</th>
               <th class="mk-c-n">Qtd</th>
@@ -1662,12 +1901,14 @@
         </table>
 
         <div class="mk-sell-foot">
-          <span>${marcados.length
-          ? `<b>${marcados.length}</b> ${marcados.length === 1 ? 'item marcado' : 'itens marcados'} · ${curto(soma)} 🪙${
-            semPreco ? ` · <b class="is-warn">${semPreco} sem preço</b>` : ''}`
-          : 'Nenhum item marcado.'}</span>
+          <span>${marcadosTotal
+          ? `<b>${marcadosTotal}</b> ${marcadosTotal === 1 ? 'item marcado' : 'itens marcados'} · ${curto(soma)} 🪙${
+            semPreco ? ` · <b class="is-warn">${semPreco} sem preço</b>` : ''}${
+            ocultos ? ` · <span class="is-warn">${ocultos} fora do filtro</span>` : ''}`
+          : `Nenhum item marcado. <span class="mk-unit">${linhas.length} à vista${
+            this.sellFiltered() ? ` de ${this.sellRowsAll()} vendáveis` : ''}</span>`}</span>
           <button type="button" class="primary" data-role="sell-review"
-            ${marcados.length ? '' : 'disabled'}>Revisar e anunciar</button>
+            ${marcadosTotal ? '' : 'disabled'}>Revisar e anunciar</button>
         </div>`;
     },
 
