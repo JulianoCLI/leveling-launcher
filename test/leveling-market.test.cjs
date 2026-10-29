@@ -902,6 +902,63 @@ test('o anúncio que sumiu é investigado, e o comprador vai para o log', async 
   mgr.stopAll();
 });
 
+test('salvar a configuração não ressuscita o alvo já cumprido', async () => {
+  // O bug: alvo 1, uma compra feita, e a regra comprava de novo "depois de um
+  // tempo". A tela do sniper guarda a configuração de quando abriu; quem
+  // incrementa o contador é o laço aqui, então a cópia da tela fica com
+  // `bought: 0`. Qualquer gravação posterior — mexer no intervalo, ligar e
+  // desligar, editar outra regra — mandava esse zero de volta, o alvo voltava
+  // a ter vaga e a compra acontecia outra vez.
+  const { mgr, ws } = await comSniper({ enabled: true, rules: [regra({ target: 1 })] });
+
+  const promessa = mgr.pollSniper();
+  await sleep(5);
+  ws.reply('market_request', 'market_response', {
+    page: { listings: [anuncio(520, 'topazio', 100)] }
+  });
+  await sleep(5);
+  ws.reply('market_request', 'market_response', {
+    bought: { id: 520, currency: 1, total: 100, quantity: 1, remaining: 0 }
+  });
+  await promessa;
+  assert.equal(mgr.getSniperConfig().rules[0].bought, 1);
+
+  // A tela salva a sua cópia velha. É o caso real: ela não sabe da compra.
+  mgr.setSniperConfig({ enabled: true, intervalMs: 9000, rules: [regra({ target: 1 })] });
+  assert.equal(mgr.getSniperConfig().rules[0].bought, 1,
+    'o contador é do serviço: a tela não pode abaixá-lo com uma cópia velha');
+  assert.equal(mgr.getSniperConfig().intervalMs, 9000, 'o resto da gravação vale normalmente');
+
+  // E a regra realmente não compra mais: nenhum pedido sai.
+  assert.equal(await mgr.pollSniper(), 0);
+  mgr.stopAll();
+});
+
+test('zerar a contagem é um pedido explícito, e funciona', async () => {
+  // O contador só desce quando o usuário clica em "zerar". Sem isso o botão
+  // teria sido quebrado pela proteção acima — e a proteção não pode custar a
+  // única forma legítima de recomeçar a caça.
+  const { mgr, ws } = await comSniper({ enabled: true, rules: [regra({ target: 1 })] });
+
+  const promessa = mgr.pollSniper();
+  await sleep(5);
+  ws.reply('market_request', 'market_response', {
+    page: { listings: [anuncio(521, 'topazio', 100)] }
+  });
+  await sleep(5);
+  ws.reply('market_request', 'market_response', {
+    bought: { id: 521, currency: 1, total: 100, quantity: 1, remaining: 0 }
+  });
+  await promessa;
+
+  mgr.setSniperConfig({
+    enabled: true,
+    rules: [regra({ target: 1, bought: 0, resetBought: true })]
+  });
+  assert.equal(mgr.getSniperConfig().rules[0].bought, 0);
+  mgr.stopAll();
+});
+
 test('regra apontada para conta offline não busca nem compra', async () => {
   const { mgr, ws } = await comSniper({ enabled: true, rules: [regra({ account: 3 })] });
 

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   suggestPrice,
+  lotPrice,
   sellableReason,
   normalizeDraft,
   planListings,
@@ -79,6 +80,38 @@ test('preço zero ou negativo é descartado antes da conta', () => {
   const r = suggestPrice([{ unit_price: 0 }, { unit_price: 1000 }, { unit_price: 1200 }]);
   assert.equal(r.samples, 2);
   assert.equal(r.price, 1200);
+});
+
+// ------------------------------------------------------------- lote
+
+test('a sugestão de um lote é o unitário vezes a quantidade', () => {
+  // O bug que isto fecha: o campo da tela é o preço do pacote, mas
+  // `suggestPrice` olha `unit_price` e devolve por unidade. Pôr o unitário no
+  // campo do pacote anunciava dez unidades pelo preço de uma — a 38 000 cada
+  // em vez de 380 000, para o primeiro comprador que passasse.
+  assert.equal(lotPrice(380000, 10), 3800000);
+});
+
+test('item solto tem lote igual ao unitário', () => {
+  assert.equal(lotPrice(5000, 1), 5000);
+  // Quantidade ausente ou zero é um item, não zero itens: devolver 0 aqui
+  // ofereceria anunciar de graça.
+  assert.equal(lotPrice(5000, 0), 5000);
+  assert.equal(lotPrice(5000), 5000);
+});
+
+test('sem sugestão não há lote: zero continua zero', () => {
+  // Zero é "não sei o preço", e a tela o trata como "digite o valor".
+  // Multiplicar não pode inventar um número a partir da ignorância.
+  assert.equal(lotPrice(0, 10), 0);
+});
+
+test('o lote e a volta ao unitário são coerentes', () => {
+  // A ida é `lotPrice`, a volta é o `unitPrice` de `normalizeDraft`. Se as
+  // duas não fecharem, o preço muda só por passar pela tela.
+  const unit = 378000;
+  const total = lotPrice(unit, 10);
+  assert.equal(normalizeDraft({ uid: 1, quantity: 10, total }).unitPrice, unit);
 });
 
 // ------------------------------------------------------------- vendável

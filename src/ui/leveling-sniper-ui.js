@@ -279,9 +279,17 @@
       if (await this.save({ ...this.config, rules })) this.render();
     },
 
-    /** Zera o contador de comprados: volta a caçar um alvo já cumprido. */
+    /**
+     * Zera o contador de comprados: volta a caçar um alvo já cumprido.
+     *
+     * `resetBought` é pedido explícito, e não `bought: 0`. O serviço ignora
+     * contagem que vem da tela de propósito — a cópia daqui envelhece a cada
+     * compra, e aceitá-la fazia um alvo de 1 comprar de novo a cada vez que o
+     * usuário mexia em qualquer campo. Zerar continua possível, mas só quando
+     * é isto que o usuário clicou.
+     */
     async resetRule(id) {
-      const rules = this.config.rules.map(r => (r.id === id ? { ...r, bought: 0 } : r));
+      const rules = this.config.rules.map(r => (r.id === id ? { ...r, bought: 0, resetBought: true } : r));
       if (await this.save({ ...this.config, rules })) {
         this.render();
         this.say('Contagem zerada: a regra volta a comprar.');

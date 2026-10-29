@@ -1510,6 +1510,59 @@ body.market-standalone #marketModal {
   vertical-align: 1px;
 }
 
+/* Raridade e encantamento ao lado do nome, na aba Anunciar.
+   Mesma lógica do nível: a cor do nome já carrega a raridade, mas cor exige
+   decorar a paleta. A palavra escrita dispensa isso — e a etiqueta precisa
+   parecer etiqueta, não continuação do nome. */
+#marketModal .mk-rar,
+#marketModal .mk-ench {
+  font-weight: 600;
+  font-size: 10.5px;
+  text-transform: lowercase;
+  letter-spacing: .02em;
+  opacity: .75;
+  margin-left: 3px;
+  white-space: nowrap;
+}
+
+/* Encantamento é do jogador, não do item: ele some se a peça for reforjada,
+   e vale preço à parte. Cor própria para não se confundir com a raridade. */
+#marketModal .mk-ench {
+  color: #7dd3fc;
+  opacity: .9;
+}
+
+/* Ações da aba no rodapé fixo, ao lado de "Ler agora". Empurradas para a
+   esquerda: "Fechar" e "Ler agora" ficam onde sempre estiveram, e a ação da
+   aba não pode trocar de lugar com elas conforme a aba muda. */
+#marketModal .mk-actions {
+  display: inline-flex;
+  gap: 8px;
+  margin-right: auto;
+}
+
+#marketModal .mk-actions button {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--color-text-secondary);
+  padding: 8px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#marketModal .mk-actions button.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #0b0f14;
+}
+
+#marketModal .mk-actions button:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
 /* ----------------------------------------------------------- por nível */
 
 /* Tabela curta e dentro do detalhe: não rola, então nada aqui precisa das

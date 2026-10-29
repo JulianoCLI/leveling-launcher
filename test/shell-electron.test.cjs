@@ -191,9 +191,13 @@ ipcMain.handle('leveling:market:catalog', () => {
           name: 'Arco de Arqueiro',
           icon: '/assets/paperdoll/gear/arco-arqueiro/icon.png',
           slot: 'arma', category: 'weapons', stats: { atk: 9 }
-        }
+        },
+        'sangue-de-troll': { name: 'Sangue de Troll', icon: '', category: 'materiais' }
       },
-      rarities: { lendario: { name: 'Lendário', color: '#fbbf24', order: 4 } },
+      rarities: {
+        comum: { name: 'Comum', color: '#cbd5e1', order: 0 },
+        lendario: { name: 'Lendário', color: '#fbbf24', order: 4 }
+      },
       shadowRanks: { cavaleiro: { name: 'Cavaleiro', color: '#58d6e8', order: 2 } },
       monsters: { 'Slime Corrosivo': { name: 'Slime Corrosivo', icon: '/assets/monsters/slime/idle.png' } },
       origin: 'https://levelingidle2d.com.br'
@@ -268,6 +272,56 @@ ipcMain.handle('leveling:market:levels-for', (_e, listingIds) => {
   // Só a primeira venda tem nível. A segunda fica sem, e é isso que o teste
   // verifica: ausência é mostrada como ausência, não como "nv. 0".
   return { levels: { '771': { level: 2, slot: '' } } };
+});
+
+/**
+ * Aba "Anunciar": o inventário de uma conta, por instância.
+ *
+ * `suggestion` é **por unidade**, como vem do banco de vendas. O lote de
+ * nove Sangue de Troll existe justamente para provar que a tela multiplica:
+ * sugerir 4 000 por unidade e anunciar o lote por 4 000 venderia nove por
+ * um — foi o bug que este cenário fixa.
+ */
+const announceCalls = [];
+ipcMain.handle('leveling:market:sellable', (_e, opts) => {
+  marketCalls.push({ op: 'sellable', opts });
+  const accounts = [
+    { index: 0, name: 'samaleiko', connected: true },
+    { index: 1, name: 'segunda', connected: false }
+  ];
+  if (!opts || opts.index === null || opts.index === undefined) {
+    return { accounts, items: [], account: null };
+  }
+  return {
+    accounts,
+    account: { index: 0, name: 'samaleiko', connected: true },
+    items: [
+      {
+        uid: '9001', defId: 'sangue-de-troll', rarity: 'comum', level: 0, enchant: 0,
+        qty: 9, power: 0, locked: false, equippedSlot: '', sellPrice: 120, scope: 1,
+        blocked: '', suggestion: 4000,
+        suggestionFrom: { samples: 6, dropped: 1, median: 3500, reason: '', source: 'local' }
+      },
+      {
+        // Equipado: aparece só com a caixa marcada, e nunca pode ser marcado.
+        uid: '9002', defId: 'arco-arqueiro', rarity: 'lendario', level: 45, enchant: 3,
+        qty: 1, power: 129, locked: false, equippedSlot: 'EQUIP_SLOT_ARMA', sellPrice: 9000,
+        scope: 1, blocked: 'equipped', suggestion: 500000,
+        suggestionFrom: { samples: 4, dropped: 0, median: 480000, reason: '', source: 'local' }
+      }
+    ],
+    readAtMs: Date.now()
+  };
+});
+ipcMain.handle('leveling:market:announce', (_e, payload) => {
+  announceCalls.push(payload);
+  return {
+    results: (payload.drafts || []).map(d => ({
+      uid: d.uid, name: d.name, quantity: d.quantity, total: d.total,
+      ok: true, error: '', listingId: '7777'
+    })),
+    blocked: []
+  };
 });
 
 /**
@@ -864,6 +918,70 @@ app.whenReady().then(async () => {
   // Conta fora do monitor é nomeada: a bolsa dela é desconhecida, não vazia.
   assert.ok(comEquip.includes('fora do monitor') || comEquip.includes('segunda'),
     'Accounts outside monitor mode must be reported, not counted as empty');
+
+  // Aba "Anunciar": é a única da janela que escreve no jogo, então cada passo
+  // dela é verificado — o preço mostrado, o que não pode ser marcado, e o que
+  // sai no pedido.
+  await read(`document.querySelector('#marketBody [data-view="sell"]').click()`);
+  await pause(400);
+  assert.equal(await read('window.PioMarket.view'), 'sell');
+  assert.ok(await read(`!!document.querySelector('#marketBody [data-role="sell-account"]')`),
+    'Announcing is per account, so the tab must ask which one');
+
+  await read(`(() => {
+    const s = document.querySelector('#marketBody [data-role="sell-account"]');
+    s.value = '0';
+    s.onchange ? s.onchange() : s.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  await pause(600);
+  assert.ok(marketCalls.some(c => c.op === 'sellable' && c.opts && c.opts.index === 0),
+    'Choosing an account must read that account inventory');
+
+  // Raridade, nível e poder no nome: duas peças de mesmo nome valem preços de
+  // ordens de grandeza diferentes, e sem isso a linha não identifica qual é.
+  await read(`document.querySelector('#marketBody [data-role="sell-equip"]').click()`);
+  await pause(300);
+  const anunciar = await read(`document.querySelector('#marketBody').textContent`);
+  assert.ok(anunciar.includes('lendário'), 'The rarity must be written next to the name');
+  assert.ok(anunciar.includes('nv. 45'), 'The level must show, because price depends on it');
+  assert.ok(anunciar.includes('129 pd'), 'Power is what a buyer compares, so it must show');
+
+  // Vestido aparece acinzentado e não pode ser marcado: anunciá-lo falharia no
+  // servidor, e a tela diria que ia funcionar.
+  assert.ok(await read(`!!document.querySelector('#marketBody tr.is-equipped')`),
+    'Equipped gear must look different here too');
+  assert.equal(await read(`document.querySelector('#marketBody [data-pick="9002"]').disabled`), true,
+    'Equipped gear must not be selectable');
+
+  // O bug do lote: sugestão de 4 000 por unidade, nove unidades, campo com
+  // 36 000. Anunciar o lote por 4 000 venderia nove pelo preço de um.
+  await read(`document.querySelector('#marketBody [data-pick="9001"]').click()`);
+  await pause(300);
+  assert.equal(await read(`document.querySelector('#marketBody [data-price="9001"]').value`), '36000',
+    'The price field is the whole package, so the suggestion must be multiplied');
+
+  // O botão mora no rodapé fixo, não no fim da lista: com muitos itens
+  // marcados ele ficava fora da tela justamente quando era o próximo passo.
+  assert.ok(await read(`!!document.querySelector('#marketActions [data-role="sell-review"]')`),
+    'Review must live in the fixed footer, next to "Ler agora"');
+  assert.equal(await read(`document.querySelector('#marketActions [data-role="sell-review"]').disabled`), false,
+    'With something picked the button must be usable');
+
+  await read(`document.querySelector('#marketActions [data-role="sell-review"]').click()`);
+  await pause(400);
+  const revisao = await read(`document.querySelector('#marketBody').textContent`);
+  assert.ok(revisao.includes('lote de 9'),
+    'The confirmation must say it is a lot, which is where a wrong price costs most');
+
+  await read(`document.querySelector('#marketActions [data-role="sell-go"]').click()`);
+  await pause(600);
+  assert.equal(announceCalls.length, 1, 'Only the confirmed click may write to the game');
+  assert.equal(announceCalls[0].drafts[0].total, 36000, 'The lot price is what was shown');
+  assert.equal(announceCalls[0].drafts[0].unitPrice, 4000,
+    'And the server gets the unit price back, the round trip must close');
+
+  await read(`(() => { window.PioMarket.sell.results = null; window.PioMarket.view = 'items'; return window.PioMarket.load(); })()`);
+  await pause(400);
 
   // "Ler agora" existe para não esperar o minuto do coletor.
   await read('document.getElementById("marketRefresh").click()');

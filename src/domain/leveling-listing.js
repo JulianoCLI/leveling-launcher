@@ -103,6 +103,25 @@ function suggestPrice(sales) {
 }
 
 /**
+ * O preço sugerido **do lote**: o unitário multiplicado pela quantidade.
+ *
+ * É a única conversão entre as duas unidades que convivem na aba, e por isso
+ * existe como função em vez de uma multiplicação espalhada pela tela.
+ * `suggestPrice` trabalha sobre `unit_price`, a coluna das vendas, logo
+ * devolve preço por unidade; o campo que o usuário preenche é o do pacote,
+ * porque foi assim que ele pediu.
+ *
+ * Confundir as duas foi um bug de verdade: um lote de 10 com sugestão de
+ * 380 000 a unidade entrava no campo como 380 000 pelas dez, e o anúncio saía
+ * a 38 000 cada — um décimo do preço, para o primeiro comprador que passasse.
+ */
+function lotPrice(unitSuggestion, quantity) {
+  const unit = int(unitSuggestion);
+  const qty = Math.max(1, int(quantity, 1));
+  return unit * qty;
+}
+
+/**
  * Um item do inventário pode ser anunciado?
  *
  * Três recusas, e cada uma é uma pergunta diferente que a tela precisa
@@ -190,6 +209,7 @@ function planListings(drafts) {
 
 module.exports = {
   suggestPrice,
+  lotPrice,
   sellableReason,
   normalizeDraft,
   planListings,

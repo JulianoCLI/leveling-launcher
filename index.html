@@ -180,7 +180,12 @@
 
       <div class="lv-status-bar" id="marketStatusBar" role="status" aria-live="polite"></div>
 
+      <!-- `marketActions` é preenchido pela aba ativa. "Revisar e anunciar"
+           mora aqui, e não no fim da lista de itens: a lista rola, e um botão
+           no fim dela fica fora da tela justamente quando há muitos itens
+           marcados — que é quando ele é mais necessário. -->
       <div class="modal-actions">
+        <span id="marketActions" class="mk-actions"></span>
         <button type="button" id="marketRefresh" class="primary">Ler agora</button>
         <button type="button" id="marketClose">Fechar</button>
       </div>

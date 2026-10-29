@@ -1028,8 +1028,16 @@ ipcMain.handle('leveling:sniper:get', event => {
  */
 ipcMain.handle('leveling:sniper:set', (event, config) => {
   launcherOnly(event);
-  const saved = writePrefs({ sniper: config }).sniper;
-  levelingHeadlessManager.setSniperConfig(saved);
+  // Aplica **antes** de gravar, e grava o que o serviço aceitou.
+  //
+  // A ordem inversa persistia o bug do alvo: a tela manda a sua cópia da
+  // configuração, que tem o contador de comprados velho, e gravar essa cópia
+  // primeiro deixava `bought: 0` no disco. O serviço corrigia em memória, mas
+  // o próximo `prefs.json` lido — reinício, ou o `sniperSink` da compra
+  // seguinte partindo do disco — trazia o zero de volta e a regra comprava
+  // outra vez.
+  const aplicada = levelingHeadlessManager.setSniperConfig(config);
+  writePrefs({ sniper: aplicada });
   syncSniperPoll();
   return {
     ok: true,

@@ -258,13 +258,32 @@
       if (this.api && this.api.onMarket) {
         // Entraram vendas novas. Só repinta se a tela está aberta: o coletor
         // roda o tempo todo, inclusive com o launcher na bandeja.
-        this.api.onMarket(() => { if (this.isOpen()) this.load(); });
+        //
+        // E nunca no meio de um anúncio. O coletor avisa a cada minuto, e
+        // `load()` na aba Anunciar relê o inventário da conta e descarta a
+        // seleção, os preços digitados e a confirmação aberta — vinte itens
+        // conferidos desapareciam porque alguém, em outro lugar do jogo,
+        // vendeu alguma coisa. Vendas novas não alteram a lista do
+        // inventário; só mudariam os preços sugeridos, e trocar uma sugestão
+        // sob o olho de quem está confirmando é pior que mostrá-la um minuto
+        // velha.
+        this.api.onMarket(() => {
+          if (!this.isOpen()) return;
+          if (this.view === 'sell') return;
+          this.load();
+        });
       }
       if (this.api && this.api.onMarketCatalog) {
         // Chegou um login: as cores e ícones podem ter mudado de versão.
         this.api.onMarketCatalog(data => {
           if (data && data.catalog) this.applyCatalog(data.catalog);
-          if (this.isOpen()) this.render();
+          if (!this.isOpen()) return;
+          // Mesmo cuidado do coletor, por um motivo mais estreito: o catálogo
+          // chega quando uma conta loga, e isso pode acontecer no meio da
+          // revisão. Ele só muda ícone e cor — nada que valha repintar por
+          // cima de um preço sendo digitado.
+          if (this.view === 'sell' && (this.sell.confirm || this.sell.picked.size)) return;
+          this.render();
         });
       }
       this.loadCatalog();
@@ -727,6 +746,25 @@
       return linhas.sort(ordens[f.sort] || ordens.valor);
     },
 
+    /**
+     * O preço sugerido **do lote**, que é o que o campo da tela recebe.
+     *
+     * `suggestion` vem do banco e é por unidade — `unit_price` é a coluna das
+     * vendas. O campo de preço, por decisão da aba, é o do pacote inteiro.
+     * Multiplicar era o passo que faltava: um lote de 10 poções com sugestão
+     * de 380 000 cada entrava no campo como 380 000 pelas dez, e o anúncio
+     * saía por 38 000 a unidade — um décimo do preço, para o primeiro
+     * comprador que passasse.
+     *
+     * Espelha `lotPrice` de `leveling-listing.js`, onde a regra é testada. A
+     * cópia existe porque este arquivo é script de navegador e não tem
+     * `require`; a volta — lote de novo para unitário — é o `unitPrice` de
+     * `normalizeDraft`, e um teste verifica que as duas fecham.
+     */
+    sellSuggested(it) {
+      return (Number(it && it.suggestion) || 0) * Math.max(1, Number(it && it.qty) || 1);
+    },
+
     /** Algum filtro está peneirando a lista? Separa "conta vazia" de "filtro apertado". */
     sellFiltered() {
       const f = this.sell.filter;
@@ -760,7 +798,7 @@
         // dez itens e digitar dez preços à mão seria o trabalho que ela veio
         // evitar. Sem sugestão o item entra marcado e sem preço, e a
         // confirmação o separa como "falta valor".
-        s.picked.set(uid, (it && it.suggestion) || 0);
+        s.picked.set(uid, this.sellSuggested(it));
         if (it && it.suggestion) s.auto.add(uid);
       }
       this.render();
@@ -776,7 +814,7 @@
       } else {
         for (const it of linhas) {
           if (this.sell.picked.has(it.uid)) continue;
-          this.sell.picked.set(it.uid, it.suggestion || 0);
+          this.sell.picked.set(it.uid, this.sellSuggested(it));
           if (it.suggestion) this.sell.auto.add(it.uid);
         }
       }
@@ -798,7 +836,7 @@
       const it = this.sell.items.find(i => i.uid === uid);
       if (ligado) {
         this.sell.auto.add(uid);
-        this.sell.picked.set(uid, (it && it.suggestion) || 0);
+        this.sell.picked.set(uid, this.sellSuggested(it));
       } else {
         this.sell.auto.delete(uid);
       }
@@ -826,11 +864,24 @@
       return out;
     },
 
-    /** Nome legível de uma peça, com nível quando ele distingue alguma coisa. */
+    /**
+     * Nome de uma peça em texto puro, para a confirmação e a busca.
+     *
+     * A mesma identidade de `gearNameHtml`, sem marcação: a tela de confirmar
+     * mostra "Espada lendária nv. 12 +3", e é por esse nome que o usuário
+     * reconhece a peça que vai sair do inventário dele. Confirmar "Espada" e
+     * descobrir depois qual das três era não é uma confirmação.
+     */
     itemLabel(it) {
-      const def = this.catalog.items[it.defId];
-      const nome = (def && def.name) || it.defId;
-      return it.level ? `${nome} nv. ${it.level}` : nome;
+      const def = this.catalog.items[it.defId] || {};
+      const rarityId = String(it.rarity || def.rarity || '');
+      const rar = this.catalog.rarities[rarityId];
+      const partes = [def.name || it.defId];
+      const nomeRar = (rar && rar.name) || rarityId;
+      if (nomeRar) partes.push(String(nomeRar).toLowerCase());
+      if (it.level) partes.push(`nv. ${it.level}`);
+      if (it.enchant) partes.push(`+${it.enchant}`);
+      return partes.join(' ');
     },
 
     /**
@@ -979,7 +1030,45 @@
         : this.itemsHtml();
 
       this.wireRows(vista);
+      this.paintActions();
       this.paintStatus();
+    },
+
+    /**
+     * Ações da aba ativa, no rodapé fixo, ao lado de "Ler agora".
+     *
+     * "Revisar e anunciar" estava no fim da lista de itens, que rola: com
+     * trinta itens marcados o botão ficava fora da tela justamente no momento
+     * em que ele era o próximo passo. O rodapé é o único lugar da janela que
+     * não sai de vista.
+     */
+    paintActions() {
+      const host = document.getElementById('marketActions');
+      if (!host) return;
+      const s = this.sell;
+
+      if (this.view !== 'sell' || s.results) { host.innerHTML = ''; return; }
+
+      if (s.confirm) {
+        host.innerHTML = `
+          <button type="button" data-role="sell-back" ${s.busy ? 'disabled' : ''}>Voltar</button>
+          <button type="button" class="primary" data-role="sell-go"
+            ${s.busy || !s.confirm.ready.length ? 'disabled' : ''}>${
+          s.busy ? 'Anunciando…' : `Anunciar ${s.confirm.ready.length} ${
+            s.confirm.ready.length === 1 ? 'item' : 'itens'}`}</button>`;
+      } else {
+        const n = s.picked.size;
+        host.innerHTML = `
+          <button type="button" class="primary" data-role="sell-review" ${n ? '' : 'disabled'}>${
+          n ? `Revisar e anunciar (${n})` : 'Revisar e anunciar'}</button>`;
+      }
+
+      // O rodapé está fora de `.mk-view`, então o ouvinte delegado das linhas
+      // não o alcança: ele precisa do seu próprio.
+      host.onclick = ev => {
+        const alvo = ev.target;
+        if (alvo && alvo.closest) this.wireSellClick(alvo);
+      };
     },
 
     filtersHtml() {
@@ -1049,9 +1138,17 @@
       const s = this.sell;
       if (s.account === null || !s.items.length) return '';
       const f = s.filter;
-      const op = (lista, atual, rotuloTodos) => `
+      // O rótulo não é o valor: raridade vem como `ITEM_RARITY_EPICO` do
+      // servidor, e o catálogo tem o nome que o jogo mostra. Um seletor com
+      // os enums crus obrigaria o usuário a traduzir de cabeça.
+      const op = (lista, atual, rotuloTodos, rotulo) => `
         <option value="todos">${rotuloTodos}</option>
-        ${lista.map(v => `<option value="${escape(v)}" ${v === atual ? 'selected' : ''}>${escape(v.toLowerCase())}</option>`).join('')}`;
+        ${lista.map(v => `<option value="${escape(v)}" ${v === atual ? 'selected' : ''}>${
+        escape(String((rotulo && rotulo(v)) || v).toLowerCase())}</option>`).join('')}`;
+      const nomeRaridade = id => {
+        const r = this.catalog.rarities[id];
+        return (r && r.name) || id;
+      };
       const facetas = this.sellFacetOptions();
       const semPreco = s.items.filter(i => !i.blocked && !i.suggestion).length;
 
@@ -1069,7 +1166,7 @@
         ${facetas.rarities.length > 1 ? `
           <label class="mk-field">
             <span>Raridade</span>
-            <select data-role="sell-rar">${op(facetas.rarities, f.rarity, 'todas')}</select>
+            <select data-role="sell-rar">${op(facetas.rarities, f.rarity, 'todas', nomeRaridade)}</select>
           </label>` : ''}
         <label class="mk-field">
           <span>Ordem</span>
@@ -1253,7 +1350,15 @@
                 </td>
                 <td class="mk-c-n">${i.vendas}<small>${curto(i.unidades)} un</small></td>
                 <td class="mk-c-p" title="${cheio(i.media)}">${curto(i.media)}</td>
-                <td class="mk-c-p mk-strong" title="${cheio(i.mediana)}${torto ? ' — preço muito disperso neste item' : ''}">${curto(i.mediana)}${torto ? ' <span class="mk-flag" aria-label="preço disperso">≠</span>' : ''}</td>
+                <td class="mk-c-p mk-strong" title="${cheio(i.mediana)}${torto
+                  // Dispersão alta quase sempre é nível, não mercado nervoso:
+                  // "Topázio" são quatro itens com o mesmo nome. Dizer onde
+                  // olhar é o que transforma o sinal em ação, em vez de só
+                  // avisar que o número não serve.
+                  ? ' — este nome reúne preços muito diferentes, em geral porque o item varia por nível ou encantamento. Clique para ver a quebra por nível.'
+                  : ''}">${curto(i.mediana)}${torto
+                  ? ' <span class="mk-flag" aria-label="preço disperso: varia por nível">≠</span>'
+                  : ''}</td>
                 <td class="mk-c-p mk-c-opt" title="${cheio(i.minimo)}">${curto(i.minimo)}</td>
                 <td class="mk-c-p mk-c-opt" title="${cheio(i.maximo)}">${curto(i.maximo)}</td>
                 <td class="mk-c-p" title="${cheio(i.ultimo_preco)}">${curto(i.ultimo_preco)}</td>
@@ -1907,8 +2012,6 @@
             ocultos ? ` · <span class="is-warn">${ocultos} fora do filtro</span>` : ''}`
           : `Nenhum item marcado. <span class="mk-unit">${linhas.length} à vista${
             this.sellFiltered() ? ` de ${this.sellRowsAll()} vendáveis` : ''}</span>`}</span>
-          <button type="button" class="primary" data-role="sell-review"
-            ${marcadosTotal ? '' : 'disabled'}>Revisar e anunciar</button>
         </div>`;
     },
 
@@ -1919,20 +2022,20 @@
       const auto = s.auto.has(it.uid);
       const preco = s.picked.get(it.uid) || 0;
       const def = this.catalog.items[it.defId];
-      const rar = this.catalog.rarities[it.rarity || (def && def.rarity)];
-      const cor = rar && rar.color ? ` style="color:${escape(rar.color)}"` : '';
       const src = def && def.icon ? this.catalog.origin + def.icon : '';
       const from = it.suggestionFrom || {};
+      const sugerido = this.sellSuggested(it);
 
       // De onde o preço sugerido veio. Um número sem procedência não dá para
       // julgar, e o do servidor é mais grosso: `price_hint` não conhece nível.
       const dica = !it.suggestion
         ? 'Sem vendas suficientes para sugerir um preço — digite o valor.'
-        : from.source === 'server'
+        : `${from.source === 'server'
           ? `Estimativa do servidor sobre ${from.samples || 0} vendas de 30 dias. Não considera o nível do item.`
           : `Maior das ${from.samples} últimas vendas${it.level ? ` de nível ${it.level}` : ''}${
             from.dropped ? `, descartando ${from.dropped} anormal${from.dropped > 1 ? 'is' : ''}` : ''
-          }. Mediana ${cheio(from.median)}.`;
+          }. Mediana ${cheio(from.median)}.`}${
+          it.qty > 1 ? ` ${cheio(it.suggestion)} por unidade × ${it.qty} = ${cheio(sugerido)} pelo lote.` : ''}`;
 
       return `
         <tr class="${marcado ? 'is-picked' : ''}${it.blocked === 'equipped' ? ' is-equipped' : ''}">
@@ -1944,20 +2047,22 @@
             <span class="mk-icon">${src
           ? `<img src="${escape(src)}" alt="" width="24" height="24" loading="lazy" decoding="async" onerror="this.remove()">`
           : ''}</span>
-            <b${cor}>${escape((def && def.name) || it.defId)}</b>
-            <small>${it.level ? `nv. ${it.level}` : ''}${
-          it.enchant ? `${it.level ? ' · ' : ''}+${it.enchant}` : ''
-        }${it.blocked === 'equipped' ? ' · vestido, não pode ser anunciado' : ''}</small>
+            ${this.gearNameHtml(it)}
+            ${this.gearSubHtml(it)}
           </td>
           <td class="mk-c-n">${curto(it.qty)}</td>
           <td class="mk-c-p ${it.suggestion ? '' : 'is-none'}" title="${escape(dica)}">${
-          it.suggestion ? curto(it.suggestion) : '—'}${
-          from.source === 'server' ? '<small class="mk-src">servidor</small>' : ''}</td>
+          sugerido ? curto(sugerido) : '—'}${
+          from.source === 'server' ? '<small class="mk-src">servidor</small>' : ''}${
+          // O unitário sob o sugerido quando há lote: o número grande é o do
+          // pacote, e sem o de baixo não se sabe se o lote está caro ou se o
+          // item é caro.
+          it.qty > 1 && it.suggestion ? `<small class="mk-unit">${curto(it.suggestion)} cada</small>` : ''}</td>
           <td class="mk-c-p">
             <input type="number" class="mk-price" data-price="${escape(it.uid)}" min="0" step="1"
-              value="${marcado ? preco : ''}" placeholder="${it.suggestion || 0}"
+              value="${marcado ? preco : ''}" placeholder="${sugerido || 0}"
               ${marcado && !it.blocked ? '' : 'disabled'}
-              title="${it.qty > 1 ? 'Preço do pacote inteiro' : 'Preço do item'}">
+              title="${it.qty > 1 ? `Preço dos ${it.qty} juntos` : 'Preço do item'}">
             ${it.qty > 1 && marcado && preco
           ? `<small class="mk-unit">${curto(Math.ceil(preco / it.qty))} cada</small>` : ''}
           </td>
@@ -1967,6 +2072,46 @@
               title="Acompanha o preço sugerido">
           </td>
         </tr>`;
+    },
+
+    /**
+     * Nome de uma peça do inventário, como o jogo a identifica.
+     *
+     * O jogo não chama a peça de "Espada": chama de "Espada lendária nv. 12".
+     * Raridade, nível e encantamento não são decoração — são o que distingue
+     * duas linhas de mesmo nome que valem preços de ordens de grandeza
+     * diferentes. A cor do nome já carrega a raridade, mas cor sozinha exige
+     * decorar a paleta; o nome escrito ao lado dispensa isso.
+     */
+    gearNameHtml(it) {
+      const def = this.catalog.items[it.defId] || {};
+      const rarityId = String(it.rarity || def.rarity || '');
+      const rar = this.catalog.rarities[rarityId];
+      const cor = rar && rar.color ? ` style="color:${escape(rar.color)}"` : '';
+      const nomeRar = (rar && rar.name) || rarityId;
+      const partes = [escape(def.name || it.defId)];
+      if (nomeRar) partes.push(`<span class="mk-rar">${escape(String(nomeRar).toLowerCase())}</span>`);
+      if (it.level) partes.push(`<span class="mk-nv">nv. ${it.level}</span>`);
+      if (it.enchant) partes.push(`<span class="mk-ench">+${it.enchant}</span>`);
+      return `<b${cor}>${partes.join(' ')}</b>`;
+    },
+
+    /**
+     * Linha de baixo: poder, slot e o que impede o anúncio.
+     *
+     * Poder é o número que o jogo usa para comparar duas peças, e é por ele
+     * que o comprador decide — mostrá-lo aqui é o que permite julgar se o
+     * preço sugerido faz sentido para *esta* peça e não para a média do nome.
+     */
+    gearSubHtml(it) {
+      const def = this.catalog.items[it.defId] || {};
+      const partes = [];
+      if (it.power) partes.push(`${curto(Math.round(it.power))} pd`);
+      if (def.slot) partes.push(escape(String(def.slot).toLowerCase()));
+      if (def.category) partes.push(escape(String(def.category).toLowerCase()));
+      if (it.sellPrice) partes.push(`NPC ${curto(it.sellPrice)}`);
+      if (it.blocked === 'equipped') partes.push('<b class="is-warn">vestido</b>');
+      return partes.length ? `<small>${partes.join(' · ')}</small>` : '';
     },
 
     /**
@@ -1988,16 +2133,19 @@
             <tr>
               <th class="mk-c-name">Item</th>
               <th class="mk-c-n">Qtd</th>
-              <th class="mk-c-p">Unitário</th>
-              <th class="mk-c-p">Total</th>
+              <th class="mk-c-p" title="É o que o servidor recebe: o preço do lote dividido pela quantidade">Unitário</th>
+              <th class="mk-c-p">Total do lote</th>
             </tr>
           </thead>
           <tbody>
             ${c.ready.map(d => `
               <tr>
-                <td class="mk-c-name"><b>${escape(d.name)}</b>${
-        d.auto ? '<small>preço automático</small>' : '<small>preço digitado</small>'}</td>
-                <td class="mk-c-n">${curto(d.quantity)}</td>
+                <td class="mk-c-name"><b>${escape(d.name)}</b><small>${
+        d.auto ? 'preço automático' : 'preço digitado'}${
+        // Lote é o caso em que o erro custa caro: dizer "× 10" na própria
+        // linha é o que deixa ver se o total pedido é pelos dez ou por um.
+        d.quantity > 1 ? ` · lote de ${d.quantity}` : ''}</small></td>
+                <td class="mk-c-n${d.quantity > 1 ? ' mk-strong' : ''}">${curto(d.quantity)}</td>
                 <td class="mk-c-p" title="${cheio(d.unitPrice)}">${curto(d.unitPrice)}</td>
                 <td class="mk-c-p mk-strong" title="${cheio(d.total)}">${curto(d.total)}</td>
               </tr>`).join('')}
@@ -2011,14 +2159,8 @@
         </table>
 
         <p class="hint">O anúncio dura <b>2 dias</b>. A taxa de venda é cobrada pelo jogo sobre o
-          valor recebido, não sobre o pedido. O launcher não cancela anúncios: isso é feito no jogo.</p>
-
-        <div class="mk-sell-foot">
-          <button type="button" data-role="sell-back" ${this.sell.busy ? 'disabled' : ''}>Voltar</button>
-          <button type="button" class="primary" data-role="sell-go"
-            ${this.sell.busy || !c.ready.length ? 'disabled' : ''}>${
-        this.sell.busy ? 'Anunciando…' : `Anunciar ${c.ready.length} ${c.ready.length === 1 ? 'item' : 'itens'}`}</button>
-        </div>`;
+          valor recebido, não sobre o pedido. O launcher não cancela anúncios: isso é feito no jogo.
+          Os botões de <b>Voltar</b> e <b>Anunciar</b> estão no rodapé da janela.</p>`;
     },
 
     /** O que aconteceu com cada item. Falha parcial é o caso normal. */

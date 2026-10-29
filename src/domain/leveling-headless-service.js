@@ -2436,7 +2436,38 @@ class LevelingHeadlessManager extends EventEmitter {
    * configuração para oito clientes faria oito buscas do mesmo item.
    */
   setSniperConfig(config) {
+    // O contador de comprados é **sempre** o de cá, nunca o que vem na
+    // configuração recebida.
+    //
+    // Era o bug de um alvo de 1 comprar duas vezes. A tela do sniper carrega
+    // a configuração ao abrir e guarda a cópia; quando uma compra acontece,
+    // quem incrementa é o laço aqui, e a cópia da tela fica velha. Qualquer
+    // gravação feita depois — mexer no intervalo, ligar e desligar, editar
+    // outra regra — mandava de volta aquela cópia com `bought: 0`, o alvo
+    // voltava a ter vaga e a regra comprava de novo.
+    //
+    // Deixar o maior dos dois resolve nas duas direções: a tela nunca
+    // consegue abaixar o contador, e zerá-lo de propósito continua
+    // funcionando porque esse caminho remove a regra e a recria.
+    const anteriores = new Map(
+      (this.sniperConfig && this.sniperConfig.rules || []).map(r => [r.id, r])
+    );
     this.sniperConfig = sniper.normalizeConfig(config);
+    const zerar = new Set();
+    for (const bruta of Array.isArray(config && config.rules) ? config.rules : []) {
+      if (!bruta || !bruta.resetBought) continue;
+      const norm = sniper.normalizeRule(bruta);
+      if (norm) zerar.add(norm.id);
+    }
+    for (const rule of this.sniperConfig.rules) {
+      const antiga = anteriores.get(rule.id);
+      if (!antiga) continue;
+      // `resetBought` é o botão "zerar contagem", a única forma de a tela
+      // baixar o contador. Sem ele o maior dos dois vence, e a contagem só
+      // pode subir.
+      if (zerar.has(rule.id)) { rule.bought = 0; continue; }
+      rule.bought = Math.max(Number(rule.bought) || 0, Number(antiga.bought) || 0);
+    }
     this.sniperIntervalMs = this.sniperConfig.intervalMs;
     // Intervalo novo só vale no tique seguinte se o temporizador não for
     // recriado; o usuário acabou de mexer no campo e espera o efeito agora.
