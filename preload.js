@@ -54,6 +54,12 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   marketOwners: (defIds) => ipcRenderer.invoke('leveling:market:owners', defIds),
   // O inventário inteiro das contas, já cruzado com o preço de mercado.
   marketBag: (opts) => ipcRenderer.invoke('leveling:market:bag', opts),
+  // O inventário de uma conta, item por item e com preço sugerido: a aba
+  // "Anunciar". Por instância, não agregado — `MarketCreate` exige o uid.
+  marketSellable: (opts) => ipcRenderer.invoke('leveling:market:sellable', opts),
+  // Cria os anúncios confirmados. Tolerante a falha parcial: o resultado vem
+  // linha a linha, porque um item recusado não invalida os que entraram.
+  marketAnnounce: (payload) => ipcRenderer.invoke('leveling:market:announce', payload),
   // Preço por nível: "Topázio de nível 1 ou 4?" são itens de preços diferentes.
   marketLevels: (defId, opts) => ipcRenderer.invoke('leveling:market:levels', defId, opts),
   // O nível das vendas que estão na tela, por listing_id. A aba "Ao vivo"

@@ -27,6 +27,7 @@ const { levelingHeadlessManager } = require('./src/domain/leveling-headless-serv
 const levelingRefill = require('./src/domain/leveling-refill');
 const marketDb = require('./src/domain/leveling-market-db');
 const levelingSniper = require('./src/domain/leveling-sniper');
+const levelingListing = require('./src/domain/leveling-listing');
 const { levelingCredentials } = require('./src/domain/leveling-credentials');
 const { createMemoryProbe, parseArgs: parseMemArgs } = require('./src/main/memory-probe');
 
@@ -819,6 +820,142 @@ ipcMain.handle('leveling:market:levels-for', async (event, listingIds) => {
   await levelingHeadlessManager.enrichLevels(ids.length, ids);
   const db = market();
   return { levels: db.levelsOf(ids) };
+});
+
+/**
+ * O inventário de uma conta, item por item, com o preço sugerido de cada um —
+ * a aba "Anunciar".
+ *
+ * Uma conta só, escolhida pelo usuário, e não todas como na aba "Minha
+ * bolsa": anunciar é uma ação sobre uma conta específica, e `MarketCreate`
+ * sai do socket dela. Varrer as oito aqui seria tráfego para mostrar itens
+ * que o usuário não vai anunciar nesta visita.
+ *
+ * O preço sai do banco local e, quando ele não basta, do servidor. A ordem
+ * importa: o banco tem as vendas com nível, que é o que separa um Topázio de
+ * 999 de um de 4 milhões; o `price_hint` cobre um período maior mas não sabe
+ * de nível nenhum, então ele é a resposta de segunda escolha, não a primeira.
+ */
+ipcMain.handle('leveling:market:sellable', async (event, opts) => {
+  launcherOnly(event);
+  // A lista de contas acompanha toda resposta, inclusive as de erro: é ela
+  // que monta o seletor, e sem ela a aba não teria como oferecer a troca de
+  // conta justamente quando a escolhida está fora do monitor.
+  const accounts = sniperAccounts();
+  const pedido = opts && opts.index;
+  if (pedido === null || pedido === undefined) return { accounts, items: [], account: null };
+
+  const index = Number(pedido) || 0;
+  const client = levelingHeadlessManager.getClient(index);
+  if (!client || client.status !== 'connected') {
+    return { errorCode: 'inv.offline', accounts, items: [], account: null };
+  }
+
+  const inv = await client.inventoryItems().catch(e => ({ errorCode: e.message, items: [] }));
+  if (inv.errorCode) return { errorCode: inv.errorCode, accounts, items: [], account: null };
+
+  const db = market();
+  const dias = Number(opts && opts.days) || 0;
+
+  // Cada combinação de item+nível é perguntada uma vez só, por mais linhas de
+  // inventário que a compartilhem: cinco poções iguais são uma consulta.
+  const cache = new Map();
+  const precoDe = defId => {
+    const key = defId.key;
+    if (cache.has(key)) return cache.get(key);
+    const vendas = db.salesForPricing(defId.defId, { level: defId.level, days: dias, limit: levelingListing.SAMPLE_SIZE });
+    const r = levelingListing.suggestPrice(vendas);
+    cache.set(key, r);
+    return r;
+  };
+
+  const items = inv.items.map(it => {
+    const bloqueio = levelingListing.sellableReason({
+      uid: it.uid, locked: it.locked, equipped_slot: it.equippedSlot
+    });
+    const sugestao = precoDe({ defId: it.defId, level: it.level, key: `${it.defId}@${it.level}` });
+    return {
+      ...it,
+      blocked: bloqueio,
+      suggestion: sugestao.price,
+      // A conta por trás do número. Sem ela "1,2 M" é um palpite que o
+      // usuário não tem como julgar antes de confirmar.
+      suggestionFrom: {
+        samples: sugestao.samples,
+        dropped: sugestao.dropped,
+        median: sugestao.median,
+        reason: sugestao.reason,
+        source: sugestao.price ? 'local' : ''
+      }
+    };
+  });
+
+  // Quem o banco local não soube precificar vai ao servidor. Em lote por
+  // `def_id`, não por linha: `price_hint` ignora nível, então perguntar duas
+  // vezes pelo mesmo item daria a mesma resposta.
+  const faltando = [...new Set(items.filter(i => !i.suggestion && !i.blocked).map(i => i.defId))];
+  for (const defId of faltando.slice(0, 40)) {
+    const hint = await client.marketPriceHint(defId, 30).catch(() => null);
+    const preco = hint && !hint.errorCode
+      ? Math.round(Number(hint.median) || Number(hint.average) || 0)
+      : 0;
+    if (!preco) continue;
+    for (const it of items) {
+      if (it.defId !== defId || it.suggestion) continue;
+      it.suggestion = preco;
+      it.suggestionFrom = {
+        samples: Number(hint.sales) || 0, dropped: 0, median: preco,
+        // O nível fica de fora porque `price_hint` não o conhece. A tela diz
+        // isso: um preço de servidor num item que varia por nível é uma
+        // estimativa mais grossa, e o usuário tem de poder ver a diferença.
+        reason: '', source: 'server'
+      };
+    }
+  }
+
+  return {
+    items,
+    accounts,
+    account: {
+      index,
+      name: (client.state && client.state.name) || '',
+      connected: true
+    },
+    readAtMs: Date.now()
+  };
+});
+
+/**
+ * Cria os anúncios confirmados.
+ *
+ * Em série e tolerante a falha parcial: cada anúncio é um pedido, e o quinto
+ * recusado não pode desfazer nem esconder os quatro que entraram. O resultado
+ * vem linha a linha para a tela poder dizer exatamente o que aconteceu com
+ * cada item.
+ */
+ipcMain.handle('leveling:market:announce', async (event, payload) => {
+  launcherOnly(event);
+  const index = Number(payload && payload.index) || 0;
+  const client = levelingHeadlessManager.getClient(index);
+  if (!client || client.status !== 'connected') {
+    return { errorCode: 'inv.offline', results: [] };
+  }
+
+  const plano = levelingListing.planListings((payload && payload.drafts) || []);
+  const results = [];
+  for (const draft of plano.ready) {
+    const res = await client.marketCreate(draft).catch(e => ({ errorCode: e.message }));
+    results.push({
+      uid: draft.uid,
+      name: draft.name,
+      quantity: draft.quantity,
+      total: draft.total,
+      ok: !res.errorCode,
+      error: res.errorCode || '',
+      listingId: (res.listing && String(res.listing.id)) || ''
+    });
+  }
+  return { results, blocked: plano.blocked };
 });
 
 /** Saúde do acúmulo: desde quando, quantas vendas, tamanho do arquivo. */

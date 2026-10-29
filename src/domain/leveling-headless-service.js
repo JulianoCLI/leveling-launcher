@@ -1753,9 +1753,10 @@ class LevelingHeadlessClient extends EventEmitter {
    * não é o mesmo da operação (`get` responde `detail`, `search` responde
    * `page`), então devolvemos a chave junto.
    *
-   * A única escrita que passa por aqui é `buy`, e só a pedido do sniper, que
-   * o usuário liga por botão e configura item por item com teto de preço.
-   * `create`, `cancel` e as ofertas continuam fora: o monitor é de leitura, e
+   * Duas escritas passam por aqui, ambas com o usuário no comando: `buy`,
+   * pelo sniper, item por item com teto de preço; e `create`, pela aba
+   * Anunciar, que mostra cada item e o valor numa confirmação antes de
+   * mandar. `cancel` e as ofertas continuam fora — o monitor é de leitura, e
    * mexer no inventário da conta sem o usuário pedir seria outra coisa.
    */
   async marketRequest(op, value = {}) {
@@ -1951,6 +1952,90 @@ class LevelingHeadlessClient extends EventEmitter {
     }
 
     return { owned };
+  }
+
+  /**
+   * O inventário por **instância**, não agregado por item.
+   *
+   * `inventoryCounts` soma tudo num `def_id` e joga o `uid` fora, que é o
+   * suficiente para responder "quanto eu tenho" mas inútil para anunciar:
+   * `MarketCreate.item_uid` identifica uma peça específica, e duas espadas do
+   * mesmo tipo com níveis diferentes valem preços diferentes.
+   *
+   * Equipado e trancado vêm junto, marcados. Escondê-los aqui faria a tela
+   * dizer que o item não existe, quando a verdade é que ele existe e não pode
+   * ser vendido agora — que é uma informação acionável: basta tirar do corpo.
+   */
+  async inventoryItems(opts = {}) {
+    if (this.status !== 'connected') return { errorCode: 'inv.offline', items: [] };
+    const scopes = Array.isArray(opts.scopes) ? opts.scopes : [1, 3];
+    const items = [];
+
+    for (const scope of scopes) {
+      for (let page = 1; page <= 12; page++) {
+        const res = await this.request('inventory_page', { scope, page, page_size: 100 });
+        if (res.caseName === 'error') {
+          return { errorCode: (res.value && res.value.code) || 'inv.failed', items };
+        }
+        const value = res.value || {};
+        for (const item of value.items || []) {
+          if (!item || !item.def_id) continue;
+          items.push({
+            // uint64 chega como string no decode; o pedido de anúncio precisa
+            // de número, mas a conversão fica no momento do envio — aqui a
+            // string atravessa o IPC sem perder precisão.
+            uid: String(item.uid || ''),
+            defId: String(item.def_id),
+            rarity: String(item.rarity || ''),
+            level: Number(item.level) || 0,
+            enchant: Number(item.enchant) || 0,
+            qty: Number(item.qty) || 1,
+            power: Number(item.power) || 0,
+            locked: !!item.locked,
+            equippedSlot: String(item.equipped_slot || ''),
+            // O que o NPC paga. É o piso absoluto: anunciar abaixo disso é
+            // perder dinheiro para ter trabalho.
+            sellPrice: Number(item.sell_price) || 0,
+            scope
+          });
+        }
+        if (!value.has_next) break;
+      }
+    }
+
+    return { items };
+  }
+
+  /**
+   * Cria um anúncio. A segunda escrita de mercado do launcher, depois do
+   * `buy` do sniper.
+   *
+   * `item_uid` e `unit_price` são uint64 e o codec recusa string, mas o
+   * inventário entrega o uid como string: a conversão acontece aqui.
+   *
+   * `kind` e `currency` vão como número pelo mesmo motivo das buscas —
+   * `verify` responde `enum value expected` ao nome.
+   */
+  async marketCreate(draft = {}) {
+    const uid = Number(draft.uid);
+    if (!Number.isFinite(uid) || uid <= 0) return { errorCode: 'market.badUid' };
+    const unit = Math.max(1, Math.floor(Number(draft.unitPrice) || 0));
+    if (unit <= 0) return { errorCode: 'market.badPrice' };
+
+    const value = {
+      kind: MARKET_KIND_NUM.MARKET_KIND_ITEM,
+      item_uid: uid,
+      quantity: Math.max(1, Math.floor(Number(draft.quantity) || 1)),
+      currency: draft.currency === 'diamond'
+        ? MARKET_CURRENCY_NUM.MARKET_CURRENCY_DIAMOND
+        : MARKET_CURRENCY_NUM.MARKET_CURRENCY_GOLD,
+      unit_price: unit
+    };
+    const horas = Math.floor(Number(draft.hours) || 0);
+    if (horas > 0) value.hours = horas;
+
+    const res = await this.marketRequest('create', value);
+    return res.errorCode ? { errorCode: res.errorCode } : (res.value || {});
   }
 
   /**

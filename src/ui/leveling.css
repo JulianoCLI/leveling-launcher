@@ -844,11 +844,18 @@
   display: flex;
 }
 
+/* Fundo do mercado.
+   `--color-bg-elevated` é #10161f, visivelmente azul, e o mercado é a maior
+   superfície lisa do launcher: numa janela em tela cheia o tom que mal se nota
+   num modal pequeno vira a cor da tela inteira. Aqui ele é cinza neutro, que
+   deixa a cor aparecer onde ela significa alguma coisa — raridade do item,
+   verde de ganho, vermelho de perda. */
 #marketModal {
+  --mk-surface: #121417;
   width: min(980px, calc(100vw - 32px));
   max-height: calc(100vh - 36px);
   padding: 22px 24px;
-  background: var(--color-bg-elevated);
+  background: var(--mk-surface);
   color: var(--color-text-primary);
   border: 1px solid var(--border-strong);
   border-radius: 16px;
@@ -868,7 +875,7 @@
 body.market-standalone {
   margin: 0;
   overflow: hidden;
-  background: var(--color-bg-elevated);
+  background: #121417;
 }
 
 body.market-standalone #marketOverlay {
@@ -1258,6 +1265,129 @@ body.market-standalone #marketModal {
 #marketModal .mk-table tbody tr.is-equipped .mk-c-p.mk-strong {
   text-decoration: line-through;
   text-decoration-thickness: 1px;
+}
+
+/* ---------------------------------------------------------- anunciar */
+
+/* Barra da conta. Fora da área que rola, como os filtros: trocar de conta com
+   a lista rolada exigiria subir até o topo. */
+#marketModal .mk-sell-bar {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+#marketModal .mk-sell-bar .mk-check {
+  margin-bottom: 0;
+}
+
+#marketModal .mk-c-pick {
+  width: 34px;
+  text-align: center;
+}
+
+#marketModal .mk-c-pick input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+
+/* Linha marcada. O destaque é na borda e não no fundo: a cor do fundo já
+   carrega a raridade do item, e pintá-la por cima apagaria essa informação. */
+#marketModal .mk-table tbody tr.is-picked {
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+
+#marketModal .mk-price {
+  width: 120px;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--border-strong);
+  color: var(--color-text-primary);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12.5px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#marketModal .mk-price:disabled {
+  opacity: .35;
+}
+
+#marketModal .mk-price:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+/* O preço por unidade sob o do pacote. Lote é anunciado inteiro, mas é o
+   unitário que o servidor recebe — e é por ele que o comprador compara. */
+#marketModal .mk-unit,
+#marketModal .mk-src {
+  display: block;
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+  font-weight: 400;
+  margin-top: 2px;
+}
+
+/* Preço vindo do `price_hint`: mais grosso que o do banco, porque o servidor
+   não sabe de nível. Marcado para não se confundir com o calculado. */
+#marketModal .mk-src {
+  color: #fbbf24;
+  opacity: .8;
+}
+
+#marketModal .mk-sell-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-top: 12px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, .08));
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  flex-wrap: wrap;
+}
+
+#marketModal .mk-sell-foot button {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--color-text-secondary);
+  padding: 7px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+#marketModal .mk-sell-foot button.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #0b0f14;
+}
+
+#marketModal .mk-sell-foot button:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
+#marketModal .mk-sell-foot .is-warn {
+  color: #fbbf24;
+}
+
+#marketModal .mk-table tbody tr.is-err {
+  box-shadow: inset 2px 0 0 #f87171;
+}
+
+#marketModal .mk-table tfoot td {
+  padding-top: 10px;
+  border-top: 1px solid var(--border-strong);
+  font-weight: 600;
+  color: var(--color-text-primary);
 }
 
 /* ------------------------------------------------------------- diamante */

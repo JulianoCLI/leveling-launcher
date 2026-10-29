@@ -109,6 +109,64 @@ test('item comum mantém o unitário do servidor', () => {
   assert.equal(linha.unit_price, 1);
 });
 
+// --------------------------------------------------- vendas para precificar
+
+test('o preço do anúncio é calculado sobre vendas do mesmo nível', () => {
+  // Topázio nv.1 e nv.4 são itens diferentes com o mesmo nome: no banco real
+  // um sai por 999 e outro por 4 M. Misturá-los produziria um preço que não
+  // serve para nenhum dos dois.
+  const db = abrir();
+  db.insertSales([
+    venda(1, 'topazio', 999, 1, Date.now()),
+    venda(2, 'topazio', 4000000, 1, Date.now())
+  ]);
+  db.setLevels([{ listing_id: 7, level: 1 }, { listing_id: 14, level: 4 }]);
+
+  const nv4 = db.salesForPricing('topazio', { level: 4 });
+  assert.equal(nv4.length, 1);
+  assert.equal(nv4[0].unit_price, 4000000);
+
+  // Sem nível pedido, tudo entra: é o caso do item que não varia por nível.
+  assert.equal(db.salesForPricing('topazio').length, 2);
+  db.close();
+});
+
+test('venda de nível desconhecido não entra numa consulta por nível', () => {
+  // `level IS NULL` significa "ainda não perguntei". Incluí-la seria supor
+  // que é do nível certo, e o preço sairia de uma suposição.
+  const db = abrir();
+  db.insertSales([venda(3, 'topazio', 500, 1, Date.now())]);
+  assert.equal(db.salesForPricing('topazio', { level: 2 }).length, 0);
+  assert.equal(db.salesForPricing('topazio').length, 1);
+  db.close();
+});
+
+test('venda em diamante fica fora do preço de anúncio em ouro', () => {
+  // Errar isso erraria por três ordens de grandeza.
+  const db = abrir();
+  db.insertSales([
+    venda(4, 'topazio', 90, 1, Date.now(), { currency: 'MARKET_CURRENCY_DIAMOND' }),
+    venda(5, 'topazio', 900000, 1, Date.now())
+  ]);
+  const r = db.salesForPricing('topazio');
+  assert.equal(r.length, 1);
+  assert.equal(r[0].unit_price, 900000);
+  db.close();
+});
+
+test('as vendas vêm da mais recente para a mais antiga', () => {
+  // O automático corta nas dez primeiras: se a ordem fosse outra, ele
+  // calcularia sobre as mais velhas.
+  const db = abrir();
+  const agora = Date.now();
+  db.insertSales([
+    venda(6, 'topazio', 100, 1, agora - 5 * DIA),
+    venda(7, 'topazio', 300, 1, agora)
+  ]);
+  assert.deepEqual(db.salesForPricing('topazio').map(s => s.unit_price), [300, 100]);
+  db.close();
+});
+
 test('o câmbio já gravado com o preço do lote é corrigido na abertura', () => {
   // O histórico é insubstituível: o servidor só lembra meia hora. Corrigir
   // apenas na entrada deixaria meses de vendas mentindo para sempre.

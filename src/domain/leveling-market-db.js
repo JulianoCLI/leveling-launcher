@@ -704,6 +704,46 @@ class MarketDatabase {
   }
 
   /**
+   * As últimas vendas de um item, para o preço automático do anúncio.
+   *
+   * Separado de `recent` porque a pergunta é outra: ali é "o que acabou de
+   * acontecer no mercado", aqui é "por quanto este item específico vem
+   * saindo". A diferença que importa é o nível.
+   *
+   * Nível casa exatamente quando pedido. Topázio de nível 1 e de nível 4 são
+   * itens diferentes com o mesmo nome — no banco real um sai por 999 e outro
+   * por 4 milhões —, e misturá-los no cálculo produziria um preço que não
+   * serve para nenhum dos dois. Vendas cujo nível nunca foi descoberto
+   * (`level IS NULL`) ficam de fora quando há nível pedido: incluí-las seria
+   * supor que são do nível certo.
+   *
+   * Só ouro. Anunciar em diamante por um preço calculado sobre vendas em
+   * ouro erraria por três ordens de grandeza.
+   */
+  salesForPricing(defId, opts = {}) {
+    if (!this.open() || !defId) return [];
+    const limit = Math.min(Math.max(num(opts.limit) || 10, 1), 100);
+    const where = [`def_id = ?`, SQL_OURO];
+    const params = [String(defId)];
+    const nivel = num(opts.level);
+    if (nivel > 0) { where.push('level = ?'); params.push(nivel); }
+    const since = sinceOf(opts.days);
+    if (since) { where.push('sold_at_ms >= ?'); params.push(since); }
+    try {
+      return this.db.prepare(`
+        SELECT unit_price, quantity, level, enchant, sold_at_ms
+        FROM sales
+        WHERE ${where.join(' AND ')}
+        ORDER BY sold_at_ms DESC, id DESC
+        LIMIT ?
+      `).all(...params, limit);
+    } catch (err) {
+      this.error = err && err.message || String(err);
+      return [];
+    }
+  }
+
+  /**
    * Um item em detalhe: as vendas recentes dele e a série diária de preço
    * médio, que é o que permite ver tendência em vez de um número solto.
    */

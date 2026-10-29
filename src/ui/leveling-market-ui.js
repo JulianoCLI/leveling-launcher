@@ -124,6 +124,17 @@
     return Math.max(1, Math.round(total / qty));
   };
 
+  /** Recusas de anúncio do servidor, em português. O código cru fica à vista. */
+  const ERROS_ANUNCIO = {
+    'market.limit': 'limite de anúncios atingido',
+    'market.locked': 'o item está trancado no jogo',
+    'market.equipped': 'o item está vestido',
+    'market.notFound': 'o item não estava mais no inventário',
+    'market.priceMax': 'acima do preço máximo do servidor',
+    'market.quantity': 'quantidade recusada',
+    'inv.offline': 'a conta saiu do modo monitor'
+  };
+
   /** Rótulos dos atributos base, para a ficha do item. */
   const STATS = {
     atk: 'ATQ', def: 'DEF', hp: 'HP', mp: 'MP', crit: 'Crít.',
@@ -183,6 +194,36 @@
      * caixa existe porque às vezes a resposta é vender a armadura mesmo.
      */
     showEquip: false,
+
+    /**
+     * Aba "Anunciar". Uma conta por vez, e por instância de item.
+     *
+     * Diferente de `bolsa` em duas coisas que importam: ali o inventário é
+     * agregado por `def_id` e varre todas as contas, aqui cada linha é um
+     * `uid` de uma conta só. `MarketCreate.item_uid` identifica uma peça
+     * específica, e duas espadas iguais com níveis diferentes valem preços
+     * diferentes — o agregado não teria como distingui-las.
+     */
+    sell: {
+      /** Índice da conta escolhida. `null` = nenhuma ainda. */
+      account: null,
+      /** Contas do launcher, para o seletor. Vem junto da varredura. */
+      accounts: [],
+      items: [],
+      loading: false,
+      error: '',
+      /** Equipamento na lista? Mesma razão da bolsa, e também desligado. */
+      showEquip: false,
+      /** `uid` → preço do pacote digitado. Só os marcados entram. */
+      picked: new Map(),
+      /** `uid` dos que estão em automático: o preço acompanha a sugestão. */
+      auto: new Set(),
+      /** Confirmação aberta: `null` ou o plano montado por `planListings`. */
+      confirm: null,
+      /** Resultado do último envio, linha a linha. */
+      results: null,
+      busy: false
+    },
 
     init(api) {
       this.api = api || window.pokeAPI;
@@ -370,6 +411,13 @@
           this.bolsa = res || { contas: [], offline: [], precos: {}, errorCode: 'bag.failed' };
           return;
         }
+        if (this.view === 'sell') {
+          // Sem conta escolhida isto só traz a lista de contas para o
+          // seletor: varrer uma conta por palpite seria tráfego para mostrar
+          // o inventário errado, e a escolha é do usuário.
+          await this.loadSellable();
+          return;
+        }
         if (this.view === 'live') {
           const res = await this.api.marketRecent({
             limit: 200, days: this.query.days,
@@ -393,7 +441,7 @@
         // nome do monstro — não casaria com nada.
         // A bolsa já traz posse e preço juntos: perguntar de novo seria uma
         // segunda varredura para repetir o que acabou de chegar.
-        if (this.view === 'bolsa') return;
+        if (this.view === 'bolsa' || this.view === 'sell') return;
         const visiveis = (this.view === 'live' ? this.data.sales : this.data.items)
           .filter(r => r.kind !== 'MARKET_KIND_SHADOW' && r.category !== 'sombra')
           .map(r => r.def_id);
@@ -527,6 +575,197 @@
       if (this.view === 'detail' && this.listings.length) this.render();
     },
 
+    // ----------------------------------------------------------- anunciar
+
+    /**
+     * O inventário da conta escolhida, com o preço sugerido de cada peça.
+     *
+     * Chamada também sem conta escolhida — é assim que o seletor recebe a
+     * lista de contas na primeira abertura, sem varrer inventário nenhum.
+     */
+    async loadSellable() {
+      if (!this.api || !this.api.marketSellable) return;
+      const alvo = this.sell.account;
+      this.sell.loading = true;
+      this.sell.error = '';
+      this.render();
+
+      const res = await this.api.marketSellable({ index: alvo, days: this.query.days })
+        .catch(e => ({ errorCode: (e && e.message) || 'sellable.failed' }));
+
+      // O usuário pode ter trocado de conta enquanto a varredura corria.
+      if (alvo !== this.sell.account) return;
+
+      this.sell.loading = false;
+      if (res && res.accounts) this.sell.accounts = res.accounts;
+      if (!res || res.errorCode) {
+        this.sell.items = [];
+        this.sell.error = (res && res.errorCode) || 'sellable.failed';
+        this.render();
+        return;
+      }
+      if (alvo === null) { this.render(); return; }
+      this.sell.items = res.items || [];
+      // Trocar de conta não pode carregar a seleção da anterior: os `uid` são
+      // de outro inventário, e anunciar por eles falharia item a item sem
+      // explicação.
+      this.sell.picked = new Map();
+      this.sell.auto = new Set();
+      this.sell.confirm = null;
+      this.sell.results = null;
+      this.render();
+    },
+
+    /** As linhas que a aba mostra agora, já filtradas pela caixa de equipados. */
+    sellRows() {
+      return this.sell.items.filter(it => {
+        if (it.blocked === 'equipped') return this.sell.showEquip;
+        // Trancado e sem uid nunca aparecem: diferente de equipado, não há
+        // nada que o usuário possa fazer na tela a respeito, e a linha só
+        // ocuparia espaço entre o que ele pode de fato anunciar.
+        return !it.blocked;
+      });
+    },
+
+    /** Marca ou desmarca um item. Marcar liga o automático por padrão. */
+    toggleSellPick(uid) {
+      const s = this.sell;
+      if (s.picked.has(uid)) {
+        s.picked.delete(uid);
+        s.auto.delete(uid);
+      } else {
+        const it = s.items.find(i => i.uid === uid);
+        // O automático é o padrão porque é o motivo da aba existir: marcar
+        // dez itens e digitar dez preços à mão seria o trabalho que ela veio
+        // evitar. Sem sugestão o item entra marcado e sem preço, e a
+        // confirmação o separa como "falta valor".
+        s.picked.set(uid, (it && it.suggestion) || 0);
+        if (it && it.suggestion) s.auto.add(uid);
+      }
+      this.render();
+    },
+
+    /** Marca tudo que está à vista, ou desmarca se já estava tudo marcado. */
+    toggleSellAll() {
+      const linhas = this.sellRows();
+      const todos = linhas.length && linhas.every(l => this.sell.picked.has(l.uid));
+      if (todos) {
+        this.sell.picked = new Map();
+        this.sell.auto = new Set();
+      } else {
+        for (const it of linhas) {
+          if (this.sell.picked.has(it.uid)) continue;
+          this.sell.picked.set(it.uid, it.suggestion || 0);
+          if (it.suggestion) this.sell.auto.add(it.uid);
+        }
+      }
+      this.render();
+    },
+
+    /**
+     * Preço digitado à mão. Sai do automático na hora: os dois estados não
+     * podem coexistir, senão a próxima sugestão apagaria o que foi digitado.
+     */
+    setSellPrice(uid, valor) {
+      const n = Math.max(0, Math.floor(Number(valor) || 0));
+      this.sell.picked.set(uid, n);
+      this.sell.auto.delete(uid);
+    },
+
+    /** Volta o item ao preço sugerido. */
+    setSellAuto(uid, ligado) {
+      const it = this.sell.items.find(i => i.uid === uid);
+      if (ligado) {
+        this.sell.auto.add(uid);
+        this.sell.picked.set(uid, (it && it.suggestion) || 0);
+      } else {
+        this.sell.auto.delete(uid);
+      }
+      this.render();
+    },
+
+    /** Os rascunhos como o domínio os espera. */
+    sellDrafts() {
+      const out = [];
+      for (const [uid, total] of this.sell.picked) {
+        const it = this.sell.items.find(i => i.uid === uid);
+        if (!it) continue;
+        out.push({
+          uid,
+          defId: it.defId,
+          name: this.itemLabel(it),
+          level: it.level,
+          // Lote inteiro: o usuário pediu que item com mais de uma unidade
+          // seja anunciado como pacote, e o preço digitado é o do pacote.
+          quantity: it.qty,
+          total,
+          auto: this.sell.auto.has(uid)
+        });
+      }
+      return out;
+    },
+
+    /** Nome legível de uma peça, com nível quando ele distingue alguma coisa. */
+    itemLabel(it) {
+      const def = this.catalog.items[it.defId];
+      const nome = (def && def.name) || it.defId;
+      return it.level ? `${nome} nv. ${it.level}` : nome;
+    },
+
+    /**
+     * Abre a confirmação. Nada é mandado aqui: o usuário pediu uma tela que
+     * mostra cada item e o valor antes de acontecer, e é ela que o botão de
+     * confirmar de verdade vai usar.
+     */
+    openSellConfirm() {
+      const drafts = this.sellDrafts();
+      const ready = [];
+      const blocked = [];
+      for (const d of drafts) {
+        if (d.total > 0) {
+          ready.push({ ...d, unitPrice: Math.max(1, Math.ceil(d.total / Math.max(1, d.quantity))) });
+        } else {
+          blocked.push({ ...d, reason: 'price.missing' });
+        }
+      }
+      this.sell.confirm = {
+        ready, blocked,
+        totalGold: ready.reduce((s, d) => s + d.total, 0)
+      };
+      this.sell.results = null;
+      this.render();
+    },
+
+    closeSellConfirm() {
+      this.sell.confirm = null;
+      this.render();
+    },
+
+    /** Manda os anúncios. Falha parcial é resultado, não erro. */
+    async confirmSell() {
+      const c = this.sell.confirm;
+      if (!c || !c.ready.length || this.sell.busy) return;
+      this.sell.busy = true;
+      this.render();
+
+      const res = await this.api.marketAnnounce({
+        index: this.sell.account,
+        drafts: c.ready
+      }).catch(e => ({ errorCode: (e && e.message) || 'announce.failed' }));
+
+      this.sell.busy = false;
+      this.sell.confirm = null;
+      this.sell.results = res && res.results
+        ? res.results
+        : [{ ok: false, error: (res && res.errorCode) || 'announce.failed', name: '' }];
+
+      // O que entrou saiu do inventário: reler é o que impede a tela de
+      // oferecer de novo um item que já está anunciado.
+      const entrou = (this.sell.results || []).some(r => r.ok);
+      if (entrou) await this.loadSellable();
+      else this.render();
+    },
+
     /** Leitura imediata do mercado, sem esperar o minuto do coletor. */
     async pollNow() {
       if (!this.api || !this.api.marketPoll) return;
@@ -607,6 +846,7 @@
 
       vista.innerHTML = this.view === 'detail' ? this.detailHtml()
         : this.view === 'bolsa' ? this.bolsaHtml()
+        : this.view === 'sell' ? this.sellHtml()
         : this.view === 'live' ? this.liveHtml()
         : this.itemsHtml();
 
@@ -618,7 +858,8 @@
       const abas = [
         { id: 'items', label: 'Itens' },
         { id: 'live', label: 'Ao vivo' },
-        { id: 'bolsa', label: 'Minha bolsa' }
+        { id: 'bolsa', label: 'Minha bolsa' },
+        { id: 'sell', label: 'Anunciar' }
       ];
       return `
         <div class="mk-bar">
@@ -638,7 +879,7 @@
                 ${PERIODOS.map(p => `<option value="${p.days}" ${p.days === this.query.days ? 'selected' : ''}>${p.label}</option>`).join('')}
               </select>
             </label>
-            ${this.view === 'detail' || this.view === 'bolsa' ? '' : `
+            ${this.view === 'detail' || this.view === 'bolsa' || this.view === 'sell' ? '' : `
               <label class="mk-field">
                 <span>Categoria</span>
                 <select data-role="category">
@@ -706,9 +947,49 @@
         if (!alvo || !alvo.closest) return;
         const caixa = alvo.closest('[data-role="equip"]');
         if (caixa) { this.showEquip = !!caixa.checked; this.render(); return; }
+        if (this.view === 'sell' && this.wireSellClick(alvo)) return;
         const linha = alvo.closest('[data-item]');
         if (linha) this.show(linha.dataset.item);
       };
+
+      // O preço é tratado no `change`, não no `click`: repintar a cada tecla
+      // tiraria o cursor do campo, e `change` só dispara quando o usuário sai
+      // dele ou aperta Enter — que é quando o número está completo.
+      vista.onchange = ev => {
+        const alvo = ev.target;
+        if (!alvo || !alvo.dataset) return;
+        if (alvo.dataset.price !== undefined) {
+          this.setSellPrice(alvo.dataset.price, alvo.value);
+          this.render();
+          return;
+        }
+        const seletor = alvo.closest && alvo.closest('[data-role="sell-account"]');
+        if (seletor) {
+          const v = seletor.value;
+          this.sell.account = v === '' ? null : Number(v);
+          this.sell.items = [];
+          this.load();
+        }
+      };
+    },
+
+    /**
+     * Cliques da aba Anunciar. Devolve `true` quando tratou, para o clique
+     * não cair na navegação de item que vale nas outras visões.
+     */
+    wireSellClick(alvo) {
+      const d = alvo.dataset || {};
+      if (d.pick !== undefined) { this.toggleSellPick(d.pick); return true; }
+      if (d.auto !== undefined) { this.setSellAuto(d.auto, !!alvo.checked); return true; }
+      const papel = alvo.closest('[data-role]');
+      const role = papel && papel.dataset.role;
+      if (role === 'sell-all') { this.toggleSellAll(); return true; }
+      if (role === 'sell-equip') { this.sell.showEquip = !!papel.checked; this.render(); return true; }
+      if (role === 'sell-review') { this.openSellConfirm(); return true; }
+      if (role === 'sell-back') { this.closeSellConfirm(); return true; }
+      if (role === 'sell-go') { this.confirmSell(); return true; }
+      if (role === 'sell-done') { this.sell.results = null; this.render(); return true; }
+      return false;
     },
 
     itemsHtml() {
@@ -1299,6 +1580,235 @@
             }).join('')}
           </tbody>
         </table>`;
+    },
+
+    /**
+     * A aba "Anunciar".
+     *
+     * Três estados em sequência, e a tela só mostra um de cada vez: escolher
+     * a conta, escolher os itens e o preço, confirmar. A confirmação é um
+     * passo separado de propósito — anunciar é irreversível pelo launcher
+     * (cancelar não passa por aqui), e o usuário pediu para ver cada item e
+     * o valor antes de acontecer.
+     */
+    sellHtml() {
+      const s = this.sell;
+      if (s.results) return this.sellResultsHtml();
+      if (s.confirm) return this.sellConfirmHtml();
+
+      const seletor = `
+        <div class="mk-sell-bar">
+          <label class="mk-field">
+            <span>Conta</span>
+            <select data-role="sell-account">
+              <option value="">escolha a conta</option>
+              ${s.accounts.map(a => {
+        const nome = a.name || a.username || `Conta ${a.index + 1}`;
+        return `<option value="${a.index}"${s.account === a.index ? ' selected' : ''}
+                  ${a.connected ? '' : ' disabled'}>${escape(
+          `${a.index + 1} · ${nome}${a.connected ? '' : ' (fora do monitor)'}`)}</option>`;
+      }).join('')}
+            </select>
+          </label>
+          ${s.account !== null ? `
+            <label class="mk-check">
+              <input type="checkbox" data-role="sell-equip" ${s.showEquip ? 'checked' : ''}>
+              <span>Mostrar equipamentos vestidos</span>
+            </label>` : ''}
+        </div>`;
+
+      if (s.account === null) {
+        const vivas = s.accounts.filter(a => a.connected).length;
+        return `${seletor}
+          <p class="hint">${vivas
+          ? 'Escolha a conta cujo inventário você quer anunciar.'
+          : 'Nenhuma conta está em <b>modo monitor</b>. Anunciar sai do socket da conta, então é preciso ligar o monitor de pelo menos uma.'}</p>`;
+      }
+
+      if (s.loading) return `${seletor}<p class="hint">Lendo o inventário…</p>`;
+      if (s.error) {
+        return `${seletor}<p class="hint">Não foi possível ler o inventário (<code>${escape(s.error)}</code>).</p>`;
+      }
+
+      const linhas = this.sellRows();
+      if (!linhas.length) {
+        return `${seletor}<p class="hint">Nada nesta conta pode ir para o mercado agora.</p>`;
+      }
+
+      const marcados = linhas.filter(l => s.picked.has(l.uid));
+      const soma = marcados.reduce((t, l) => t + (s.picked.get(l.uid) || 0), 0);
+      const semPreco = marcados.filter(l => !s.picked.get(l.uid)).length;
+      const todos = marcados.length === linhas.length;
+
+      return `
+        ${seletor}
+        <table class="mk-table mk-sell">
+          <thead>
+            <tr>
+              <th class="mk-c-pick">
+                <input type="checkbox" data-role="sell-all" ${todos ? 'checked' : ''}
+                  aria-label="Marcar todos">
+              </th>
+              <th class="mk-c-name">Item</th>
+              <th class="mk-c-n">Qtd</th>
+              <th class="mk-c-p" title="Maior das últimas vendas, descartando as anormais">Sugerido</th>
+              <th class="mk-c-p">Preço do anúncio</th>
+              <th class="mk-c-n">Auto</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${linhas.map(it => this.sellRowHtml(it)).join('')}
+          </tbody>
+        </table>
+
+        <div class="mk-sell-foot">
+          <span>${marcados.length
+          ? `<b>${marcados.length}</b> ${marcados.length === 1 ? 'item marcado' : 'itens marcados'} · ${curto(soma)} 🪙${
+            semPreco ? ` · <b class="is-warn">${semPreco} sem preço</b>` : ''}`
+          : 'Nenhum item marcado.'}</span>
+          <button type="button" class="primary" data-role="sell-review"
+            ${marcados.length ? '' : 'disabled'}>Revisar e anunciar</button>
+        </div>`;
+    },
+
+    /** Uma peça do inventário. */
+    sellRowHtml(it) {
+      const s = this.sell;
+      const marcado = s.picked.has(it.uid);
+      const auto = s.auto.has(it.uid);
+      const preco = s.picked.get(it.uid) || 0;
+      const def = this.catalog.items[it.defId];
+      const rar = this.catalog.rarities[it.rarity || (def && def.rarity)];
+      const cor = rar && rar.color ? ` style="color:${escape(rar.color)}"` : '';
+      const src = def && def.icon ? this.catalog.origin + def.icon : '';
+      const from = it.suggestionFrom || {};
+
+      // De onde o preço sugerido veio. Um número sem procedência não dá para
+      // julgar, e o do servidor é mais grosso: `price_hint` não conhece nível.
+      const dica = !it.suggestion
+        ? 'Sem vendas suficientes para sugerir um preço — digite o valor.'
+        : from.source === 'server'
+          ? `Estimativa do servidor sobre ${from.samples || 0} vendas de 30 dias. Não considera o nível do item.`
+          : `Maior das ${from.samples} últimas vendas${it.level ? ` de nível ${it.level}` : ''}${
+            from.dropped ? `, descartando ${from.dropped} anormal${from.dropped > 1 ? 'is' : ''}` : ''
+          }. Mediana ${cheio(from.median)}.`;
+
+      return `
+        <tr class="${marcado ? 'is-picked' : ''}${it.blocked === 'equipped' ? ' is-equipped' : ''}">
+          <td class="mk-c-pick">
+            <input type="checkbox" data-pick="${escape(it.uid)}" ${marcado ? 'checked' : ''}
+              ${it.blocked ? 'disabled' : ''}>
+          </td>
+          <td class="mk-c-name">
+            <span class="mk-icon">${src
+          ? `<img src="${escape(src)}" alt="" width="24" height="24" loading="lazy" decoding="async" onerror="this.remove()">`
+          : ''}</span>
+            <b${cor}>${escape((def && def.name) || it.defId)}</b>
+            <small>${it.level ? `nv. ${it.level}` : ''}${
+          it.enchant ? `${it.level ? ' · ' : ''}+${it.enchant}` : ''
+        }${it.blocked === 'equipped' ? ' · vestido, não pode ser anunciado' : ''}</small>
+          </td>
+          <td class="mk-c-n">${curto(it.qty)}</td>
+          <td class="mk-c-p ${it.suggestion ? '' : 'is-none'}" title="${escape(dica)}">${
+          it.suggestion ? curto(it.suggestion) : '—'}${
+          from.source === 'server' ? '<small class="mk-src">servidor</small>' : ''}</td>
+          <td class="mk-c-p">
+            <input type="number" class="mk-price" data-price="${escape(it.uid)}" min="0" step="1"
+              value="${marcado ? preco : ''}" placeholder="${it.suggestion || 0}"
+              ${marcado && !it.blocked ? '' : 'disabled'}
+              title="${it.qty > 1 ? 'Preço do pacote inteiro' : 'Preço do item'}">
+            ${it.qty > 1 && marcado && preco
+          ? `<small class="mk-unit">${curto(Math.ceil(preco / it.qty))} cada</small>` : ''}
+          </td>
+          <td class="mk-c-n">
+            <input type="checkbox" data-auto="${escape(it.uid)}" ${auto ? 'checked' : ''}
+              ${marcado && it.suggestion ? '' : 'disabled'}
+              title="Acompanha o preço sugerido">
+          </td>
+        </tr>`;
+    },
+
+    /**
+     * A verificação. Cada item e o valor que vai ser anunciado, antes de
+     * qualquer coisa sair daqui.
+     */
+    sellConfirmHtml() {
+      const c = this.sell.confirm;
+      return `
+        <h3 class="mk-group">Confirmar anúncios <small>${c.ready.length} ${
+        c.ready.length === 1 ? 'item' : 'itens'} · ${this.sell.busy ? 'enviando…' : 'nada foi anunciado ainda'}</small></h3>
+
+        ${c.blocked.length ? `
+          <p class="hint">${c.blocked.length} ${c.blocked.length === 1 ? 'item ficou' : 'itens ficaram'} de fora
+            por não ter preço: ${escape(c.blocked.map(b => b.name).join(', '))}.</p>` : ''}
+
+        <table class="mk-table">
+          <thead>
+            <tr>
+              <th class="mk-c-name">Item</th>
+              <th class="mk-c-n">Qtd</th>
+              <th class="mk-c-p">Unitário</th>
+              <th class="mk-c-p">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${c.ready.map(d => `
+              <tr>
+                <td class="mk-c-name"><b>${escape(d.name)}</b>${
+        d.auto ? '<small>preço automático</small>' : '<small>preço digitado</small>'}</td>
+                <td class="mk-c-n">${curto(d.quantity)}</td>
+                <td class="mk-c-p" title="${cheio(d.unitPrice)}">${curto(d.unitPrice)}</td>
+                <td class="mk-c-p mk-strong" title="${cheio(d.total)}">${curto(d.total)}</td>
+              </tr>`).join('')}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="3">Total pedido</td>
+              <td class="mk-c-p mk-strong" title="${cheio(c.totalGold)}">${curto(c.totalGold)} 🪙</td>
+            </tr>
+          </tfoot>
+        </table>
+
+        <p class="hint">O anúncio dura <b>2 dias</b>. A taxa de venda é cobrada pelo jogo sobre o
+          valor recebido, não sobre o pedido. O launcher não cancela anúncios: isso é feito no jogo.</p>
+
+        <div class="mk-sell-foot">
+          <button type="button" data-role="sell-back" ${this.sell.busy ? 'disabled' : ''}>Voltar</button>
+          <button type="button" class="primary" data-role="sell-go"
+            ${this.sell.busy || !c.ready.length ? 'disabled' : ''}>${
+        this.sell.busy ? 'Anunciando…' : `Anunciar ${c.ready.length} ${c.ready.length === 1 ? 'item' : 'itens'}`}</button>
+        </div>`;
+    },
+
+    /** O que aconteceu com cada item. Falha parcial é o caso normal. */
+    sellResultsHtml() {
+      const r = this.sell.results;
+      const ok = r.filter(x => x.ok).length;
+      return `
+        <h3 class="mk-group">Resultado <small>${ok} de ${r.length} ${
+        r.length === 1 ? 'anunciado' : 'anunciados'}</small></h3>
+        <table class="mk-table">
+          <thead>
+            <tr>
+              <th class="mk-c-name">Item</th>
+              <th class="mk-c-p">Pedido</th>
+              <th class="mk-c-name">Situação</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${r.map(x => `
+              <tr class="${x.ok ? '' : 'is-err'}">
+                <td class="mk-c-name"><b>${escape(x.name || '—')}</b></td>
+                <td class="mk-c-p">${x.total ? curto(x.total) : '—'}</td>
+                <td class="mk-c-name">${x.ok
+        ? '✅ anunciado'
+        : `❌ ${escape(ERROS_ANUNCIO[x.error] || x.error || 'recusado')}`}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+        <div class="mk-sell-foot">
+          <button type="button" class="primary" data-role="sell-done">Voltar ao inventário</button>
+        </div>`;
     },
 
     cardHtml(label, valor, nota) {
