@@ -162,6 +162,9 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   // Um hop agora, sem esperar o intervalo. Move ouro de verdade; as guardas de
   // reserva e conferência valem aqui igual.
   cambioPoll: () => ipcRenderer.invoke('leveling:cambio:poll'),
+  // Resgata o correio de todas as contas em monitor. Nada sai das contas: o
+  // ouro de venda estava parado na caixa e passa para o saldo da mesma conta.
+  cambioMail: () => ipcRenderer.invoke('leveling:cambio:mail'),
   cambioLog: () => ipcRenderer.invoke('leveling:cambio:log'),
   cambioLogClear: () => ipcRenderer.invoke('leveling:cambio:log-clear'),
   cambioWindow: () => ipcRenderer.invoke('leveling:cambio:window'),

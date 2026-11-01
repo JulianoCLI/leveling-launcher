@@ -5233,6 +5233,32 @@ class LevelingHeadlessManager extends EventEmitter {
   }
 
   /**
+   * Resgata o ouro do correio de **todas** as contas em monitor, agora.
+   *
+   * O botão da tela. O laço já faz isso por conta antes de cada hop, mas só na
+   * origem do hop que vai sair — uma conta no fim da fila pode ficar com o
+   * ouro parado por horas. Aqui a varredura é a cadeia inteira de uma vez.
+   *
+   * Mesmo critério estreito de sempre (`correioDoCambio`): ouro e nada mais.
+   * A conta de destino entra junto; ela não doa, mas o ouro dela no correio é
+   * ouro que não está no saldo.
+   */
+  async cambioCorreioTodos() {
+    let gold = 0;
+    let contas = 0;
+    for (const index of this.cambioAtivos()) {
+      const client = this.getClient(index);
+      if (!client) continue;
+      const recolhido = await this.cambioCorreio(client, true).catch(() => 0);
+      if (recolhido > 0) {
+        gold += recolhido;
+        contas++;
+      }
+    }
+    return { gold, contas };
+  }
+
+  /**
    * Um hop completo: duas contas, uma troca, ouro conferido.
    *
    * As etapas, e por que são estas (todas medidas em `tools/trade-probe.js`):

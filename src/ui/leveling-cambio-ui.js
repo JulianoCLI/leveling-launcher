@@ -470,6 +470,9 @@
       const poll = document.getElementById('cambioPoll');
       if (poll) poll.onclick = () => this.poll();
 
+      const mail = document.getElementById('cambioMail');
+      if (mail) mail.onclick = () => this.mail();
+
       const clear = document.getElementById('cambioClear');
       if (clear) clear.onclick = () => this.clear();
     },
@@ -561,6 +564,37 @@
         return;
       }
       this.say('A troca não foi concluída: ' + (MOTIVOS[r.error] || r.error || 'erro'), true);
+    },
+
+    /**
+     * Recolhe o correio de todas as contas em monitor.
+     *
+     * Separado de "Transferir agora" porque responde outra pergunta: o hop
+     * recolhe só da conta que vai doar, e uma conta no fim da fila pode ficar
+     * com o ouro de venda parado por horas. Aqui a varredura é a cadeia
+     * inteira, e nada sai de conta nenhuma.
+     */
+    async mail() {
+      const botao = document.getElementById('cambioMail');
+      if (botao) botao.disabled = true;
+      this.say('Lendo o correio de todas as contas em monitor…');
+
+      const res = await this.api.cambioMail().catch(e => ({ error: e.message }));
+      if (botao) botao.disabled = false;
+
+      if (!res || res.error) {
+        this.say('Falha ao resgatar: ' + ((res && res.error) || 'desconhecida'), true);
+        return;
+      }
+      this.apply(res);
+      this.render();
+
+      const r = res.resultado || {};
+      if (!r.gold) {
+        this.say('Nenhum ouro parado no correio. Entradas com item, diamante ou em análise não são tocadas.');
+        return;
+      }
+      this.say(`Resgatado: ${cheio(r.gold)} de ouro de ${r.contas} ${r.contas === 1 ? 'conta' : 'contas'}.`);
     },
 
     async clear() {

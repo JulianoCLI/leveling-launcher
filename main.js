@@ -1854,6 +1854,18 @@ ipcMain.handle('leveling:cambio:poll', async event => {
   return { resultado, ...cambioState() };
 });
 
+/**
+ * Resgata o ouro do correio de todas as contas em monitor, agora.
+ *
+ * É escrita, mas é a mais inofensiva da tela: nada sai da conta, só entra. O
+ * ouro de venda estava parado na caixa e passa para o saldo da mesma conta.
+ */
+ipcMain.handle('leveling:cambio:mail', async event => {
+  launcherOnly(event);
+  const resultado = await levelingHeadlessManager.cambioCorreioTodos();
+  return { resultado, ...cambioState() };
+});
+
 ipcMain.handle('leveling:cambio:log', event => {
   launcherOnly(event);
   return {
