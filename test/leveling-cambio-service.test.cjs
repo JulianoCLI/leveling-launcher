@@ -232,8 +232,17 @@ function serveHop(par, opts = {}) {
     // ------------------------------------------------------- aproximação
     // As snapshots que dizem onde cada personagem está. As duas no spawn, que
     // é o que foi medido.
-    for (const lado of [de, para]) {
+    for (const [lado, flag] of [[de, 'cegaDe'], [para, 'cegaPara']]) {
       if (!lado.client.trip) continue;
+      // A cena acabou de montar e a primeira snapshot ainda não traz a
+      // entidade própria. Medido no servidor real, e era o que fazia a
+      // aproximação desistir com `cambio.semPosicao` — por isso ela entra no
+      // roteiro: o caminho normal tem de atravessá-la.
+      if (opts.snapshotCega && !feito[flag]) {
+        feito[flag] = true;
+        lado.ws.push('world_snapshot', { entities: [] });
+        continue;
+      }
       const pos = lado === de ? (opts.posDe || SPAWN) : SPAWN;
       lado.ws.push('world_snapshot', {
         entities: [{
@@ -355,6 +364,20 @@ test('o hop desce o ouro, confere e devolve as duas à caçada', async () => {
 
   assert.equal(par.manager.cambioStats.hops, 1);
   assert.equal(par.manager.cambioStats.goldMoved, 7626267);
+});
+
+test('a primeira snapshot sem a entidade própria não aborta o hop', async () => {
+  // Visto no servidor real: a cena acabou de montar e a primeira
+  // `world_snapshot` vem sem a entidade da conta. Desistir nela dava
+  // `cambio.semPosicao` com tudo funcionando — a aproximação tem de insistir,
+  // como `walkTo` faz no refill.
+  const par = await bootPar();
+  const parar = serveHop(par, { snapshotCega: true });
+  try {
+    const resultado = await par.manager.pollCambio();
+    assert.ok(resultado, 'o hop tinha de acontecer mesmo assim');
+    assert.equal(resultado.ok, true, resultado.error);
+  } finally { parar(); }
 });
 
 test('a oferta leva só ouro: nunca item nem sombra', async () => {

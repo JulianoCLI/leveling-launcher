@@ -1913,6 +1913,22 @@ class LevelingHeadlessClient extends EventEmitter {
     return false;
   }
 
+  /**
+   * A própria posição, assim que o servidor a disser.
+   *
+   * Exige `this.trip` aberto — é ele que faz o `peek` deixar `world_snapshot`
+   * passar. Devolve `null` se as snapshots pararem de chegar, ou se nenhuma
+   * delas trouxer a entidade própria dentro do orçamento de tentativas.
+   */
+  async esperarPosicao(tentativas = 10) {
+    for (let i = 0; i < tentativas; i++) {
+      if (this.trip && this.trip.pos) return this.trip.pos;
+      const snapshot = await this.waitFor('world_snapshot', 3000);
+      if (!snapshot) return null;
+    }
+    return (this.trip && this.trip.pos) || null;
+  }
+
   /** Teto para o ciclo: nenhuma etapa pode prender a conta fora da caçada. */
   withTimeout(promise, ms) {
     let timer;
@@ -5433,13 +5449,14 @@ class LevelingHeadlessManager extends EventEmitter {
     de.trip = { pos: null, startedAt: Date.now() };
     para.trip = { pos: null, startedAt: Date.now() };
     try {
-      // Uma snapshot de cada lado para ter as duas posições antes de decidir.
-      await Promise.all([
-        de.waitFor('world_snapshot', 5000),
-        para.waitFor('world_snapshot', 5000)
+      // Insistir, não ler uma só. A primeira snapshot depois do `scene_enter`
+      // frequentemente não traz a própria entidade — a cena acabou de montar —
+      // e desistir nela dava `cambio.semPosicao` com tudo funcionando. É o
+      // mesmo motivo de `walkTo` observar várias em vez de esperar um prazo.
+      const [meu, alvo] = await Promise.all([
+        de.esperarPosicao(),
+        para.esperarPosicao()
       ]);
-      const alvo = para.trip && para.trip.pos;
-      const meu = de.trip && de.trip.pos;
       if (!alvo || !meu) return { ok: false, error: 'cambio.semPosicao' };
 
       if (Math.hypot(meu.x - alvo.x, meu.y - alvo.y) <= NPC_REACH) return { ok: true };
