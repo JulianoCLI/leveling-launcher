@@ -338,6 +338,16 @@ const CAMBIO_HOP_TIMEOUT_MS = 45000;
 const CAMBIO_LOG_MAX = 300;
 
 /**
+ * Intervalo mínimo entre duas leituras do correio da mesma conta.
+ *
+ * O laço varre a cadeia a cada 15 s e lê o correio de cada origem antes de
+ * planejar. Sem estrangular, isso seriam oito leituras por tique para, quase
+ * sempre, não achar nada. Dois minutos é curto o bastante para o ouro de uma
+ * venda entrar bem antes do próximo hop — que sai de dez em dez minutos.
+ */
+const CAMBIO_MAIL_MS = 120000;
+
+/**
  * Pushes que o painel não mostra. `shadow_delta` e `content_catalog` entram
  * aqui por volume: o catálogo passa de 1 MB e a lista de sombras é grande,
  * enquanto nenhum dos dois alimenta um número da caçada.
@@ -3717,7 +3727,14 @@ class LevelingHeadlessManager extends EventEmitter {
     /** Intervalo sorteado para a espera corrente, com jitter já aplicado. */
     this.cambioWaitMs = 0;
     this.cambioStats = {
-      hops: 0, goldMoved: 0, lastAtMs: 0, lastError: '', lastHop: '', etapa: ''
+      hops: 0,
+      goldMoved: 0,
+      /** Ouro que estava parado no correio e entrou no saldo antes de um hop. */
+      goldClaimed: 0,
+      lastAtMs: 0,
+      lastError: '',
+      lastHop: '',
+      etapa: ''
     };
     this.random = typeof options.random === 'function' ? options.random : Math.random;
   }
@@ -5123,28 +5140,96 @@ class LevelingHeadlessManager extends EventEmitter {
       return null;
     }
 
-    const hops = cambio.planCadeia(this.cambioConfig, this.cambioAtivos());
-    if (!hops.length) {
-      this.cambioStats.lastError = 'cambio.semCadeia';
+    // A trava é tomada **aqui**, antes de qualquer `await`. A escolha do hop
+    // lê o correio da conta, e isso é uma ida ao servidor: sem reservar antes,
+    // duas rodadas atravessariam a escolha juntas e abririam duas trocas. É a
+    // garantia de "uma troca por vez" — a única coisa aqui que, se furada,
+    // move ouro duas vezes.
+    this.cambioBusy = true;
+    try {
+      const hops = cambio.planCadeia(this.cambioConfig, this.cambioAtivos());
+      if (!hops.length) {
+        this.cambioStats.lastError = 'cambio.semCadeia';
+        return null;
+      }
+
+      // O primeiro hop da cadeia que tem ouro sobrando. Varrer em vez de parar
+      // no primeiro: a conta mais alta pode estar abaixo da reserva enquanto a
+      // do meio já acumulou o bastante, e esperar por ela travaria a cadeia.
+      for (const hop of hops) {
+        const de = this.getClient(hop.de);
+        const para = this.getClient(hop.para);
+        if (!this.cambioLivre(de) || !this.cambioLivre(para)) continue;
+
+        // O correio **antes** de planejar, não depois. Ouro de venda de mercado
+        // fica parado na caixa, e o saldo não o inclui: planejar sem recolher
+        // deixaria para trás justamente o ouro que a conta já ganhou — e em
+        // contas que vendem muito isso é a maior parte dele.
+        await this.cambioCorreio(de, opts.force);
+
+        const plano = cambio.planHop(this.cambioConfig, de.state.gold);
+        if (plano.skip) continue;
+
+        // O hop assume a trava daqui em diante e a solta no próprio `finally`.
+        return await this.runCambioHop(hop, plano);
+      }
+
+      this.cambioStats.lastError = 'cambio.nadaASobrar';
       return null;
+    } finally {
+      // Solta o que a escolha reservou. Quando um hop rodou, ele já desmarcou
+      // no `finally` dele e isto é inócuo; quando nenhum rodou, é o que impede
+      // a trava de ficar presa para sempre.
+      this.cambioBusy = false;
     }
+  }
 
-    // O primeiro hop da cadeia que tem ouro sobrando. Varrer em vez de parar no
-    // primeiro: a conta mais alta pode estar abaixo da reserva enquanto a do
-    // meio já acumulou o bastante, e esperar por ela travaria a cadeia inteira.
-    for (const hop of hops) {
-      const de = this.getClient(hop.de);
-      const para = this.getClient(hop.para);
-      if (!this.cambioLivre(de) || !this.cambioLivre(para)) continue;
-
-      const plano = cambio.planHop(this.cambioConfig, de.state.gold);
-      if (plano.skip) continue;
-
-      return this.runCambioHop(hop, plano);
+  /**
+   * Recolhe do correio o ouro da conta antes de planejar o hop.
+   *
+   * O que motiva: uma venda de mercado entrega o ouro por correio, e enquanto
+   * nada o recolhe ele não está no saldo. Sem esta etapa o câmbio desceria
+   * só o ouro de caçada e deixaria para trás o de venda — que nas contas que
+   * mais vendem é a maior parte.
+   *
+   * O critério é o mais estreito que existe (`correioDoCambio`): entradas com
+   * ouro e **nada mais**. Nunca item, porque resgate com bolsa cheia é parcial
+   * e silencioso; nunca diamante, porque isso é recompensa, não venda.
+   *
+   * A leitura é estrangulada por conta. O laço varre a cadeia inteira a cada
+   * quinze segundos, e sem o intervalo isto seriam oito leituras de correio por
+   * tique para, quase sempre, não achar nada. `force` ignora o estrangulamento:
+   * quem apertou o botão quer o número de agora.
+   */
+  async cambioCorreio(client, force) {
+    if (!client || client.status !== 'connected') return 0;
+    const agora = Date.now();
+    if (!force && client.cambioMailAtMs && agora - client.cambioMailAtMs < CAMBIO_MAIL_MS) {
+      return 0;
     }
+    client.cambioMailAtMs = agora;
 
-    this.cambioStats.lastError = 'cambio.nadaASobrar';
-    return null;
+    const caixa = await client.mailList().catch(() => ({ entries: [] }));
+    const ids = cambio.correioDoCambio(caixa.entries, agora);
+    if (!ids.length) return 0;
+
+    const r = await client.mailClaim(ids).catch(() => ({ gold: 0 }));
+    const ouro = Number(r.gold) || 0;
+    if (ouro > 0) {
+      this.cambioStats.goldClaimed = (this.cambioStats.goldClaimed || 0) + ouro;
+      this.pushCambioLog({
+        atMs: Date.now(),
+        de: client.index,
+        para: client.index,
+        rotulo: `correio ${client.index + 1}`,
+        gold: ouro,
+        ok: true,
+        correio: true,
+        saldoDe: client.state.gold,
+        saldoPara: client.state.gold
+      });
+    }
+    return ouro;
   }
 
   /**
@@ -5730,6 +5815,7 @@ module.exports = {
   TRIP_CASES,
   CAMBIO_CASES,
   CAMBIO_TICK_MS,
+  CAMBIO_MAIL_MS,
   CAMBIO_HOP_TIMEOUT_MS,
   CAMBIO_LOG_MAX,
   FRIEND_KIND,

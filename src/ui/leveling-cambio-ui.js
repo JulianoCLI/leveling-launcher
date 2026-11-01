@@ -343,11 +343,13 @@
 
       const linhas = this.accounts.map(conta => {
         const nome = conta.name || conta.username || `Conta ${conta.index + 1}`;
+        // As linhas de correio ficam de fora das duas somas: elas têm `de` e
+        // `para` iguais, e contá-las diria que a conta enviou para si mesma.
         const enviado = this.log
-          .filter(l => l.de === conta.index && l.ok)
+          .filter(l => l.de === conta.index && l.ok && !l.correio)
           .reduce((soma, l) => soma + (Number(l.gold) || 0), 0);
         const recebido = this.log
-          .filter(l => l.para === conta.index && l.ok)
+          .filter(l => l.para === conta.index && l.ok && !l.correio)
           .reduce((soma, l) => soma + (Number(l.gold) || 0), 0);
         const ehDestino = conta.index === destinoIdx;
         return `
@@ -415,6 +417,15 @@
           <span class="xp-line-acc">${escape(rotulo)}</span>
           <span class="xp-line-text">${html}</span>
         </div>`;
+
+      if (linha.correio) {
+        // Não é um hop: é ouro que estava parado no correio daquela conta e
+        // entrou no saldo antes de ela doar. Aparece porque sem isso o valor
+        // do hop seguinte pareceria sair do nada.
+        return envelope('', `
+          <span class="xp-boss-ok">📬 recolhido do correio</span>
+          <b title="${cheio(linha.gold)} de ouro">${ouro(linha.gold)}</b>`);
+      }
 
       if (linha.ok) {
         const correio = linha.mailed

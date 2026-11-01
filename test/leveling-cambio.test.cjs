@@ -13,6 +13,7 @@ const {
   conferirFecho,
   conferirSaldo,
   precisaAmizade,
+  correioDoCambio,
   MIN_INTERVAL_MS,
   MAX_INTERVAL_MS,
   DEFAULT_INTERVAL_MS,
@@ -363,4 +364,45 @@ test('o id vem como string do servidor e como número do launcher', () => {
 test('lista ausente não explode', () => {
   assert.equal(precisaAmizade(null, '14803'), true);
   assert.equal(precisaAmizade({}, '14803'), true);
+});
+
+// -------------------------------------------------------------------- correio
+
+test('recolhe a venda que é só ouro', () => {
+  const ids = correioDoCambio([
+    { id: '1', kind: 'market', subjectKey: 'market_sale', gold: 480000 }
+  ]);
+  assert.deepEqual(ids, ['1']);
+});
+
+test('entrada com item fica no correio', () => {
+  // Resgate com a bolsa cheia é **parcial** e silencioso: o câmbio não abre
+  // essa porta por ouro que ele nem precisa.
+  assert.deepEqual(correioDoCambio([{ id: '1', gold: 500, items: 1 }]), []);
+});
+
+test('entrada com diamante fica no correio', () => {
+  // Ouro mais diamante é recompensa, não venda.
+  assert.deepEqual(correioDoCambio([{ id: '1', gold: 500, diamonds: 10 }]), []);
+});
+
+test('entrada sem ouro nenhum é ignorada', () => {
+  assert.deepEqual(correioDoCambio([{ id: '1', gold: 0 }]), []);
+});
+
+test('o que já foi recolhido não é pedido de novo', () => {
+  // O servidor mantém a entrada depois do resgate.
+  assert.deepEqual(correioDoCambio([{ id: '1', gold: 500, claimed: true }]), []);
+});
+
+test('a retida para análise espera o prazo', () => {
+  const agora = 1000000;
+  assert.deepEqual(correioDoCambio([{ id: '1', gold: 500, heldUntil: agora + 60000 }], agora), []);
+  // Passado o prazo, entra.
+  assert.deepEqual(correioDoCambio([{ id: '1', gold: 500, heldUntil: agora - 1 }], agora), ['1']);
+});
+
+test('caixa ausente não explode', () => {
+  assert.deepEqual(correioDoCambio(null), []);
+  assert.deepEqual(correioDoCambio(undefined), []);
 });

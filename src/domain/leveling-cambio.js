@@ -335,7 +335,35 @@ function precisaAmizade(friendList, accountId) {
   return !lista.some(f => f && String(f.account || '') === alvo);
 }
 
+/**
+ * Entradas do correio que o câmbio pode resgatar: as que trazem **só ouro**.
+ *
+ * O critério é deliberadamente o mais estreito possível, e por três motivos.
+ * Item no correio exige espaço na bolsa, e um resgate com a bolsa cheia é
+ * **parcial** — o estrago seria invisível. Recompensa de evento e prêmio com
+ * prazo podem estar ali de propósito, e esvaziá-los não teria volta. E o
+ * câmbio não precisa de nada disso: o que falta ao hop é ouro que já é da
+ * conta mas ainda não está no saldo.
+ *
+ * Diamante também barra a entrada. Uma entrada com ouro **e** diamante é
+ * quase sempre recompensa, não venda, e o ouro dela não vale abrir essa porta.
+ *
+ * As retidas para análise ficam de fora: o servidor recusa o `claim` antes do
+ * prazo, e tentar só gastaria um pedido por hop para receber a mesma recusa.
+ */
+function correioDoCambio(entries, agora = Date.now()) {
+  return (Array.isArray(entries) ? entries : [])
+    .filter(e => e
+      && !e.claimed
+      && (Number(e.gold) || 0) > 0
+      && !(Number(e.items) || 0)
+      && !(Number(e.diamonds) || 0)
+      && !((Number(e.heldUntil) || 0) > agora))
+    .map(e => String(e.id));
+}
+
 module.exports = {
+  correioDoCambio,
   defaultConfig,
   normalizeConfig,
   isConfigured,

@@ -357,6 +357,27 @@ A conta de **destino não tem reserva**: ela é o fim da linha, só recebe. Ela
 também participa sempre, mesmo marcada como excluída — "excluída" quer dizer
 "não doa", não "não recebe", e sem ela não existe cadeia.
 
+### O correio entra antes
+
+Antes de planejar um hop, a conta de origem **recolhe do correio o ouro que é
+só ouro**. Uma venda de mercado entrega por correio, e enquanto nada recolhe o
+valor não está no saldo — sem esta etapa o câmbio desceria apenas o ouro de
+caçada e deixaria para trás o de venda, que nas contas que mais vendem é a
+maior parte.
+
+O critério é o mais estreito possível: entradas com ouro e **nada mais**. Nunca
+com item, porque resgate com a bolsa cheia é **parcial** e silencioso; nunca com
+diamante, porque isso é recompensa, não venda; nunca as retidas para análise,
+que o servidor recusa antes do prazo. Recompensa de evento, prêmio e item
+guardado de propósito ficam intocados.
+
+A leitura é estrangulada em dois minutos por conta — o laço varre a cadeia a
+cada quinze segundos, e sem isso seriam oito leituras por tique para quase
+sempre não achar nada. "Transferir agora" ignora o estrangulamento.
+
+O ouro desce **acumulando**: o plano lê o saldo no instante do hop, então o que
+a conta 8 recebeu da 9 viaja junto com o dela no hop 8 → 7.
+
 ### Um hop
 
 As etapas, todas medidas contra o servidor real (`tools/trade-probe.js`):

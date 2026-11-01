@@ -193,6 +193,27 @@ function serveHop(par, opts = {}) {
   const feito = { amizade: false, travelDe: false, travelPara: false, oferta: false };
 
   const laco = setInterval(() => {
+    // ---------------------------------------------------------- correio
+    // O hop lê o correio da origem antes de planejar: ouro de venda de mercado
+    // fica parado ali e não entra no saldo sozinho.
+    while (de.ws.pending('mail_request')) {
+      const pedido = de.ws.pending('mail_request');
+      if (pedido.list) {
+        de.ws.reply('mail_request', 'mail_response', {
+          page: { entries: opts.correio || [], total: (opts.correio || []).length }
+        });
+      } else {
+        de.ws.reply('mail_request', 'mail_response', {
+          claimed: { claimed: [String(pedido.claim.id)], gold: opts.correioOuro || 0 }
+        });
+        // O saldo novo chega por `character_patch`, como no servidor real: o
+        // `MailClaimResult` diz quanto, não quanto ficou.
+        if (opts.correioPatch) {
+          de.ws.push('character_patch', { wallet: { gold: opts.correioPatch } });
+        }
+      }
+    }
+
     // ---------------------------------------------------------- amizade
     if (de.ws.count('social_request') && !feito.amizade) {
       const pedido = de.ws.pending('social_request');
@@ -378,6 +399,53 @@ test('a primeira snapshot sem a entidade própria não aborta o hop', async () =
     assert.ok(resultado, 'o hop tinha de acontecer mesmo assim');
     assert.equal(resultado.ok, true, resultado.error);
   } finally { parar(); }
+});
+
+test('o ouro do correio entra no saldo antes de o hop ser planejado', async () => {
+  // Uma venda de mercado entrega o ouro por correio, e ele não entra no saldo
+  // sozinho. Sem recolher, o câmbio desceria só o ouro de caçada e deixaria
+  // para trás a maior parte do que a conta ganhou.
+  const par = await bootPar({ goldDe: 150000 });
+  const parar = serveHop(par, {
+    correio: [{ id: '77', kind: 'market', subject_key: 'market_sale', gold: 480000 }],
+    correioOuro: 480000,
+    // O `character_patch` do resgate é o que põe o ouro no saldo.
+    correioPatch: 630000,
+    gold: 530000
+  });
+  try {
+    const r = await par.manager.pollCambio();
+    assert.ok(r, 'o hop tinha de acontecer');
+    assert.equal(r.ok, true, r.error);
+    // 150.000 de saldo + 480.000 do correio − 100.000 de reserva.
+    assert.equal(r.gold, 530000);
+  } finally { parar(); }
+
+  assert.equal(par.manager.cambioStats.goldClaimed, 480000);
+  // O resgate deixa a sua própria linha: sem ela, o valor do hop pareceria
+  // ter saído do nada.
+  const correio = par.manager.cambioLog.find(l => l.correio);
+  assert.ok(correio, 'o resgate tem de aparecer no relatório');
+  assert.equal(correio.gold, 480000);
+});
+
+test('correio só com item não é tocado, e o hop usa só o saldo', async () => {
+  // Resgate com a bolsa cheia é parcial e silencioso: o câmbio não abre essa
+  // porta por ouro que ele nem precisa.
+  const par = await bootPar({ goldDe: 150000 });
+  const parar = serveHop(par, {
+    correio: [{ id: '77', gold: 9999, items: [{ def_id: 'x' }] }],
+    gold: 50000
+  });
+  try {
+    const r = await par.manager.pollCambio();
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.gold, 50000, 'só o saldo, sem o correio');
+  } finally { parar(); }
+
+  // Nenhum `claim` pode ter saído.
+  const claims = par.de.ws.sent.filter(m => m.mail_request && m.mail_request.claim);
+  assert.equal(claims.length, 0);
 });
 
 test('a oferta leva só ouro: nunca item nem sombra', async () => {
