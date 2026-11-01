@@ -157,10 +157,24 @@
     'market.locked': 'o item está trancado no jogo',
     'market.equipped': 'o item está vestido',
     'market.notFound': 'o item não estava mais no inventário',
+    'inventory.item_not_in_bag': 'o item não estava na mochila',
+    'inv.lockFailed': 'não foi possível tirar o cadeado',
+    'inv.moveFailed': 'não foi possível trazer do depósito',
     'market.priceMax': 'acima do preço máximo do servidor',
     'market.quantity': 'quantidade recusada',
     'inv.offline': 'a conta saiu do modo monitor'
   };
+
+  /**
+   * As categorias que contam como equipamento, para a caixa "Mostrar
+   * equipamentos".
+   *
+   * Vêm de `ITEM_CATEGORY_*` em minúsculas, como `readMarketCatalog` as
+   * entrega. Fora daqui sobram `materials` e `imbue_materials`, que são o
+   * estoque de verdade — gema, pedra de encantamento, fragmento — e é o que a
+   * aba mostra e soma com a caixa desmarcada.
+   */
+  const GEAR_CATEGORIES = new Set(['weapons', 'armor', 'accessories']);
 
   /** Rótulos dos atributos base, para a ficha do item. */
   const STATS = {
@@ -184,6 +198,15 @@
     catalog: { items: {}, rarities: {}, shadowRanks: {}, monsters: {}, origin: '' },
     /** Anúncios à venda agora, por `def_id`. Só a ficha vem daqui. */
     listings: [],
+    /**
+     * Anúncio com a confirmação de retirada aberta, e o que já está saindo.
+     *
+     * Dois campos porque a janela entre o clique e a resposta do servidor é
+     * real, e sem `cancelBusy` a linha continuaria com o botão ativo — um
+     * segundo clique mandaria um `cancel` do anúncio que já foi.
+     */
+    cancelAsk: null,
+    cancelBusy: null,
     /**
      * Preço por nível do item aberto. Vazio não significa "não varia por
      * nível": significa que o nível dessas vendas ainda não foi descoberto —
@@ -286,6 +309,8 @@
       confirm: null,
       /** Resultado do último envio, linha a linha. */
       results: null,
+      /** O que o último envio mexeu no inventário antes de anunciar. */
+      prepared: null,
       busy: false
     },
 
@@ -733,20 +758,68 @@
     },
 
     /**
+     * A peça é equipamento?
+     *
+     * Pela **categoria**, não pelo slot. O slot parecia a definição natural —
+     * "só o que se veste tem um" — mas o catálogo do jogo não funciona assim:
+     * medido nos 183 itens, *todos* têm slot, e as gemas vêm com
+     * `slot: tesouro`. Usar slot escondia o inventário inteiro, que era
+     * exatamente o oposto do pedido.
+     *
+     * `materials` e `imbue_materials` são o estoque de verdade: gema, pedra de
+     * encantamento, fragmento. É o que fica à vista e somado com a caixa
+     * desmarcada.
+     *
+     * A pergunta é sobre o **tipo**, não sobre o estado: uma armadura solta no
+     * depósito é tanto equipamento quanto a que está no corpo. Era essa a
+     * diferença que a caixa não fazia — ela escondia só o que estava vestido,
+     * e a armadura reserva continuava inflando o total como se fosse estoque
+     * para vender.
+     *
+     * Sem catálogo nada é equipamento: a tela não esconde item por um campo
+     * que ela não conseguiu ler.
+     */
+    isGear(defId) {
+      const def = this.catalog.items[String(defId || '')] || {};
+      return GEAR_CATEGORIES.has(String(def.category || ''));
+    },
+
+    /**
+     * A linha aparece na aba Anunciar com os ajustes atuais?
+     *
+     * Duas regras, e a segunda é a caixa:
+     *
+     *   `no_uid`  nunca aparece. Não há o que o usuário faça a respeito, e a
+     *             linha só ocuparia espaço entre o que ele pode anunciar.
+     *   gear      todo equipamento fica fora por padrão, vestido ou solto. O
+     *             inventário de quem joga acumula peças antigas que não são
+     *             estoque para vender, e misturá-las com gema e poção fazia a
+     *             lista — e a soma do rodapé — dizerem mais do que existe de
+     *             fato à venda. A caixa revela quando a decisão é vender
+     *             equipamento mesmo.
+     */
+    sellVisible(it) {
+      if (it.blocked === 'no_uid') return false;
+      if (this.sell.showEquip) return true;
+      // Vestido é sempre equipamento, mesmo que o catálogo não tenha chegado.
+      return !(it.blocked === 'equipped' || this.isGear(it.defId));
+    },
+
+    /**
      * Os valores que existem de fato no inventário da conta, para os
      * seletores.
      *
      * Montados do que está carregado, não de uma lista fixa de categorias do
      * jogo: um seletor com trinta opções das quais três têm item é um
-     * seletor que obriga a tentar e errar. Equipado entra na contagem quando
-     * a caixa o revela, senão a opção some ao marcar a caixa.
+     * seletor que obriga a tentar e errar. Equipamento entra na contagem
+     * quando a caixa o revela, senão a opção some ao marcar a caixa.
      */
     sellFacetOptions() {
       const cats = new Set();
       const slots = new Set();
       const rars = new Set();
       for (const it of this.sell.items) {
-        if (it.blocked && !(it.blocked === 'equipped' && this.sell.showEquip)) continue;
+        if (!this.sellVisible(it)) continue;
         const f = this.sellFacets(it);
         if (f.category) cats.add(f.category);
         if (f.slot) slots.add(f.slot);
@@ -768,10 +841,7 @@
       const busca = f.search.toLowerCase();
 
       const linhas = this.sell.items.filter(it => {
-        if (it.blocked === 'equipped' ? !this.sell.showEquip : it.blocked) return false;
-        // Trancado e sem uid nunca aparecem: diferente de equipado, não há
-        // nada que o usuário possa fazer na tela a respeito, e a linha só
-        // ocuparia espaço entre o que ele pode de fato anunciar.
+        if (!this.sellVisible(it)) return false;
         const faceta = this.sellFacets(it);
         if (f.category !== 'todos' && faceta.category !== f.category) return false;
         if (f.slot !== 'todos' && faceta.slot !== f.slot) return false;
@@ -820,8 +890,34 @@
 
     /** Quantos itens a conta tem de vendável, ignorando os filtros. */
     sellRowsAll() {
-      return this.sell.items.filter(it =>
-        it.blocked === 'equipped' ? this.sell.showEquip : !it.blocked).length;
+      return this.sell.items.filter(it => this.sellVisible(it)).length;
+    },
+
+    /**
+     * Mostra ou esconde os equipamentos.
+     *
+     * Esconder desmarca o que sai de vista, e é o ponto do pedido: o rodapé
+     * soma tudo que está marcado, inclusive o que o filtro escondeu — de
+     * propósito, para o total nunca mentir sobre o que o botão vai anunciar.
+     * Deixar um equipamento marcado e invisível manteria o valor dele na soma
+     * sem nenhuma linha que explicasse de onde vem.
+     *
+     * Os filtros comuns não desmarcam porque são peneira temporária de uma
+     * lista que o usuário está percorrendo. Esta caixa é uma decisão sobre o
+     * que entra na venda.
+     */
+    toggleSellEquip(mostrar) {
+      this.sell.showEquip = !!mostrar;
+      if (!this.sell.showEquip) {
+        for (const uid of [...this.sell.picked.keys()]) {
+          const it = this.sell.items.find(i => i.uid === uid);
+          if (it && !this.sellVisible(it)) {
+            this.sell.picked.delete(uid);
+            this.sell.auto.delete(uid);
+          }
+        }
+      }
+      this.render();
     },
 
     /** Volta os filtros ao estado inicial, preservando a seleção já feita. */
@@ -946,8 +1042,15 @@
           blocked.push({ ...d, reason: 'price.missing' });
         }
       }
+      // O que o envio vai mexer no inventário além de anunciar. Dito antes de
+      // confirmar porque tirar cadeado e esvaziar depósito são mudanças na
+      // conta, e o usuário tem de ver que elas vêm junto.
+      const comUid = uid => this.sell.items.find(i => i.uid === uid) || {};
+      const unlock = ready.filter(d => comUid(d.uid).locked).map(d => d.name);
+      const toBag = ready.filter(d => comUid(d.uid).scope === 3).map(d => d.name);
+
       this.sell.confirm = {
-        ready, blocked,
+        ready, blocked, unlock, toBag,
         totalGold: ready.reduce((s, d) => s + d.total, 0)
       };
       this.sell.results = null;
@@ -973,6 +1076,7 @@
 
       this.sell.busy = false;
       this.sell.confirm = null;
+      this.sell.prepared = (res && res.prepared) || null;
       this.sell.results = res && res.results
         ? res.results
         : [{ ok: false, error: (res && res.errorCode) || 'announce.failed', name: '' }];
@@ -1323,6 +1427,20 @@
         if (this.view === 'mine') {
           const sub = alvo.closest('[data-role="mine-aba"]');
           if (sub) { this.mineAba = sub.dataset.aba; this.render(); return; }
+          // Antes de `[data-item]`: o botão vive dentro da linha, e deixar o
+          // clique seguir abriria o detalhe do item por cima da confirmação.
+          const botao = alvo.closest('[data-role]');
+          const role = botao && botao.dataset.role;
+          if (role === 'cancel-ask') {
+            this.cancelAsk = botao.dataset.id;
+            this.render();
+            return;
+          }
+          if (role === 'cancel-no') { this.cancelAsk = null; this.render(); return; }
+          if (role === 'cancel-ok') {
+            this.doCancel(botao.dataset.id, Number(botao.dataset.acc) || 0);
+            return;
+          }
         }
         const linha = alvo.closest('[data-item]');
         if (linha) this.show(linha.dataset.item);
@@ -1448,7 +1566,7 @@
       const papel = alvo.closest('[data-role]');
       const role = papel && papel.dataset.role;
       if (role === 'sell-all') { this.toggleSellAll(); return true; }
-      if (role === 'sell-equip') { this.sell.showEquip = !!papel.checked; this.render(); return true; }
+      if (role === 'sell-equip') { this.toggleSellEquip(!!papel.checked); return true; }
       if (role === 'sell-clear') { this.clearSellFilter(); return true; }
       if (role === 'sell-review') { this.openSellConfirm(); return true; }
       if (role === 'sell-back') { this.closeSellConfirm(); return true; }
@@ -1555,10 +1673,12 @@
      * diz quanto as coisas valem; esta diz quanto *eu* tenho em valor, que é
      * a soma que decide se vale a pena abrir o jogo.
      *
-     * Equipamento fica de fora por padrão. Não é economia de espaço: o que
-     * está vestido não está à venda, e somá-lo ao total transformaria o
-     * número de "posso lucrar isto" em "possuo isto", que é outra coisa. A
-     * caixa revela porque às vezes a decisão é vender a armadura mesmo.
+     * Equipamento fica de fora por padrão — todo ele, vestido ou guardado.
+     * Não é economia de espaço: equipamento não é estoque para vender, e
+     * somá-lo ao total transformaria o número de "posso lucrar isto" em
+     * "possuo isto", que é outra coisa. A caixa revela porque às vezes a
+     * decisão é vender a armadura mesmo; revelar mostra as linhas e não mexe
+     * no total, que continua sendo o do que está de fato à venda.
      */
     bolsaHtml() {
       const b = this.bolsa;
@@ -1583,7 +1703,7 @@
             </label>` : ''}
           <label class="mk-check">
             <input type="checkbox" data-role="equip" ${this.showEquip ? 'checked' : ''}>
-            <span>Mostrar equipamentos vestidos</span>
+            <span title="Arma, armadura e acessório — vestidos ou guardados. Gemas, poções e materiais entram sempre no total.">Mostrar equipamentos</span>
           </label>
         </div>`;
 
@@ -1610,15 +1730,22 @@
         let soma = 0;
         for (const [defId, d] of Object.entries(conta.owned)) {
           const vestido = !d.qty && d.equipped;
-          // `qty` já exclui o que está vestido: item só-equipado tem qty 0.
-          if (vestido && !this.showEquip) continue;
+          // Equipamento é pelo tipo, não pelo estado: a armadura reserva no
+          // depósito não é estoque para vender mais do que a que está no
+          // corpo, e somá-la inflava o "Total vendável" com patrimônio.
+          const gear = vestido || this.isGear(defId);
+          if (gear && !this.showEquip) continue;
           const preco = b.precos[defId] || null;
           const unit = preco ? (Number(preco.mediana) || Number(preco.media) || 0) : 0;
+          // `qty` já exclui o que está vestido: item só-equipado tem qty 0.
           const qtd = vestido ? d.equipped : d.qty;
           const valor = unit * qtd;
-          if (!vestido) soma += valor;
+          // O total é o do que está de fato à venda. Equipamento aparece na
+          // tabela quando a caixa o revela, mas continua fora da soma — o
+          // card responde "posso lucrar isto", não "possuo isto".
+          if (!gear) soma += valor;
           linhas.push({
-            def_id: defId, conta, dados: d, preco, unit, qtd, valor, vestido,
+            def_id: defId, conta, dados: d, preco, unit, qtd, valor, vestido, gear,
             name: (preco && preco.name)
               || (this.catalog.items[defId] && this.catalog.items[defId].name)
               || defId,
@@ -1648,7 +1775,7 @@
         <div class="mk-bolsa-top">
           ${caixa}
           <div class="mk-cards">
-            ${this.cardHtml('Total vendável', total, 'pela mediana de cada item, sem o que está vestido')}
+            ${this.cardHtml('Total vendável', total, 'pela mediana de cada item, sem equipamento')}
             <div class="mk-card">
               <span class="mk-card-label">Contas lidas</span>
               <b class="mk-card-value">${this.bolsaConta === null ? b.contas.length : 1}</b>
@@ -1678,13 +1805,14 @@
           </thead>
           <tbody>
             ${linhas.map(l => `
-              <tr data-item="${escape(l.def_id)}" tabindex="0" class="${l.vestido ? 'is-equipped' : ''}">
+              <tr data-item="${escape(l.def_id)}" tabindex="0" class="${l.gear ? 'is-equipped' : ''}">
                 <td class="mk-c-ic">${this.iconHtml({ def_id: l.def_id, rarity: l.rarity })}</td>
                 <td class="mk-c-name">
                   ${this.nameHtml({ def_id: l.def_id, name: l.name, rarity: l.rarity },
                     l.dados.melhor && l.dados.melhor.enchant ? ' +' + l.dados.melhor.enchant : '')}
-                  <small>${l.vestido ? 'vestido — não está à venda'
-                    : `${l.dados.bag ? l.dados.bag + ' mochila' : ''}${l.dados.bag && l.dados.warehouse ? ' · ' : ''}${l.dados.warehouse ? l.dados.warehouse + ' depósito' : ''}`}</small>
+                  <small>${l.vestido ? 'vestido — fora do total'
+                    : `${l.dados.bag ? l.dados.bag + ' mochila' : ''}${l.dados.bag && l.dados.warehouse ? ' · ' : ''}${l.dados.warehouse ? l.dados.warehouse + ' depósito' : ''}${
+                      l.gear ? ' · equipamento — fora do total' : ''}`}</small>
                 </td>
                 <td class="mk-c-name">${escape(l.conta.name || 'conta ' + (l.conta.index + 1))}</td>
                 <td class="mk-c-n">${curto(l.qtd)}</td>
@@ -1762,9 +1890,18 @@
         .filter(l => !String(l.currency || '').includes('DIAMOND'))
         .reduce((s, l) => s + (Number(l.total) || 0), 0);
 
+      // Expirado e cancelado não aparecem aqui nem em "Vendidos": o item
+      // voltou para a mochila, e é isso que o usuário precisa saber.
+      const fechados = contas.reduce((s, c) => s + (Number(c.closed) || 0), 0);
+      const aviso = fechados
+        ? `<p class="hint">${fechados} ${fechados === 1 ? 'anúncio expirou ou foi cancelado' :
+          'anúncios expiraram ou foram cancelados'} — ${fechados === 1 ? 'o item voltou' : 'os itens voltaram'}
+          para a mochila.</p>`
+        : '';
+
       if (!linhas.length) {
         return `<p class="hint">Nenhum anúncio ativo${
-          this.mineConta !== null ? ' nesta conta' : ''}. Use a aba <b>Anunciar</b> para criar.</p>`;
+          this.mineConta !== null ? ' nesta conta' : ''}. Use a aba <b>Anunciar</b> para criar.</p>${aviso}`;
       }
 
       return `
@@ -1789,6 +1926,7 @@
               <th class="mk-c-p">Unitário</th>
               <th class="mk-c-p mk-strong">Total</th>
               <th class="mk-c-t" title="Quando o anúncio sai do mercado">Expira</th>
+              <th class="mk-c-ic" aria-label="Retirar"></th>
             </tr>
           </thead>
           <tbody>
@@ -1811,11 +1949,66 @@
                 <td class="mk-c-t ${urgente ? 'is-warn' : ''}"
                   title="${l.expires_at_ms ? new Date(Number(l.expires_at_ms)).toLocaleString('pt-BR') : 'sem data'}">${
             resta > 0 ? `em ${quando(Date.now() - resta)}` : '—'}</td>
+                <td class="mk-c-ic">${this.cancelCellHtml(l)}</td>
               </tr>`;
         }).join('')}
           </tbody>
         </table>
-        <p class="hint">O launcher não cancela anúncios: isso é feito no jogo.</p>`;
+        ${aviso}
+        <p class="hint">Retirar devolve o item à mochila. Com a mochila cheia ele vai para o
+          <b>correio</b> — e lá expira.</p>`;
+    },
+
+    /**
+     * A célula do botão de retirar, ou a confirmação no lugar dela.
+     *
+     * A confirmação é embutida na própria linha, não num modal: o risco aqui
+     * não é cancelar — é cancelar **o anúncio vizinho**. Oito contas com itens
+     * de nome parecido numa tabela ordenada por expiração trocam de posição a
+     * cada repintura, e um modal que diz só "retirar este anúncio?" perdeu
+     * justamente a informação que importa, que é qual linha.
+     *
+     * Um por vez, sem seleção múltipla: é escrita, e o lote tornaria o erro
+     * oito vezes maior pelo mesmo clique.
+     */
+    cancelCellHtml(l) {
+      const id = String(l.id || '');
+      if (!id || !this.api.marketCancel) return '';
+      if (this.cancelBusy === id) return `<span class="mk-nv">…</span>`;
+      if (this.cancelAsk === id) {
+        return `
+          <button type="button" class="mk-snipe" data-role="cancel-ok" data-id="${escape(id)}"
+            data-acc="${l.conta.index}" title="Retirar do mercado agora">retirar</button>
+          <button type="button" class="mk-snipe" data-role="cancel-no">não</button>`;
+      }
+      return `<button type="button" class="mk-snipe" data-role="cancel-ask" data-id="${escape(id)}"
+        title="Retirar este anúncio do mercado">✖</button>`;
+    },
+
+    /**
+     * Retira um anúncio. Relê a aba depois, sempre: o item saiu do mercado e a
+     * vaga de anúncio abriu, e uma tabela que continuasse mostrando os dois
+     * convidaria a um segundo clique no que já não existe.
+     */
+    async doCancel(id, index) {
+      this.cancelAsk = null;
+      this.cancelBusy = id;
+      this.render();
+
+      const res = await this.api.marketCancel({ index, id })
+        .catch(e => ({ ok: false, error: e && e.message }));
+      this.cancelBusy = null;
+
+      if (!res || !res.ok) {
+        this.say('Não foi possível retirar: ' + ((res && res.error) || 'erro'), true);
+        this.render();
+        return;
+      }
+      this.say(res.toMail
+        ? 'Anúncio retirado. A mochila estava cheia: o item foi para o correio, onde expira.'
+        : 'Anúncio retirado. O item voltou para a mochila.', !!res.toMail);
+      await this.load();
+      this.render();
     },
 
     /**
@@ -1833,9 +2026,13 @@
       }
       linhas.sort((a, b) => Number(b.sold_at_ms || 0) - Number(a.sold_at_ms || 0));
 
+      // Só o que tem líquido confirmado entra no card. As vendas que o
+      // servidor lembra e o launcher não viu não trazem taxa, e usar o total
+      // delas faria o "Recebido" dizer um número acima do que entrou.
+      const semLiquido = linhas.filter(l => !Number(l.net) && l.source === 'server').length;
       const liquido = linhas
         .filter(l => !String(l.currency || '').includes('DIAMOND'))
-        .reduce((s, l) => s + (Number(l.net) || Number(l.total) || 0), 0);
+        .reduce((s, l) => s + (Number(l.net) || (l.source === 'server' ? 0 : Number(l.total) || 0)), 0);
       const servidor = contas.reduce(
         (s, c) => s + ((c.overview && c.overview.totalSales) || 0), 0
       );
@@ -1849,7 +2046,9 @@
 
       return `
         <div class="mk-cards">
-          ${this.cardHtml('Recebido', liquido, 'líquido, já sem a taxa do jogo')}
+          ${this.cardHtml('Recebido', liquido, semLiquido
+          ? `líquido de ${linhas.length - semLiquido} venda(s); ${semLiquido} sem líquido conhecido`
+          : 'líquido, já sem a taxa do jogo')}
           <div class="mk-card">
             <span class="mk-card-label">Vendas</span>
             <b class="mk-card-value">${linhas.length}</b>
@@ -1883,15 +2082,21 @@
                 <td class="mk-c-name">${escape(l.conta.name || 'conta ' + (l.conta.index + 1))}</td>
                 <td class="mk-c-n">${curto(l.quantity)}</td>
                 <td class="mk-c-p" title="${cheio(l.total)}">${moeda(l.currency)} ${curto(l.total)}</td>
-                <td class="mk-c-p mk-strong" title="${l.fee ? `taxa de ${cheio(l.fee)}` : cheio(l.net || l.total)}">${
-          curto(l.net || l.total)}</td>
+                <td class="mk-c-p mk-strong" title="${l.fee
+          ? `taxa de ${cheio(l.fee)}`
+          : (l.source === 'server'
+            ? 'o servidor não informa o líquido desta venda: o launcher não estava aberto quando ela aconteceu'
+            : cheio(l.net || l.total))}">${
+          l.net ? curto(l.net) : (l.source === 'server' ? '—' : curto(l.total))}</td>
                 <td class="mk-c-name">${escape(l.buyer_name || '—')}</td>
                 <td class="mk-c-t" title="${new Date(Number(l.sold_at_ms)).toLocaleString('pt-BR')}">${quando(l.sold_at_ms)}</td>
               </tr>`).join('')}
           </tbody>
         </table>
-        <p class="hint">O histórico é do launcher: uma venda só é registrada se ele estava aberto
-          quando ela aconteceu. O servidor não guarda a lista das vendas de uma conta, só o total.</p>`;
+        <p class="hint">O histórico é do launcher: uma venda só é registrada com taxa e líquido se ele
+          estava aberto quando ela aconteceu.${semLiquido
+          ? ` ${semLiquido} linha(s) vieram dos anúncios que o servidor ainda lembra — delas
+            sai o total pedido, não o líquido.` : ''}</p>`;
     },
 
     /**
@@ -2380,7 +2585,7 @@
           ${s.account !== null ? `
             <label class="mk-check">
               <input type="checkbox" data-role="sell-equip" ${s.showEquip ? 'checked' : ''}>
-              <span>Mostrar equipamentos vestidos</span>
+              <span title="Arma, armadura e acessório — vestidos ou guardados. Gemas, poções e materiais aparecem sempre.">Mostrar equipamentos</span>
             </label>` : ''}
         </div>`;
 
@@ -2546,6 +2751,11 @@
       if (def.category) partes.push(escape(String(def.category).toLowerCase()));
       if (it.sellPrice) partes.push(`NPC ${curto(it.sellPrice)}`);
       if (it.blocked === 'equipped') partes.push('<b class="is-warn">vestido</b>');
+      // Cadeado e depósito não impedem mais o anúncio: o launcher desfaz os
+      // dois antes de mandar. A marca fica porque o inventário muda de verdade
+      // ao confirmar, e isso tem de estar à vista antes.
+      if (it.locked) partes.push('<b class="is-warn">🔒 destranca ao anunciar</b>');
+      if (it.scope === 3) partes.push('<b class="is-warn">no depósito</b>');
       return partes.length ? `<small>${partes.join(' · ')}</small>` : '';
     },
 
@@ -2562,6 +2772,16 @@
         ${c.blocked.length ? `
           <p class="hint">${c.blocked.length} ${c.blocked.length === 1 ? 'item ficou' : 'itens ficaram'} de fora
             por não ter preço: ${escape(c.blocked.map(b => b.name).join(', '))}.</p>` : ''}
+
+        ${(c.toBag || []).length ? `
+          <p class="hint">${c.toBag.length} ${c.toBag.length === 1 ? 'item será trazido' : 'itens serão trazidos'}
+            do depósito para a mochila antes de anunciar: ${escape(c.toBag.join(', '))}.
+            Se a mochila encher, o que não couber não é anunciado.</p>` : ''}
+
+        ${(c.unlock || []).length ? `
+          <p class="hint">🔒 o cadeado será retirado de ${c.unlock.length}
+            ${c.unlock.length === 1 ? 'item' : 'itens'}: ${escape(c.unlock.join(', '))}.
+            O cadeado não volta sozinho depois.</p>` : ''}
 
         <table class="mk-table">
           <thead>
@@ -2602,9 +2822,17 @@
     sellResultsHtml() {
       const r = this.sell.results;
       const ok = r.filter(x => x.ok).length;
+      const p = this.sell.prepared || {};
+      const preparo = [];
+      if ((p.moved || []).length) preparo.push(`${p.moved.length} ${p.moved.length === 1 ? 'trazido' : 'trazidos'} do depósito`);
+      if ((p.refused || []).length) preparo.push(`${p.refused.length} não ${p.refused.length === 1 ? 'coube' : 'couberam'} na mochila`);
+      if ((p.unlocked || []).length) preparo.push(`${p.unlocked.length} ${p.unlocked.length === 1 ? 'destrancado' : 'destrancados'}`);
+      if ((p.failed || []).length) preparo.push(`${p.failed.length} ${p.failed.length === 1 ? 'cadeado continuou' : 'cadeados continuaram'}`);
+
       return `
         <h3 class="mk-group">Resultado <small>${ok} de ${r.length} ${
         r.length === 1 ? 'anunciado' : 'anunciados'}</small></h3>
+        ${preparo.length ? `<p class="hint">Preparo do inventário: ${escape(preparo.join(' · '))}.</p>` : ''}
         <table class="mk-table">
           <thead>
             <tr>

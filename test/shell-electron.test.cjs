@@ -36,7 +36,7 @@ ipcMain.handle('prefs:set', (_e, patch) => {
   // ganha uma entrada de preferências própria herdando o padrão da raiz.
   while (store.length < prefs.tabs * 4) store.push(empty());
   prefs.tabPrefs = Array.from({ length: prefs.tabs }, (_, t) => ({
-    panels: 4, bootMonitor: false, ...(prefs.tabPrefs || [])[t]
+    panels: 4, ...(prefs.tabPrefs || [])[t]
   }));
   return prefs;
 });

@@ -31,6 +31,11 @@
         <div class="lh-hp"><span data-role="hpfill"></span></div>
         <div class="lh-hptext" data-role="hptext"></div>
         <div class="lh-alert" data-role="alert" hidden></div>
+        <div class="lh-place" data-role="place" hidden>
+          <span class="lh-place-label" data-role="placeLabel"></span>
+          <span class="lh-place-map" data-role="placeMap"></span>
+          <span class="lh-place-detail" data-role="placeDetail"></span>
+        </div>
         <div class="lh-grid" data-role="grid"></div>
         <div class="lh-party" data-role="party" hidden></div>
         <div class="lh-refill" data-role="refill" hidden></div>
@@ -42,7 +47,8 @@
         name: pick('name'), level: pick('level'), status: pick('status'),
         hpfill: pick('hpfill'), hptext: pick('hptext'), alert: pick('alert'),
         grid: pick('grid'), party: pick('party'), refill: pick('refill'),
-        foot: pick('foot')
+        foot: pick('foot'), place: pick('place'), placeLabel: pick('placeLabel'),
+        placeMap: pick('placeMap'), placeDetail: pick('placeDetail')
       };
 
       const escape = text => String(text).replace(/[&<>"]/g, c => (
@@ -109,6 +115,17 @@
             el.alert.hidden = true;
           }
 
+          const place = resolved.location;
+          if (place) {
+            el.placeLabel.textContent = place.label;
+            el.placeMap.textContent = place.map;
+            el.placeDetail.textContent = place.detail || '';
+            el.place.classList.toggle('is-hunting', !!place.hunting);
+            el.place.hidden = false;
+          } else {
+            el.place.hidden = true;
+          }
+
           // Recria a grade só quando o conjunto de colunas muda; o caso comum é
           // atualização de valores, que não deve mexer no DOM mais do que preciso.
           const signature = resolved.columns.map(c => c.key).join(',');
@@ -170,8 +187,8 @@
             el.refill.hidden = true;
           }
 
-          const hunt = state.hunt || {};
-          if (hunt.gateId) el.foot.textContent = String(hunt.gateId).replace(/[_-]+/g, ' ');
+          // O mapa saiu do rodapé para o bloco `lh-place`; o rodapé volta a ser
+          // só de status e erro, que é o que ele sabe escrever.
         },
 
         clear() {
@@ -179,6 +196,8 @@
           el.name.textContent = '—';
           el.level.textContent = '';
           el.alert.hidden = true;
+          el.place.hidden = true;
+          el.place.classList.remove('is-hunting');
           el.grid.innerHTML = '';
           el.party.hidden = true;
           el.party.innerHTML = '';

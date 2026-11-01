@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<!--
+  Janela própria do auto-anunciar.
+
+  Mesma decisão das janelas do sniper, da expedição e do boss, com um motivo a
+  mais: esta é a única automação que **vende** item. Conferir o preço anunciado
+  contra o mercado do jogo é o uso principal da tela, e um modal sobre o
+  launcher cobriria exatamente isso.
+-->
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://levelingidle2d.com.br; connect-src 'none'">
+  <title>Auto-anunciar · Leveling Idle 2D</title>
+  <link rel="stylesheet" href="src/ui/shell.css">
+  <link rel="stylesheet" href="src/ui/leveling.css">
+</head>
+
+<body class="lv-auto-standalone">
+  <div id="autosellOverlay" class="lv-auto-overlay show">
+    <div id="autosellModal" class="lv-auto" role="region" aria-labelledby="autosellTitle">
+      <div class="lv-head">
+        <h2><span class="lv-icon" aria-hidden="true">🏷️</span><span id="autosellTitle">Auto-anunciar</span></h2>
+      </div>
+      <p class="hint">A cada rodada o launcher recolhe do <b>correio</b> o ouro das vendas, confere quantas
+        <b>vagas de anúncio</b> sobraram em cada conta e preenche as vagas com os <b>tesouros</b> mais valiosos da
+        bolsa. O preço sai da <b>mediana das vendas daquele nível</b> e do <b>anúncio rival mais barato</b>: anuncia
+        abaixo do rival, nunca abaixo do piso.
+      </p>
+
+      <div class="lv-warn">
+        ⚠️ Esta automação <b>vende item das contas</b>, e um anúncio comprado não volta. <b>Equipamentos ficam de
+          fora</b> — só material e material de imbuição são anunciados. O <b>depósito não é tocado</b>: só a bolsa.
+        Sem mediana do <b>nível exato</b> o item é pulado, porque um citrino nv. 2 vale perto de três vezes um nv. 1.
+      </div>
+
+      <div id="autosellControls" class="lv-auto-controls"></div>
+
+      <h3 class="xp-section">Nunca vender</h3>
+      <div id="autosellBlocked" class="lv-auto-blocked"></div>
+
+      <h3 class="xp-section">Contas</h3>
+      <div id="autosellAccounts" class="lv-auto-accounts"></div>
+
+      <h3 class="xp-section">O que foi anunciado</h3>
+      <div id="autosellLog" class="lv-auto-log"></div>
+
+      <div class="lv-status-bar" id="autosellStatusBar" role="status" aria-live="polite"></div>
+
+      <div class="modal-actions">
+        <button type="button" id="autosellPoll" class="primary"
+          title="Roda agora em todas as contas que participam. O teto de itens por rodada vale aqui igual.">Anunciar
+          agora</button>
+        <button type="button" id="autosellClear"
+          title="Apaga o relatório. Os anúncios já criados continuam no mercado.">Limpar relatório</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="src/ui/leveling-autosell-ui.js"></script>
+  <script src="src/ui/autosell-window.js"></script>
+</body>
+
+</html>

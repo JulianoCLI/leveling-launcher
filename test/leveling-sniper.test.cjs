@@ -79,8 +79,26 @@ test('um desconto fora de faixa cai no padrão', () => {
 test('a configuração padrão não compra nada', () => {
   const cfg = defaultConfig();
   assert.equal(cfg.enabled, false);
+  assert.equal(cfg.intervalMs, 1000);
+  assert.equal(cfg.buyerAccount, 0);
   assert.deepEqual(cfg.rules, []);
   assert.equal(isConfigured(cfg), false);
+});
+
+test('a conta compradora é global e normalizada', () => {
+  assert.equal(normalizeConfig({ buyerAccount: 3 }).buyerAccount, 3);
+  assert.equal(normalizeConfig({ buyerAccount: -1 }).buyerAccount, 0);
+});
+
+test('o intervalo aceita toda a faixa de 200ms a 1s', () => {
+  for (const intervalMs of Array.from({ length: 20 }, (_, i) => (i + 1) * 50)) {
+    assert.equal(normalizeConfig({ intervalMs }).intervalMs, intervalMs);
+  }
+});
+
+test('o intervalo permite até 20 verificações por segundo', () => {
+  assert.equal(MIN_INTERVAL_MS, 50);
+  assert.equal(normalizeConfig({ intervalMs: 50 }).intervalMs, 50);
 });
 
 test('ligado mas sem regra nenhuma continua sem comprar', () => {

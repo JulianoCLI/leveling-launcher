@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<!--
+  Janela própria do câmbio.
+
+  Mesma decisão das janelas do sniper, da expedição, do boss e do auto-anunciar,
+  com o motivo mais forte da série: esta é a única automação que **move ouro
+  entre contas**, e conferir os saldos no jogo contra o que o relatório diz é o
+  uso principal da tela. Um modal sobre o launcher cobriria exatamente os
+  painéis que precisam ser lidos.
+-->
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://levelingidle2d.com.br; connect-src 'none'">
+  <title>Câmbio · Leveling Idle 2D</title>
+  <link rel="stylesheet" href="src/ui/shell.css">
+  <link rel="stylesheet" href="src/ui/leveling.css">
+</head>
+
+<body class="lv-auto-standalone">
+  <div id="cambioOverlay" class="lv-auto-overlay show">
+    <div id="cambioModal" class="lv-auto" role="region" aria-labelledby="cambioTitle">
+      <div class="lv-head">
+        <h2><span class="lv-icon" aria-hidden="true">💱</span><span id="cambioTitle">Câmbio</span></h2>
+      </div>
+      <p class="hint">O launcher desce o ouro das contas em <b>cadeia</b> — a última passa para a penúltima, essa
+        para a anterior, até a <b>conta de destino</b>. Cada troca é feita dentro do jogo: as duas contas se encontram
+        na cidade, no mesmo canal, uma oferta o ouro e as duas confirmam. <b>Uma troca por vez</b>, e a seguinte só
+        depois de o saldo da anterior ter sido conferido nos dois lados.
+      </p>
+
+      <div class="lv-warn">
+        ⚠️ Esta automação <b>move ouro entre as suas contas</b>, e uma troca confirmada <b>não volta</b>. A conta de
+        destino é a que fica com tudo: confira o número antes de ligar. Cada conta de origem <b>mantém uma reserva</b>
+        intocada — sem ela a conta para de repor poção e deixa de caçar. As contas precisam ser <b>amigas no jogo</b>;
+        o launcher pede e aceita a amizade sozinho, uma vez por par.
+      </div>
+
+      <div id="cambioControls" class="lv-auto-controls"></div>
+
+      <h3 class="xp-section">A cadeia</h3>
+      <div id="cambioChain" class="lv-auto-accounts"></div>
+
+      <h3 class="xp-section">Contas</h3>
+      <div id="cambioAccounts" class="lv-auto-accounts"></div>
+
+      <h3 class="xp-section">O que foi transferido</h3>
+      <div id="cambioLog" class="lv-auto-log"></div>
+
+      <div class="lv-status-bar" id="cambioStatusBar" role="status" aria-live="polite"></div>
+
+      <div class="modal-actions">
+        <button type="button" id="cambioPoll" class="primary"
+          title="Faz um hop agora, sem esperar o intervalo. Move ouro de verdade; a reserva e a conferência valem aqui igual.">Transferir
+          agora</button>
+        <button type="button" id="cambioClear"
+          title="Apaga o relatório. O ouro já transferido continua onde está.">Limpar relatório</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="src/ui/leveling-cambio-ui.js"></script>
+  <script src="src/ui/cambio-window.js"></script>
+</body>
+
+</html>

@@ -199,6 +199,178 @@ test('erro do servidor vira errorCode em vez de exceção', async () => {
   client.disconnect();
 });
 
+// ------------------------------------------------------- cancelar e correio
+
+test('cancelar um anúncio avisa quando o item foi para o correio', async () => {
+  const { client, ws } = await conectado();
+
+  const promessa = client.marketCancel('196267');
+  await sleep(5);
+  assert.deepEqual(ws.lastMarket(), { cancel: { id: '196267' } });
+
+  // Bolsa cheia: o item não volta para o inventário, vai para a caixa. Sem
+  // esse aviso o usuário conclui que o cancelamento perdeu a peça.
+  ws.reply('market_request', 'market_response', { canceled: { id: 196267, to_mail: true } });
+
+  const res = await promessa;
+  assert.equal(res.id, '196267');
+  assert.equal(res.toMail, true);
+  client.disconnect();
+});
+
+test('cancelar recusa id inválido antes de falar com o servidor', async () => {
+  const { client } = await conectado();
+  assert.equal((await client.marketCancel('')).errorCode, 'market.badId');
+  assert.equal((await client.marketCancel(0)).errorCode, 'market.badId');
+  client.disconnect();
+});
+
+test('o correio é recolhido por id, nunca em bloco', async () => {
+  // `claim_all` levaria recompensa de evento, de boss e item guardado de
+  // propósito junto com o ouro da venda. O resgate é parcial com a bolsa
+  // cheia, então o estrago não teria volta.
+  const { client, ws } = await conectado();
+
+  const promessa = client.mailClaim(['10', '11']);
+  await sleep(5);
+  const pedidos = ws.sent.filter(m => m.mail_request);
+  assert.equal(pedidos.length, 1, 'em série: o segundo espera o primeiro');
+  assert.deepEqual(pedidos[0].mail_request, { claim: { id: '10' } });
+  assert.ok(!pedidos.some(m => m.mail_request.claim_all), 'claim_all nunca é usado');
+
+  ws.reply('mail_request', 'mail_response', { claimed: { claimed: [10], gold: 5000, items: 0 } });
+  await sleep(5);
+  ws.reply('mail_request', 'mail_response', { claimed: { claimed: [11], gold: 2500, items: 1 } });
+
+  const res = await promessa;
+  assert.deepEqual(res.claimed, ['10', '11']);
+  assert.equal(res.gold, 7500, 'o ouro das duas entradas é somado');
+  assert.equal(res.bagFull, false);
+  client.disconnect();
+});
+
+test('bolsa cheia interrompe o resgate em vez de insistir', async () => {
+  // Insistir só produziria mais resgate parcial. O que fica no correio está
+  // seguro; o que sai para uma bolsa sem espaço, não.
+  const { client, ws } = await conectado();
+
+  const promessa = client.mailClaim(['10', '11', '12']);
+  await sleep(5);
+  ws.reply('mail_request', 'mail_response', { claimed: { claimed: [10], gold: 100, bag_full: true } });
+
+  const res = await promessa;
+  assert.equal(res.bagFull, true);
+  assert.deepEqual(res.claimed, ['10']);
+  assert.equal(ws.sent.filter(m => m.mail_request).length, 1,
+    'o segundo id nem foi pedido');
+  client.disconnect();
+});
+
+test('o correio lido separa o que já foi recolhido', async () => {
+  const { client, ws } = await conectado();
+
+  const promessa = client.mailList();
+  await sleep(5);
+  assert.deepEqual(ws.sent.find(m => m.mail_request).mail_request,
+    { list: { page: 1, page_size: 50 } });
+
+  ws.reply('mail_request', 'mail_response', {
+    page: {
+      entries: [
+        { id: 10, kind: 'market', subject_key: 'market_sale', gold: 5000, claimed_at_ms: 0 },
+        { id: 11, kind: 'reward', subject_key: 'reward', gold: 10, claimed_at_ms: 1700000000000 }
+      ],
+      unclaimed: 1, total: 2
+    }
+  });
+
+  const res = await promessa;
+  assert.equal(res.entries[0].claimed, false);
+  assert.equal(res.entries[0].subjectKey, 'market_sale',
+    'o subject_key é o que separa a venda do resto: `kind` é só a categoria');
+  assert.equal(res.entries[0].kind, 'market');
+  assert.equal(res.entries[1].claimed, true, 'o servidor mantém a entrada depois do resgate');
+  assert.equal(res.unclaimed, 1);
+  client.disconnect();
+});
+
+test('recolher sem id não gera tráfego nenhum', async () => {
+  const { client, ws } = await conectado();
+  const antes = ws.sent.length;
+  const res = await client.mailClaim([]);
+  assert.deepEqual(res.claimed, []);
+  assert.equal(ws.sent.length, antes);
+  client.disconnect();
+});
+
+// ----------------------------------------------------------- precisão uint64
+
+/**
+ * Um uid de item do servidor, acima de 2^53.
+ *
+ * `Number('1962493714927616001')` devolve `...616000`: o ponto flutuante não
+ * tem bits para o último dígito. O estrago não é um erro, é um uid **vizinho
+ * que existe** — o anúncio saía com outra peça e o servidor aceitava.
+ */
+const UID_GRANDE = '1962493714927616001';
+
+test('anunciar manda o uid exato, sem arredondar o uint64', async () => {
+  const { client, ws } = await conectado();
+
+  const promessa = client.marketCreate({ uid: UID_GRANDE, unitPrice: 500 });
+  await sleep(5);
+
+  const enviado = ws.lastMarket();
+  assert.equal(String(enviado.create.item_uid), UID_GRANDE,
+    'o uid do anúncio não pode perder o último dígito');
+  assert.notEqual(String(enviado.create.item_uid), String(Number(UID_GRANDE)));
+
+  ws.reply('market_request', 'market_response', { create: { id: 1 } });
+  await promessa;
+  client.disconnect();
+});
+
+test('comprar e consultar preservam o id grande do anúncio', async () => {
+  const { client, ws } = await conectado();
+
+  const compra = client.marketBuy(UID_GRANDE, 1);
+  await sleep(5);
+  assert.equal(String(ws.lastMarket().buy.id), UID_GRANDE,
+    'comprar o anúncio vizinho gastaria ouro no item errado');
+  ws.reply('market_request', 'market_response', { buy: { id: 1 } });
+  await compra;
+
+  const detalhe = client.marketGet(UID_GRANDE);
+  await sleep(5);
+  assert.equal(String(ws.lastMarket().get.id), UID_GRANDE);
+  ws.reply('market_request', 'market_response', { detail: { listing: { id: 1 } } });
+  await detalhe;
+  client.disconnect();
+});
+
+test('destrancar e mover peça preservam o uid grande', async () => {
+  const { client, ws } = await conectado();
+  const ultimo = caso => {
+    const envio = [...ws.sent].reverse().find(m => m[caso] !== undefined);
+    assert.ok(envio, `nenhum ${caso} enviado`);
+    return envio[caso];
+  };
+
+  client.lockItem(UID_GRANDE, false);
+  await sleep(5);
+  assert.equal(String(ultimo('lock_item').uid), UID_GRANDE,
+    'destrancar a peça vizinha deixaria a escolhida trancada');
+  ws.reply('lock_item', 'lock_item', { locked: false });
+
+  client.warehouseMove([UID_GRANDE], 'bag');
+  await sleep(5);
+  assert.deepEqual(ultimo('warehouse_move').uids.map(String), [UID_GRANDE],
+    'mover a peça vizinha tiraria do depósito o item errado');
+  ws.reply('warehouse_move', 'warehouse_move', { moved: [1], bag_used: 1, bag_capacity: 10 });
+  await sleep(5);
+  client.disconnect();
+});
+
 // ------------------------------------------------------------------ coletor
 
 test('o coletor escolhe uma conta conectada e entrega as vendas ao banco', async () => {
@@ -924,10 +1096,10 @@ test('salvar a configuração não ressuscita o alvo já cumprido', async () => 
   assert.equal(mgr.getSniperConfig().rules[0].bought, 1);
 
   // A tela salva a sua cópia velha. É o caso real: ela não sabe da compra.
-  mgr.setSniperConfig({ enabled: true, intervalMs: 9000, rules: [regra({ target: 1 })] });
+  mgr.setSniperConfig({ enabled: true, intervalMs: 500, rules: [regra({ target: 1 })] });
   assert.equal(mgr.getSniperConfig().rules[0].bought, 1,
     'o contador é do serviço: a tela não pode abaixá-lo com uma cópia velha');
-  assert.equal(mgr.getSniperConfig().intervalMs, 9000, 'o resto da gravação vale normalmente');
+  assert.equal(mgr.getSniperConfig().intervalMs, 500, 'o resto da gravação vale normalmente');
 
   // E a regra realmente não compra mais: nenhum pedido sai.
   assert.equal(await mgr.pollSniper(), 0);
@@ -959,8 +1131,10 @@ test('zerar a contagem é um pedido explícito, e funciona', async () => {
   mgr.stopAll();
 });
 
-test('regra apontada para conta offline não busca nem compra', async () => {
-  const { mgr, ws } = await comSniper({ enabled: true, rules: [regra({ account: 3 })] });
+test('conta compradora offline não busca nem compra', async () => {
+  // A conta que paga é uma só, da configuração — não é campo de regra: todas as
+  // compras saem do mesmo bolso, escolhido pelo usuário.
+  const { mgr, ws } = await comSniper({ enabled: true, buyerAccount: 3, rules: [regra()] });
 
   assert.equal(await mgr.pollSniper(), 0);
   assert.equal(ws.lastMarket(), null, 'nenhum pedido sai sem conta para pagar');
@@ -989,15 +1163,15 @@ test('uma rodada por vez: o tique seguinte não entra no meio da anterior', asyn
 });
 
 test('mudar o intervalo com o laço em curso recria o temporizador', async () => {
-  const { mgr, ws } = await comSniper({ enabled: true, intervalMs: 30000, rules: [regra()] });
+  const { mgr, ws } = await comSniper({ enabled: true, intervalMs: 1000, rules: [regra()] });
 
   assert.equal(mgr.startSniperPoll(), true);
   await sleep(5);
   ws.reply('market_request', 'market_response', { page: { listings: [] } });
   await sleep(5);
 
-  mgr.setSniperConfig({ enabled: true, intervalMs: 2000, rules: [regra()] });
-  assert.equal(mgr.getSniperStats().intervalMs, 2000);
+  mgr.setSniperConfig({ enabled: true, intervalMs: 200, rules: [regra()] });
+  assert.equal(mgr.getSniperStats().intervalMs, 200);
   assert.equal(mgr.getSniperStats().running, true);
 
   mgr.stopSniperPoll();

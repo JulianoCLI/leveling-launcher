@@ -68,8 +68,10 @@
       username: '',
       hasPassword: false,
       hasToken: false,
-      /** Rota de saída, já sem a senha do proxy. */
+      /** Rota de saída, com a senha do proxy mascarada. */
       proxy: '',
+      /** A rota tem usuário e nenhuma senha? O proxy recusaria a conexão. */
+      proxyIncomplete: false,
       status: 'disconnected',
       error: '',
       ended: '',
@@ -216,6 +218,7 @@
         acc.hasPassword = !!entry.hasPassword;
         acc.hasToken = !!entry.hasToken;
         acc.proxy = entry.proxy || '';
+        acc.proxyIncomplete = !!entry.proxyIncomplete;
       });
       for (let i = 0; i < this.accounts.length; i++) this.paint(i);
       if (!this.encrypted) {
@@ -318,9 +321,16 @@
       card.querySelector('[data-role="save"]').disabled = active;
 
       const proxy = card.querySelector('[data-role="proxy"]');
-      // A senha do proxy nunca volta do principal, então o campo mostra só a
-      // rota; reescrever tudo é o jeito de trocá-la.
+      // A senha volta mascarada, não apagada: reenviar o campo sem tocar nele
+      // preserva a senha salva, e uma rota sem senha fica visivelmente
+      // diferente de uma rota completa.
       if (document.activeElement !== proxy) proxy.value = acc.proxy;
+      // Usuário sem senha: o proxy recusa a conexão antes do login, e o erro
+      // chega como falha de WebSocket, sem dizer o motivo.
+      proxy.classList.toggle('is-warn', !!acc.proxyIncomplete);
+      proxy.title = acc.proxyIncomplete
+        ? 'Esta rota tem usuário mas não tem senha: o proxy vai recusar a conexão. Cole host:porta:usuario:senha.'
+        : 'host:porta, host:porta:usuario:senha ou uma URL completa (http://, socks5://)';
 
       const toggle = card.querySelector('[data-role="toggle"]');
       toggle.textContent = active ? 'Desligar monitor' : 'Ativar monitor';
@@ -428,6 +438,13 @@
           acc.error = '';
           acc.state = null;
           this.paint(index);
+        }
+        // Rota com usuário e sem senha é quase sempre colagem incompleta, e o
+        // sintoma dela não se parece com a causa: o proxy recusa o CONNECT e o
+        // monitor mostra "erro de conexão no WebSocket", sem falar em proxy.
+        if (acc && acc.proxyIncomplete) {
+          this.say(`Conta ${index + 1}: a rota tem usuário mas não tem senha — o proxy vai recusar a conexão. Cole host:porta:usuario:senha.`);
+          return;
         }
         const onde = value ? `saindo por ${(acc && acc.proxy) || value}` : 'saindo pelo IP local';
         this.say(`Conta ${index + 1}: ${onde}. Recarregue o painel para a WebView usar a rota nova.`);

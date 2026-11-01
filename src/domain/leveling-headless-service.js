@@ -26,6 +26,10 @@
  *                        auto-expedição: lê o painel, recolhe o que terminou e
  *                        manda a sombra mais forte do armazém para o destino
  *                        mais baixo, pelo maior tempo que a conta alcança
+ *   `daily_boss{info|start}`
+ *                        auto-boss: lê quais bosses diários a conta ainda não
+ *                        fez hoje e entra em cada um, do mais fraco ao mais
+ *                        forte, uma vez por dia
  *
  * Os quatro últimos existem porque o servidor não vende à distância: medido
  * contra ele, `buy_consumable` numa cena de caçada responde `shop.npcRequired`,
@@ -44,6 +48,12 @@
  * monitor, que antes exigia voltar para a WebView. Ela passa a valer como novo
  * bilhete de volta, senão o refill seguinte devolveria a conta ao mapa antigo.
  * Nada aqui escolhe caçada por conta própria.
+ *
+ * O auto-boss usa o mesmo bilhete de volta, e pela mesma razão do refill:
+ * medido, terminar um boss diário devolve a conta à cidade. A diferença é que
+ * ele enfileira vários bosses, então o `start_hunt` sai **uma vez**, depois do
+ * último — devolver a conta à caçada entre dois bosses pagaria duas trocas de
+ * cena por nada.
  *
  * Continua proibido: `leave_hunt`, `set_automation`, `use_consumable` e
  * `revive`.
@@ -66,6 +76,12 @@ const hunts = require('./leveling-hunts');
 const marketCatalog = require('./leveling-market-catalog');
 const sniper = require('./leveling-sniper');
 const expedition = require('./leveling-expedition');
+const boss = require('./leveling-boss');
+// `listingRules` e não `listing`: `pollSniper` tem laços com uma variável
+// `listing` por anúncio, e um módulo sombreado ali seria um erro silencioso.
+const listingRules = require('./leveling-listing');
+const autosell = require('./leveling-autosell');
+const cambio = require('./leveling-cambio');
 
 const WS_URL = 'wss://game.levelingidle2d.com.br:8443/ws';
 const ORIGIN = 'https://levelingidle2d.com.br';
@@ -146,6 +162,34 @@ const EXPEDITION_POLL_MS = 60000;
 const EXPEDITION_BACKOFF_MS = 600000;
 
 /**
+ * Intervalo entre leituras do estado de boss diário de uma conta.
+ *
+ * Bem mais folgado que a expedição porque o estado muda **uma vez por dia**:
+ * este número não decide quando os bosses são feitos — o relógio da virada
+ * decide. Ele só limita em quanto tempo o launcher percebe um reset que o
+ * relógio local perdeu, como num PC que estava suspenso na virada ou numa
+ * conta que logou depois dela.
+ */
+const BOSS_POLL_MS = 600000;
+
+/**
+ * Recuo após o servidor recusar a entrada no boss. Diferente da expedição, a
+ * recusa aqui costuma ser definitiva no dia (`boss.doneToday`), então o recuo
+ * existe para o caso transitório — e é largo porque a rodada seguinte legítima
+ * só vem no dia seguinte.
+ */
+const BOSS_BACKOFF_MS = 900000;
+
+/**
+ * Espera entre o fim de um boss e a entrada no próximo.
+ *
+ * Medido: o resultado chega antes de a conta sair da cena do boss, e um
+ * `daily_boss{start}` enviado nesse intervalo é recusado com a conta ainda em
+ * cena. Dois segundos é a folga que fez a fila passar inteira sem recusa.
+ */
+const BOSS_GAP_MS = 2000;
+
+/**
  * Tamanho do log do sniper.
  *
  * O log é gravado em disco (`sniperLogSink`) porque a pergunta que ele responde
@@ -163,6 +207,20 @@ const SNIPER_LOG_MAX = 300;
  * segundos.
  */
 const SNIPER_RESOLVE_MAX = 10;
+
+/**
+ * Tamanho do relatório do auto-anunciar.
+ *
+ * Mesma razão do log do sniper, com um motivo extra: aqui o launcher **vende**
+ * sozinho, e a pergunta da manhã seguinte é "o que ele anunciou, e por quanto".
+ * Cada linha carrega a conta do preço — mediana, rival e piso — porque um
+ * anúncio automático que não dá para auditar depois é um anúncio em que não se
+ * pode confiar.
+ *
+ * O teto é mais folgado que o do sniper: uma rodada escreve no máximo dois
+ * itens, então 300 linhas cobrem semanas em vez de uma noite.
+ */
+const AUTOSELL_LOG_MAX = 300;
 
 /**
  * Recusas de compra que significam "outra pessoa levou", não "deu erro". O
@@ -185,6 +243,15 @@ const MARKET_CURRENCY_NUM = {
   MARKET_CURRENCY_GOLD: 1,
   MARKET_CURRENCY_DIAMOND: 2,
   MARKET_CURRENCY_TOKEN: 3
+};
+
+/**
+ * Direção do `warehouse_move` por número. Mesma razão das moedas: `verify`
+ * recusa o nome do enum e aceita só o número.
+ */
+const WAREHOUSE_DIRECTION_NUM = {
+  TO_WAREHOUSE: 1,
+  TO_BAG: 2
 };
 
 const SNIPER_LOST_CODES = new Set([
@@ -213,6 +280,62 @@ const IGNORED_CASES = new Set([
  * voltam a ser puro volume e continuam descartados no `peek`.
  */
 const TRIP_CASES = new Set(['world_snapshot', 'npc_interaction']);
+
+/**
+ * Exceções a `IGNORED_PUSHES`, válidas só durante um hop de câmbio.
+ *
+ * `trade_push` é o único canal pelo qual a troca avança: o `TradeState` de cada
+ * etapa e o `TradeCompleted` do fecho chegam por ele, e sem eles o hop não teria
+ * como saber que o parceiro travou nem que o ouro passou. `social_push` entra
+ * porque é por ele que o pedido de amizade é visto do outro lado.
+ *
+ * Fora do hop os dois voltam a ser descartados no `peek`: `social_push` chega em
+ * rajada a cada login (presença de cada amigo) e não alimenta número nenhum do
+ * painel.
+ */
+const CAMBIO_CASES = new Set(['trade_push', 'social_push']);
+
+/**
+ * `FriendAction.Kind` como número.
+ *
+ * Medido: o `verify` do codec responde `enum value expected` ao nome
+ * (`KIND_REQUEST`), porque o enum é aninhado em `FriendAction` e o nome só
+ * resolve no escopo do pai. É o mesmo motivo de `MARKET_KIND_NUM` existir.
+ *
+ * Só `REQUEST` e `ACCEPT` estão aqui: `DECLINE`, `REMOVE`, `BLOCK` e `UNBLOCK`
+ * mexeriam na lista social do usuário, que não é assunto de nenhuma automação.
+ */
+const FRIEND_KIND = { REQUEST: 1, ACCEPT: 2 };
+
+/**
+ * Operações de troca que podem sair daqui. Lista fechada, como a do serviço
+ * inteiro.
+ *
+ * `candidates` fica de fora de propósito: é a listagem de itens e sombras
+ * ofertáveis, e o câmbio transfere só ouro — nada aqui tem motivo para
+ * descobrir quais peças poderiam entrar numa oferta.
+ */
+const TRADE_OPS = new Set([
+  'invite', 'respond', 'set_offer', 'lock', 'confirm', 'cancel', 'get_state'
+]);
+
+/**
+ * Tique do laço do câmbio. Curto de propósito e sem relação com o intervalo
+ * entre trocas: quem decide se já pode trocar é `pollCambio`, contra
+ * `cambioLastAtMs`. Um `setInterval` do tamanho do intervalo faria o primeiro
+ * hop esperar o intervalo inteiro depois de ligar.
+ */
+const CAMBIO_TICK_MS = 15000;
+
+/**
+ * Teto para um hop. Medido, a troca inteira leva ~3 s de `invite` a
+ * `completed`, e a `TradeState` do servidor só expira em 300 s. Quarenta e
+ * cinco segundos é o mesmo teto do refill, pela mesma razão: nenhuma etapa pode
+ * prender **duas** contas fora da caçada.
+ */
+const CAMBIO_HOP_TIMEOUT_MS = 45000;
+
+const CAMBIO_LOG_MAX = 300;
 
 /**
  * Pushes que o painel não mostra. `shadow_delta` e `content_catalog` entram
@@ -309,6 +432,18 @@ function uint64(value) {
   }
 }
 
+/**
+ * Espera um prazo. É a única pausa por tempo do serviço, e existe para a fila
+ * do boss: entre dois bosses o que separa um do outro não é um pacote, é a
+ * saída da conta da cena anterior — e o servidor não a anuncia.
+ */
+function sleep(ms) {
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, ms);
+    if (timer.unref) timer.unref();
+  });
+}
+
 function proxyDispatcher(proxyUrl) {
   if (!proxyUrl) return null;
   if (dispatchers.has(proxyUrl)) return dispatchers.get(proxyUrl);
@@ -351,6 +486,9 @@ class LevelingHeadlessClient extends EventEmitter {
     this.refillBackoffMs = options.refillBackoffMs || REFILL_BACKOFF_MS;
     this.expeditionIntervalMs = options.expeditionIntervalMs || EXPEDITION_POLL_MS;
     this.expeditionBackoffMs = options.expeditionBackoffMs || EXPEDITION_BACKOFF_MS;
+    this.bossIntervalMs = options.bossIntervalMs || BOSS_POLL_MS;
+    this.bossBackoffMs = options.bossBackoffMs || BOSS_BACKOFF_MS;
+    this.bossGapMs = options.bossGapMs === undefined ? BOSS_GAP_MS : options.bossGapMs;
 
     /**
      * Auto-refill. Desligado por padrão: o monitor não deve gastar ouro de uma
@@ -409,6 +547,32 @@ class LevelingHeadlessClient extends EventEmitter {
     this.expeditionTimer = null;
     this.expeditionStats = { polls: 0, collected: 0, sent: 0, lastAtMs: 0, lastError: '' };
 
+    /**
+     * Auto-boss diário. Desligado por padrão, e por um motivo mais forte que o
+     * da expedição: a tentativa do boss é **uma por dia e não volta**. Uma conta
+     * que entra sem equipamento perde a chance até o reset seguinte, e isso o
+     * usuário não pode desfazer.
+     */
+    this.bossConfig = boss.normalizeConfig(options.bossConfig);
+    /** Último estado lido, já recortado. `null` até a primeira leitura. */
+    this.bossState = null;
+    /**
+     * `reset_at_ms` do dia em que a última rodada foi concluída.
+     *
+     * É o que impede duas rodadas no mesmo dia, e vem do **servidor** em vez do
+     * relógio do PC de propósito: duas contas podem logar em horas diferentes, e
+     * uma reconexão no meio do dia não pode valer como dia novo.
+     */
+    this.bossRunResetAtMs = 0;
+    /** Relatório da última rodada, para a janela e para o painel. */
+    this.bossLastRun = null;
+    this.bossAt = 0;
+    this.bossBusy = false;
+    this.bossTimer = null;
+    /** Despertador da virada local; só manda reler, não decide o dia. */
+    this.bossResetTimer = null;
+    this.bossStats = { runs: 0, polls: 0, done: 0, failed: 0, lastAtMs: 0, lastError: '' };
+
     this.ws = null;
     this.status = 'disconnected';
     this.lastError = '';
@@ -437,6 +601,21 @@ class LevelingHeadlessClient extends EventEmitter {
      * ao push quando ele chega.
      */
     this.partyBusy = false;
+    /**
+     * Hop de câmbio em curso. Abre as esperas por `trade_push`, que fora disso
+     * é descartado no `peek`, e protege a conta de refill, boss e troca de
+     * caçada no meio de uma transferência de ouro.
+     */
+    this.cambioBusy = false;
+    /**
+     * Cena em que a conta estava quando o hop começou. Um `scene_enter`
+     * diferente disto durante a troca significa que algo arrastou a conta —
+     * medido na sonda, o líder do grupo faz isso com `party.follow.pulled` — e
+     * o hop tem de abortar antes de confirmar.
+     */
+    this.cambioScene = '';
+    /** Marcada por `applyScene` quando algo tira a conta da cena no meio do hop. */
+    this.cambioDragged = false;
     /**
      * Convites de grupo já recebidos, por id de quem convidou.
      *
@@ -519,6 +698,19 @@ class LevelingHeadlessClient extends EventEmitter {
        * perguntar, mesmo com a janela aberta em segundo plano.
        */
       expedition: null,
+      /**
+       * Bosses diários da conta: quantos já foram hoje, quantos faltam e quando
+       * o dia vira. Fica no estado — e não só numa resposta de IPC — para a
+       * janela acompanhar sem perguntar, mesmo em segundo plano, e para o HUD
+       * poder mostrar a pendência do dia.
+       */
+      boss: null,
+      /**
+       * Rodada de boss em curso. O HUD mostra pelo mesmo motivo de
+       * `refillTrip`: é um momento em que a conta está fora da caçada por
+       * decisão do launcher, e sem o aviso a cena mudaria sem explicação.
+       */
+      bossRun: false,
       /**
        * Viagem de reposição em curso. O HUD mostra isto porque é o único
        * momento em que a conta está fora da caçada por decisão do launcher: sem
@@ -603,6 +795,19 @@ class LevelingHeadlessClient extends EventEmitter {
     };
   }
 
+  async proxyPublicIp() {
+    if (!this.proxy) return { ip: '', error: 'proxy.notConfigured' };
+    try {
+      const undici = require('undici');
+      const res = await undici.request('https://api.ipify.org?format=json', {
+        dispatcher: proxyDispatcher(this.proxy), headersTimeout: 8000, bodyTimeout: 8000
+      });
+      const body = await res.body.json();
+      if (res.statusCode < 200 || res.statusCode >= 300 || !body.ip) throw new Error(`HTTP ${res.statusCode}`);
+      return { ip: String(body.ip) };
+    } catch (e) { return { ip: '', error: e.message || 'proxy.ipFailed' }; }
+  }
+
   async authenticate() {
     // `resume` preserva o lugar na fila de sessão; `login` é o primeiro acesso.
     const useResume = !!this.token;
@@ -671,6 +876,12 @@ class LevelingHeadlessClient extends EventEmitter {
     // a sessão de pé.
     this.syncExpeditionTimer();
     this.maybeExpedition();
+    // O boss é a segunda automação com relógio próprio, e pela mesma razão: o
+    // que a aciona é a virada do dia, não um push. Ligar no login também cobre
+    // a conta que só entrou depois da 00:01 — o despertador daquele dia já
+    // passou, e sem esta chamada ela esperaria até a virada seguinte.
+    this.syncBossTimer();
+    this.maybeBoss();
     this.emitUpdate();
   }
 
@@ -712,6 +923,13 @@ class LevelingHeadlessClient extends EventEmitter {
       // custa IPC nem repintura.
       if (this.recomputeRates()) this.emitUpdate();
     }, this.tickIntervalMs);
+
+    // `unref` nos dois, como no coletor e no sniper: manter o elo vivo e
+    // recontar taxas acompanham uma conexão, não são motivo para o processo
+    // continuar de pé. Sem isto um monitor que ninguém desligou deixa o Node
+    // rodando para sempre — é o que prendia a suíte depois do último teste.
+    if (this.pingTimer.unref) this.pingTimer.unref();
+    if (this.tickTimer.unref) this.tickTimer.unref();
   }
 
   /**
@@ -797,7 +1015,10 @@ class LevelingHeadlessClient extends EventEmitter {
       // com NPC só interessam enquanto o ciclo de compra está em curso.
       const catalogo = head.caseName === 'content_catalog' && this.wantsCatalog();
       const viagem = this.trip && TRIP_CASES.has(head.caseName);
-      if (!catalogo && !viagem) return;
+      // Terceira exceção: a troca de ouro avança por `trade_push`, e só
+      // enquanto um hop está em curso.
+      const cambio = this.cambioBusy && CAMBIO_CASES.has(head.caseName);
+      if (!catalogo && !viagem && !cambio) return;
     }
 
     let packet;
@@ -819,7 +1040,9 @@ class LevelingHeadlessClient extends EventEmitter {
     // O ciclo de refill espera pacotes em vez de dormir. Acordar depois do
     // `reduce` garante que quem esperava já lê o estado novo. A montagem de
     // grupo usa o mesmo mecanismo, esperando o `party_push` do convite.
-    if (this.trip || this.partyBusy) this.wake(packet.caseName, packet.value);
+    if (this.trip || this.partyBusy || this.bossBusy || this.cambioBusy) {
+      this.wake(packet.caseName, packet.value);
+    }
     if (changed) this.emitUpdate();
   }
 
@@ -923,6 +1146,21 @@ class LevelingHeadlessClient extends EventEmitter {
         return this.applyTripPosition(value);
 
       case 'npc_interaction':
+        return false;
+
+      // O servidor reemite o estado do boss quando algo muda nele — entrar num
+      // boss, terminar, o dia virar. Aproveitar o push mantém o painel em dia
+      // sem outra leitura, e é o que faz a contagem do dia aparecer certa logo
+      // depois de um boss feito à mão na WebView.
+      case 'daily_boss_state':
+        this.bossState = boss.readState(value);
+        this.applyBoss(this.bossState);
+        return false;
+
+      // O resultado é consumido pela fila através de `waitFor`; aqui ele não é
+      // estado de painel. O `daily_boss_state` que vem junto é que atualiza a
+      // contagem.
+      case 'daily_boss_result':
         return false;
 
       // A automação do servidor gasta pontos e poções sozinha. Estes resultados
@@ -1267,6 +1505,15 @@ class LevelingHeadlessClient extends EventEmitter {
     this.sceneNpcs = Array.isArray(value.npcs) ? value.npcs : [];
     if (this.trip) this.trip.pos = null;
 
+    // Arrasto durante um hop de câmbio. Medido na sonda: o líder do grupo troca
+    // de caçada e leva a conta com ele (`party.follow.pulled`), e isso chegou no
+    // meio de uma medição. Se acontecer durante a troca, a conta já está em
+    // outra cena ou canal e a troca não pode prosseguir — a marca é lida pelo
+    // hop, que aborta antes de confirmar.
+    if (this.cambioBusy && this.cambioScene && scene.id !== this.cambioScene) {
+      this.cambioDragged = true;
+    }
+
     if (value.hunt) {
       const h = value.hunt;
       if (h.gate_id) this.state.hunt.gateId = h.gate_id;
@@ -1435,6 +1682,15 @@ class LevelingHeadlessClient extends EventEmitter {
     if (this.refillBusy || !this.isOpen() || this.status !== 'connected') return;
     if (!refill.isConfigured(this.refillConfig)) return;
     if (Date.now() < this.refillAt) return;
+    // A rodada de boss guardou o bilhete de volta e vai restaurá-lo no fim. Uma
+    // viagem de compra no meio disso faria os dois `finally` brigarem pelo mesmo
+    // bilhete, e a conta acabaria na cidade ou na cena errada. A espera custa
+    // alguns minutos, e a rodada é uma por dia.
+    if (this.bossBusy) return;
+    // Mesmo motivo durante um hop de câmbio: a conta está na cidade com uma
+    // troca aberta, e o hop guardou o bilhete para devolvê-la no fim. O hop
+    // leva segundos; o refill pega a próxima janela.
+    if (this.cambioBusy) return;
 
     if (!this.catalog) {
       // O catálogo chega no login; se o refill foi ligado depois, ele não vem
@@ -1790,6 +2046,9 @@ class LevelingHeadlessClient extends EventEmitter {
     // sequência encadeada por push; um pedido a mais no socket não quebra nada,
     // mas esperar o fim mantém o ciclo de compra com o log limpo.
     if (this.trip) return;
+    // E durante um hop de câmbio, pelo mesmo motivo: a sequência da troca é
+    // encadeada por push, e esperar o fim mantém o log do hop limpo.
+    if (this.cambioBusy) return;
 
     this.expeditionBusy = true;
     this.expeditionAt = Date.now() + (this.expeditionConfig.intervalMs || this.expeditionIntervalMs);
@@ -1927,6 +2186,376 @@ class LevelingHeadlessClient extends EventEmitter {
     };
   }
 
+  // ---------------------------------------------------------- boss diário
+
+  /**
+   * Operação de boss diário. Tudo viaja dentro de `daily_boss`, e a resposta é
+   * sempre `daily_boss_state`.
+   *
+   * As duas operações do `oneof` são escalares (`info` é `bool`, `start` é
+   * `string`), então o valor vai direto em vez de num objeto — mandar `{}` ali
+   * faria o `verify` do codec recusar o payload, como na expedição.
+   */
+  async bossRequest(op, value) {
+    const res = await this.request('daily_boss', { [op]: value });
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'boss.failed' };
+    }
+    return res.value || {};
+  }
+
+  /**
+   * Lê o estado e guarda o recorte. É a única leitura: a lista de bosses, o que
+   * já foi feito hoje, as exigências de nível e o horário do reset chegam todos
+   * juntos num `DailyBossState`.
+   */
+  async bossStateRead() {
+    const res = await this.bossRequest('info', true);
+    if (res.errorCode) return { errorCode: res.errorCode };
+    const estado = boss.readState(res);
+    this.bossState = estado;
+    this.applyBoss(estado);
+    return { state: estado };
+  }
+
+  /** Reflete o estado de boss no painel do launcher. */
+  applyBoss(estado) {
+    const resumo = boss.summarize(estado, { level: this.state.level });
+    const antes = JSON.stringify(this.state.boss);
+    this.state.boss = resumo;
+    if (JSON.stringify(resumo) !== antes) this.emitUpdate();
+    return resumo;
+  }
+
+  /** Troca a configuração em execução, sem derrubar a sessão. */
+  setBossConfig(config) {
+    this.bossConfig = boss.normalizeConfig(config);
+    // Mudar a configuração é pedido explícito: não esperar o intervalo.
+    this.bossAt = 0;
+    this.syncBossTimer();
+    if (this.status === 'connected') this.maybeBoss();
+  }
+
+  /**
+   * Liga e desliga os dois relógios do boss.
+   *
+   * São dois porque respondem a perguntas diferentes. O intervalo é a varredura
+   * de segurança — percebe um reset que ninguém viu. O despertador da virada é
+   * o que faz a rodada começar logo depois da 00:01, sem esperar até dez
+   * minutos: o servidor não anuncia o reset por push, então sem ele a primeira
+   * leitura do dia dependeria do acaso do intervalo.
+   */
+  syncBossTimer() {
+    const quer = boss.accountEnabled(this.bossConfig, this.index);
+    if (!quer) {
+      if (this.bossTimer) {
+        clearInterval(this.bossTimer);
+        this.bossTimer = null;
+      }
+      this.clearBossReset();
+      return;
+    }
+
+    if (!this.bossTimer) {
+      const ms = this.bossConfig.intervalMs || this.bossIntervalMs;
+      this.bossTimer = setInterval(() => this.maybeBoss(), ms);
+      // Como o ping e o tique: o boss não é motivo para o processo viver.
+      if (this.bossTimer.unref) this.bossTimer.unref();
+    }
+    this.scheduleBossReset();
+  }
+
+  /**
+   * Agenda o despertador da próxima virada local.
+   *
+   * `setTimeout` e não `setInterval`: o atraso é recalculado a cada disparo,
+   * porque um `setInterval` de 24 h acumularia o desvio do relógio e, pior,
+   * erraria o dia inteiro depois de uma suspensão do PC.
+   */
+  scheduleBossReset() {
+    this.clearBossReset();
+    const atraso = Math.max(1000, boss.nextLocalResetMs() - Date.now());
+    this.bossResetTimer = setTimeout(() => {
+      this.bossResetTimer = null;
+      // O relógio local só **manda reler**. Quem diz que o dia virou é o
+      // `reset_at_ms` que vem na leitura; o PC pode estar em outro fuso.
+      this.bossAt = 0;
+      this.maybeBoss();
+      if (boss.accountEnabled(this.bossConfig, this.index)) this.scheduleBossReset();
+    }, atraso);
+    if (this.bossResetTimer.unref) this.bossResetTimer.unref();
+  }
+
+  clearBossReset() {
+    if (this.bossResetTimer) {
+      clearTimeout(this.bossResetTimer);
+      this.bossResetTimer = null;
+    }
+  }
+
+  /**
+   * Guardas de execução. O que fazer é decisão de `leveling-boss`; aqui só mora
+   * "uma rodada por vez, respeitando o intervalo, o recuo e o dia".
+   */
+  maybeBoss() {
+    if (this.bossBusy || !this.isOpen() || this.status !== 'connected') return;
+    if (!boss.accountEnabled(this.bossConfig, this.index)) return;
+    if (Date.now() < this.bossAt) return;
+    // A rodada tira a conta da caçada e tem de devolvê-la no fim. No meio de
+    // uma viagem de refill os dois caminhos disputariam o mesmo bilhete, e o
+    // `finally` de um desfaria o do outro.
+    if (this.trip) return;
+    // E no meio de um hop de câmbio, pela mesma disputa de bilhete: o hop
+    // guardou o da conta e vai restaurá-lo quando a troca fechar.
+    if (this.cambioBusy) return;
+
+    this.bossBusy = true;
+    this.bossAt = Date.now() + (this.bossConfig.intervalMs || this.bossIntervalMs);
+    this.runBoss().finally(() => { this.bossBusy = false; });
+  }
+
+  /**
+   * A rodada do dia: lê o estado, entra em cada boss pendente do mais fraco ao
+   * mais forte, e devolve a conta à caçada no fim.
+   *
+   * Em série, e nunca em paralelo: a conta tem um personagem, e um
+   * `daily_boss{start}` com a conta ainda na cena do boss anterior é recusado.
+   *
+   * O bilhete de volta é lido **antes** da primeira entrada. Depois dela a
+   * conta já está na cena do boss, e ler ali traria a cena do boss em vez da
+   * caçada — a conta terminaria o dia parada na cidade.
+   *
+   * Nunca lança. Roda para sempre em segundo plano, e uma falha de rede não
+   * pode derrubar o temporizador nem deixar a conta fora da caçada: o retorno
+   * mora num `finally`, igual ao do refill.
+   */
+  async runBoss() {
+    const stats = this.bossStats;
+    stats.polls++;
+    stats.lastAtMs = Date.now();
+
+    try {
+      const leitura = await this.bossStateRead();
+      if (leitura.errorCode) {
+        stats.lastError = leitura.errorCode;
+        this.emit('boss', {
+          index: this.index, ok: false, error: leitura.errorCode,
+          summary: this.state.boss, stats: this.getBossStats()
+        });
+        return;
+      }
+
+      const plano = boss.plan({
+        state: leitura.state,
+        config: this.bossConfig,
+        index: this.index,
+        level: this.state.level
+      });
+
+      // O dia é do servidor. Enquanto o `reset_at_ms` for o mesmo da última
+      // rodada concluída, a rodada já aconteceu — mesmo que o launcher tenha
+      // reiniciado, porque aí a fila viria vazia de `done_today` de qualquer
+      // forma. A checagem economiza a tentativa inútil e mantém o log limpo.
+      if (!boss.isNewDay(plano.resetAtMs, this.bossRunResetAtMs)) {
+        stats.lastError = '';
+        return;
+      }
+
+      if (!plano.targets.length) {
+        // Nada a fazer hoje: ou tudo feito, ou nada ao alcance do nível. Nos
+        // dois casos o dia está encerrado, e marcá-lo evita reler a cada tique.
+        this.bossRunResetAtMs = plano.resetAtMs;
+        stats.lastError = '';
+        this.bossLastRun = {
+          atMs: Date.now(),
+          resetAtMs: plano.resetAtMs,
+          results: [],
+          done: plano.done.map(d => ({ id: d.id, bossId: d.bossId, already: true })),
+          skipped: plano.skipped
+        };
+        this.emit('boss', {
+          index: this.index, ok: true, nothingToDo: true,
+          run: this.bossLastRun, summary: this.state.boss, stats: this.getBossStats()
+        });
+        return;
+      }
+
+      await this.runBossQueue(plano);
+    } catch (err) {
+      stats.lastError = (err && err.message) || String(err);
+      this.emit('boss', {
+        index: this.index, ok: false, error: stats.lastError,
+        summary: this.state.boss, stats: this.getBossStats()
+      });
+    }
+  }
+
+  /**
+   * Percorre a fila de bosses e devolve a conta à caçada no fim.
+   *
+   * Separado de `runBoss` porque o `finally` do retorno tem de cobrir a fila
+   * inteira, e só a fila: um erro na leitura do estado não chega a tirar a
+   * conta da caçada, então restaurar ali mandaria um `start_hunt` inútil.
+   */
+  async runBossQueue(plano) {
+    const stats = this.bossStats;
+    // O bilhete de volta, lido antes de a conta sair da caçada. `null` numa
+    // conta que já estava na cidade — e aí não há nada a restaurar.
+    const ticket = this.huntTicket ? { ...this.huntTicket } : null;
+    const resultados = [];
+
+    this.state.bossRun = true;
+    this.emitUpdate();
+
+    try {
+      for (const alvo of plano.targets) {
+        const resultado = await this.runOneBoss(alvo);
+        resultados.push(resultado);
+        if (resultado.ok) stats.done++; else stats.failed++;
+
+        // Recusa do servidor é motivo para parar a fila: `boss.doneToday` e
+        // `boss.level` se repetiriam em cada alvo seguinte, e um erro de rede
+        // provavelmente também. O que já foi feito está no relatório.
+        if (resultado.fatal) break;
+
+        if (this.bossGapMs) await sleep(this.bossGapMs);
+        // Perder a conexão no meio da fila encerra a rodada: o resto dos
+        // pedidos falharia, e o dia não é marcado como feito.
+        if (!this.isOpen()) break;
+      }
+
+      const vitorias = resultados.filter(r => r.ok).length;
+      stats.runs++;
+      stats.lastError = (resultados.find(r => r.error) || {}).error || '';
+
+      // O dia só é marcado quando a fila foi percorrida de verdade. Uma rodada
+      // interrompida por queda de conexão não conta: a reconexão deve tentar o
+      // que faltou, e não considerar o dia resolvido.
+      if (this.isOpen()) this.bossRunResetAtMs = plano.resetAtMs;
+
+      this.bossLastRun = {
+        atMs: Date.now(),
+        resetAtMs: plano.resetAtMs,
+        results: resultados,
+        done: plano.done.map(d => ({ id: d.id, bossId: d.bossId, already: true })),
+        skipped: plano.skipped
+      };
+
+      this.emit('boss', {
+        index: this.index,
+        ok: vitorias === resultados.length,
+        attempted: resultados.length,
+        victories: vitorias,
+        run: this.bossLastRun,
+        summary: this.state.boss,
+        stats: this.getBossStats()
+      });
+    } finally {
+      this.state.bossRun = false;
+      // O retorno à caçada mora aqui, e não no fim do `try`: terminar o boss
+      // devolve a conta à **cidade**, e qualquer saída deste bloco — erro,
+      // recusa, exceção — deixaria a conta parada lá. É o mesmo motivo do
+      // `finally` do ciclo de refill.
+      await this.restoreHunt(ticket);
+      this.emitUpdate();
+    }
+  }
+
+  /**
+   * Um boss: entra, espera o resultado, devolve o que aconteceu.
+   *
+   * O resultado chega em `daily_boss_result`, que é um push — o `start` responde
+   * só com o estado. Por isso a espera é por push, com o teto que o próprio
+   * servidor informou em `time_limit_secs`: um boss que a conta não vence roda
+   * até o limite antes de responder derrota.
+   *
+   * Nunca lança: a fila continua, e o motivo da falha vira linha do relatório.
+   */
+  async runOneBoss(alvo) {
+    const base = { id: alvo.id, bossId: alvo.bossId, bossLevel: alvo.bossLevel };
+
+    // A espera abre **antes** do `start`. Medido no mesmo padrão do convite de
+    // grupo: um boss que morre num golpe responde o resultado antes de o
+    // `start` retornar, e abrir a espera depois perdia o push.
+    const espera = this.waitFor('daily_boss_result', alvo.timeoutMs);
+
+    const inicio = await this.bossRequest('start', alvo.id).catch(err => ({
+      errorCode: (err && err.message) || 'boss.failed'
+    }));
+
+    if (inicio.errorCode) {
+      // Soltar a espera aberta: sem isto ela ficaria pendurada até o timeout do
+      // boss, atrasando a fila inteira por um pedido que nem saiu.
+      this.wake('daily_boss_result', null);
+      await espera.catch(() => {});
+      this.bossAt = Date.now() + this.bossBackoffMs;
+      return { ...base, ok: false, error: inicio.errorCode, fatal: true };
+    }
+
+    const resultado = await espera;
+    // Sem `id` não é um veredito: é a espera solta pelo timeout ou por um
+    // `wake` de desistência. Tratar isso como derrota inventaria um resultado.
+    if (!resultado || !resultado.id) {
+      // Nenhum resultado dentro do limite. Não é vitória nem derrota conhecida:
+      // o servidor pode ter encerrado sem avisar. A próxima leitura do estado
+      // dirá se a tentativa foi gasta.
+      return { ...base, ok: false, error: 'boss.noResult' };
+    }
+
+    return {
+      ...base,
+      ok: !!resultado.victory,
+      timeMs: Number(resultado.time_ms) || 0,
+      newRecord: !!resultado.new_record,
+      position: Number(resultado.position) || 0,
+      mailed: !!resultado.mailed,
+      item: (resultado.item && (resultado.item.name || resultado.item.item_id)) || '',
+      gem: (resultado.gem && (resultado.gem.name || resultado.gem.item_id)) || '',
+      error: resultado.victory ? '' : 'boss.defeat'
+    };
+  }
+
+  /**
+   * Devolve a conta à caçada do bilhete, depois da rodada de bosses.
+   *
+   * Um `start_hunt` para a fila inteira, e não um por boss: a conta volta à
+   * cidade entre dois bosses de qualquer forma, e mandá-la à caçada no meio
+   * pagaria duas trocas de cena para sair de lá no segundo seguinte.
+   *
+   * Sem bilhete não há o que fazer: a conta já estava na cidade antes da
+   * rodada, e escolher uma caçada por conta própria é exatamente o que este
+   * monitor não faz.
+   */
+  async restoreHunt(ticket) {
+    if (!ticket || !ticket.gate_id) return false;
+    if (!this.isOpen()) {
+      // A conexão caiu no meio. `rescueTrip` não cobre este caminho, mas o
+      // `scene_enter` do próximo login traz a cena real — e se for a cidade, a
+      // rodada seguinte do boss restaura. Marcar o erro deixa isso visível.
+      this.bossStats.lastError = 'boss.restoreOffline';
+      return false;
+    }
+    const res = await this.startHunt(ticket).catch(err => ({
+      errorCode: (err && err.message) || 'hunt.failed'
+    }));
+    if (res && res.errorCode) {
+      this.bossStats.lastError = res.errorCode;
+      return false;
+    }
+    return true;
+  }
+
+  getBossStats() {
+    return {
+      ...this.bossStats,
+      running: !!this.bossTimer,
+      intervalMs: this.bossConfig.intervalMs || this.bossIntervalMs,
+      runResetAtMs: this.bossRunResetAtMs,
+      nextLocalResetMs: boss.nextLocalResetMs(),
+      lastRun: this.bossLastRun
+    };
+  }
+
   // ------------------------------------------------------------------- grupo
 
   /**
@@ -2057,11 +2686,11 @@ class LevelingHeadlessClient extends EventEmitter {
    * não é o mesmo da operação (`get` responde `detail`, `search` responde
    * `page`), então devolvemos a chave junto.
    *
-   * Duas escritas passam por aqui, ambas com o usuário no comando: `buy`,
-   * pelo sniper, item por item com teto de preço; e `create`, pela aba
-   * Anunciar, que mostra cada item e o valor numa confirmação antes de
-   * mandar. `cancel` e as ofertas continuam fora — o monitor é de leitura, e
-   * mexer no inventário da conta sem o usuário pedir seria outra coisa.
+   * Três escritas passam por aqui, todas com o usuário no comando: `buy`,
+   * pelo sniper, item por item com teto de preço; `create`, pela aba Anunciar
+   * e pelo auto-anunciar, com teto de itens por rodada; e `cancel`, que retira
+   * um anúncio escolhido na tela. As ofertas continuam fora — elas prendem
+   * saldo até alguém responder, e isso é um compromisso, não uma leitura.
    */
   async marketRequest(op, value = {}) {
     const res = await this.request('market_request', { [op]: value });
@@ -2212,11 +2841,34 @@ class LevelingHeadlessClient extends EventEmitter {
    * código, e quem chamou decide o que dizer no log.
    */
   async marketBuy(listingId, quantity = 1) {
-    const id = Number(listingId);
-    if (!Number.isFinite(id) || id <= 0) return { errorCode: 'market.badId' };
+    // `uint64()` e não `Number()`: id de anúncio acima de 2^53 arredondava para
+    // o vizinho, e a compra saía no anúncio errado sem erro nenhum.
+    const id = uint64(listingId);
+    if (id === null) return { errorCode: 'market.badId' };
     const qty = Math.max(1, Math.floor(Number(quantity) || 1));
     const res = await this.marketRequest('buy', { id, quantity: qty });
     return res.errorCode ? { errorCode: res.errorCode } : (res.value || {});
+  }
+
+  /**
+   * Retira um anúncio do mercado.
+   *
+   * O item **não** volta direto para a mochila: `MarketCanceled.to_mail` diz
+   * quando ele foi para o correio, que é o que acontece com a bolsa cheia.
+   * Quem chama precisa olhar esse campo, senão o item fica parado num lugar
+   * onde o inventário não o mostra — e o usuário conclui que o cancelamento
+   * perdeu a peça.
+   *
+   * `uint64()` no id pelo mesmo motivo da compra: acima de 2^53 um `Number`
+   * cru cancelaria o anúncio vizinho, que pode ser de outro item seu.
+   */
+  async marketCancel(listingId) {
+    const id = uint64(listingId);
+    if (id === null) return { errorCode: 'market.badId' };
+    const res = await this.marketRequest('cancel', { id });
+    if (res.errorCode) return { errorCode: res.errorCode };
+    const v = res.value || {};
+    return { id: String(v.id || listingId), toMail: !!v.to_mail };
   }
 
   /**
@@ -2361,14 +3013,20 @@ class LevelingHeadlessClient extends EventEmitter {
    * `buy` do sniper.
    *
    * `item_uid` e `unit_price` são uint64 e o codec recusa string, mas o
-   * inventário entrega o uid como string: a conversão acontece aqui.
+   * inventário entrega o uid como string: a conversão acontece aqui, e passa
+   * por `uint64()`.
+   *
+   * `Number(uid)` **não** serve: os uids do servidor passam de 2^53, e o
+   * arredondamento do ponto flutuante caía num uid vizinho — o anúncio saía
+   * com a peça errada, sem erro nenhum, porque o uid resultante existe. Era
+   * esse o "anunciei um item e no jogo era outro".
    *
    * `kind` e `currency` vão como número pelo mesmo motivo das buscas —
    * `verify` responde `enum value expected` ao nome.
    */
   async marketCreate(draft = {}) {
-    const uid = Number(draft.uid);
-    if (!Number.isFinite(uid) || uid <= 0) return { errorCode: 'market.badUid' };
+    const uid = uint64(draft.uid);
+    if (uid === null) return { errorCode: 'market.badUid' };
     const unit = Math.max(1, Math.floor(Number(draft.unitPrice) || 0));
     if (unit <= 0) return { errorCode: 'market.badPrice' };
 
@@ -2389,18 +3047,178 @@ class LevelingHeadlessClient extends EventEmitter {
   }
 
   /**
+   * Destranca (ou tranca) uma peça.
+   *
+   * O cadeado é do jogo e o servidor recusa `MarketCreate` em item trancado.
+   * Destrancar na hora de anunciar é o que o usuário pediu: ele já disse o que
+   * quer vender na tela de confirmação, e obrigá-lo a voltar ao jogo para
+   * tirar o cadeado de peça por peça era o passo manual que sobrava.
+   *
+   * `uid` é uint64 e o codec recusa string, igual ao resto do inventário —
+   * e pelo mesmo motivo do anúncio, a conversão passa por `uint64()`: acima de
+   * 2^53 um `Number` cru destranca a peça vizinha.
+   */
+  async lockItem(uid, locked) {
+    const id = uint64(uid);
+    if (id === null) return { errorCode: 'inv.badUid' };
+    if (this.status !== 'connected') return { errorCode: 'inv.offline' };
+    const res = await this.request('lock_item', { uid: id, locked: !!locked })
+      .catch(e => ({ caseName: 'error', value: { code: e.message } }));
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'inv.lockFailed' };
+    }
+    return { locked: !!(res.value && res.value.locked) };
+  }
+
+  /**
+   * Move peças entre mochila e depósito.
+   *
+   * `inventory_page` lê os dois escopos, então a aba Anunciar mostra também o
+   * que está guardado — mas `MarketCreate` só aceita o que está na mochila, e
+   * o servidor recusa o resto com `inventory.item_not_in_bag`. Era essa a
+   * recusa que aparecia num item que o usuário via na conta: ele existe, só
+   * não estava na bolsa.
+   *
+   * Em lote porque `WarehouseMove` recebe a lista inteira, e porque a resposta
+   * separa `moved` de `refused` — mochila cheia é recusa parcial, não erro.
+   */
+  async warehouseMove(uids, direction) {
+    if (this.status !== 'connected') return { errorCode: 'inv.offline', moved: [], refused: [] };
+    // `uint64()` e não `Number()`: acima de 2^53 o arredondamento move a peça
+    // vizinha, que é o mesmo defeito que trocava o item do anúncio.
+    const lista = (Array.isArray(uids) ? uids : [])
+      .map(uint64)
+      .filter(u => u !== null);
+    if (!lista.length) return { moved: [], refused: [] };
+
+    const res = await this.request('warehouse_move', {
+      uids: lista,
+      direction: direction === 'warehouse'
+        ? WAREHOUSE_DIRECTION_NUM.TO_WAREHOUSE
+        : WAREHOUSE_DIRECTION_NUM.TO_BAG
+    }).catch(e => ({ caseName: 'error', value: { code: e.message } }));
+
+    if (res.caseName === 'error') {
+      return {
+        errorCode: (res.value && res.value.code) || 'inv.moveFailed',
+        moved: [], refused: lista.map(String)
+      };
+    }
+    const v = res.value || {};
+    return {
+      moved: (v.moved || []).map(String),
+      refused: (v.refused || []).map(String),
+      bagUsed: Number(v.bag_used) || 0,
+      bagCapacity: Number(v.bag_capacity) || 0
+    };
+  }
+
+  /**
    * Detalhe de um anúncio, com `MarketPriceStats` junto — mais rico que o
    * `price_hint`: traz também quantos anúncios estão ativos e o menor preço
    * pedido agora. Custa ter um `listing_id` em mãos.
    *
    * `id` é uint64 e o codec exige número: o decode entrega string, então a
-   * conversão tem de acontecer aqui, senão o encode recusa o pacote.
+   * conversão tem de acontecer aqui, senão o encode recusa o pacote. Via
+   * `uint64()`, pelo mesmo motivo da compra: acima de 2^53 um `Number` cru
+   * perguntaria pelo anúncio vizinho.
    */
   async marketGet(listingId) {
-    const id = Number(listingId);
-    if (!Number.isFinite(id) || id <= 0) return { errorCode: 'market.badId' };
+    const id = uint64(listingId);
+    if (id === null) return { errorCode: 'market.badId' };
     const res = await this.marketRequest('get', { id });
     return res.errorCode ? { errorCode: res.errorCode } : (res.value || {});
+  }
+
+  // ----------------------------------------------------------------- correio
+
+  /**
+   * Uma página do correio.
+   *
+   * Existe para o auto-anunciar: uma venda de mercado entrega o ouro por
+   * correio, e um item que voltou de anúncio cancelado ou expirado também.
+   * Enquanto nada recolhe a caixa, o ouro não entra e o item não aparece no
+   * inventário — e a vaga de anúncio fica ocupada por nada.
+   *
+   * `kind` é texto livre do servidor, e é ele que separa a venda do resto.
+   */
+  async mailList(page = 1) {
+    const res = await this.request('mail_request', {
+      list: { page: Math.max(1, Math.floor(Number(page) || 1)), page_size: 50 }
+    }).catch(e => ({ caseName: 'error', value: { code: e.message } }));
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'mail.failed', entries: [] };
+    }
+    const v = (res.value && res.value.page) || {};
+    return {
+      entries: (v.entries || []).map(e => ({
+        id: String(e.id || ''),
+        kind: String(e.kind || ''),
+        sender: String(e.sender || ''),
+        subjectKey: String(e.subject_key || ''),
+        gold: Number(e.gold) || 0,
+        diamonds: Number(e.diamonds) || 0,
+        items: (e.items || []).length,
+        /** Já recolhido? O servidor mantém a entrada depois do resgate. */
+        claimed: !!Number(e.claimed_at_ms),
+        /**
+         * Retida para análise. O servidor recusa o `claim` antes deste prazo,
+         * então tentar só gastaria um pedido por rodada, por conta, para
+         * sempre receber a mesma recusa.
+         */
+        heldUntil: Number(e.held_until_ms) || 0
+      })),
+      unclaimed: Number(v.unclaimed) || 0,
+      total: Number(v.total) || 0
+    };
+  }
+
+  /**
+   * Recolhe entradas escolhidas do correio.
+   *
+   * **Nunca** `claim_all`. A caixa não tem só venda de mercado: tem recompensa
+   * de evento, de boss, prêmio com prazo e item que o usuário pode estar
+   * guardando de propósito. Um `claim_all` automático esvaziaria tudo isso de
+   * uma vez, e com a bolsa cheia o resgate é **parcial** — `MailClaimResult`
+   * tem `bag_full` e `partial` justamente porque o servidor recolhe o que cabe
+   * e deixa o resto. O estrago seria invisível e não teria volta.
+   *
+   * Então o auto-anunciar manda ids, e só os de venda que ele mesmo
+   * identificou. `bag_full` volta para quem chamou decidir: parar de anunciar
+   * é melhor que insistir numa bolsa que não aceita mais nada.
+   */
+  async mailClaim(ids) {
+    const lista = (Array.isArray(ids) ? ids : [ids])
+      .map(uint64)
+      .filter(u => u !== null);
+    if (!lista.length) return { claimed: [], gold: 0, items: 0, bagFull: false };
+    if (this.status !== 'connected') return { errorCode: 'mail.offline', claimed: [] };
+
+    const recolhidos = [];
+    let gold = 0;
+    let items = 0;
+    let bagFull = false;
+    let unclaimed = 0;
+    // Um `claim` por entrada: `MailClaim` recebe um id só. Em série, porque a
+    // bolsa é compartilhada entre os resgates — o segundo pedido precisa ver o
+    // espaço que o primeiro ocupou, senão `bag_full` chega tarde.
+    for (const id of lista) {
+      const res = await this.request('mail_request', { claim: { id } })
+        .catch(e => ({ caseName: 'error', value: { code: e.message } }));
+      if (res.caseName === 'error') continue;
+      const v = (res.value && res.value.claimed) || {};
+      for (const c of v.claimed || []) recolhidos.push(String(c));
+      gold += Number(v.gold) || 0;
+      items += Number(v.items) || 0;
+      unclaimed = Number(v.unclaimed) || 0;
+      if (v.bag_full) {
+        // Bolsa cheia: o resgate foi parcial e o seguinte seria pior. Parar
+        // aqui deixa o resto no correio, que é onde ele está seguro.
+        bagFull = true;
+        break;
+      }
+    }
+    return { claimed: recolhidos, gold, items, bagFull, unclaimed };
   }
 
   /** A caçada lida na entrada, ou `null` se a conta não estava caçando. */
@@ -2428,6 +3246,14 @@ class LevelingHeadlessClient extends EventEmitter {
     // Trocar de mapa no meio da ida à loja faria o `finally` do refill devolver
     // a conta ao mapa antigo logo depois, desfazendo a troca sem explicação.
     if (this.refillBusy) return { ok: false, error: 'hunt.refillBusy' };
+    // Mesmo motivo durante a rodada de boss: ela guardou o bilhete antigo e o
+    // vai restaurar no fim, desfazendo a troca sem explicação. O bilhete novo é
+    // aceito logo depois, quando a rodada termina.
+    if (this.bossBusy) return { ok: false, error: 'hunt.bossBusy' };
+    // E durante um hop de câmbio: a conta está na cidade de propósito, com uma
+    // troca aberta. Um `start_hunt` aqui a tiraria da cena no meio da troca,
+    // que é exatamente o que o hop vigia para abortar.
+    if (this.cambioBusy) return { ok: false, error: 'hunt.cambioBusy' };
 
     const resultado = await this.startHunt(alvo).catch(err => ({ errorCode: err.message }));
     if (resultado && resultado.errorCode) {
@@ -2442,6 +3268,158 @@ class LevelingHeadlessClient extends EventEmitter {
       difficulty: alvo.difficulty,
       sceneId: (resultado && resultado.scene_id) || ''
     };
+  }
+
+  // ------------------------------------------------------------------ câmbio
+
+  /**
+   * Lista de amigos da conta.
+   *
+   * Existe para o câmbio: medido, `trade_request{invite}` entre contas que não
+   * são amigas responde `error{code:"trade.friends_only"}`. A amizade é a única
+   * pré-condição de troca que o servidor cobra explicitamente.
+   */
+  async friendList() {
+    const res = await this.request('social_request', { friend_list: {} })
+      .catch(e => ({ caseName: 'error', value: { code: e.message } }));
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'social.failed', friends: [] };
+    }
+    const v = (res.value && res.value.friend_list) || {};
+    return {
+      friends: v.friends || [],
+      incoming: v.incoming || [],
+      outgoing: v.outgoing || [],
+      blocked: v.blocked || []
+    };
+  }
+
+  /**
+   * Pede, aceita ou remove amizade.
+   *
+   * `kind` vai como **número**. Medido: o `verify` do codec responde
+   * `social_request.friend_action.kind: enum value expected` ao nome
+   * (`KIND_REQUEST`), porque o enum é aninhado em `FriendAction` e o nome só
+   * resolve no escopo do pai — o mesmo motivo de `MARKET_KIND_NUM` existir.
+   *
+   * Nada além de `REQUEST` e `ACCEPT` sai daqui: `BLOCK` e `REMOVE` mexeriam na
+   * lista social do usuário, que não é assunto do câmbio.
+   */
+  async friendAction(kind, accountId, name = '') {
+    const num = Number(kind);
+    if (num !== FRIEND_KIND.REQUEST && num !== FRIEND_KIND.ACCEPT) {
+      return { errorCode: 'social.kindNotAllowed' };
+    }
+    const alvo = uint64(accountId);
+    if (alvo === null) return { errorCode: 'social.noTarget' };
+
+    const res = await this.request('social_request', {
+      friend_action: { kind: num, target: { account: alvo, name: String(name || '') } }
+    }).catch(e => ({ caseName: 'error', value: { code: e.message } }));
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'social.failed' };
+    }
+    const v = (res.value && res.value.friend_action) || {};
+    return {
+      kind: v.kind || '',
+      entry: v.entry || null,
+      becameFriends: !!v.became_friends
+    };
+  }
+
+  /**
+   * Canais da cena corrente.
+   *
+   * Medido: `ChannelListResult` traz `players`/`capacity` por canal e
+   * `ChannelInfo.friends`, a contagem de amigos em cada um — que é como o
+   * câmbio acha a conta vizinha sem adivinhar. No estado normal não vem
+   * `cooldown_until_ms` nem `blocked`, então trocar de canal é livre.
+   */
+  async channelList() {
+    const res = await this.request('channel_list', {})
+      .catch(e => ({ caseName: 'error', value: { code: e.message } }));
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'channel.failed', channels: [] };
+    }
+    const v = res.value || {};
+    return {
+      sceneId: v.scene_id || '',
+      current: Number(v.current) || 0,
+      cooldownUntil: Number(v.cooldown_until_ms) || 0,
+      blocked: v.blocked || '',
+      channels: (v.channels || []).map(c => ({
+        number: Number(c.number) || 0,
+        players: Number(c.players) || 0,
+        capacity: Number(c.capacity) || 0,
+        load: c.load || '',
+        current: !!c.current,
+        recommended: !!c.recommended,
+        friends: Number(c.friends) || 0,
+        full: (Number(c.players) || 0) >= (Number(c.capacity) || 0) && !!c.capacity
+      }))
+    };
+  }
+
+  /**
+   * Muda de canal na cena corrente, e espera o `scene_enter` que confirma.
+   *
+   * O alvo é sempre o canal da **outra** conta, nunca o `recommended`: medido,
+   * o canal 1 estava com 146/150, e seguir a recomendação do servidor separaria
+   * as duas contas em vez de juntá-las.
+   */
+  async switchChannel(channel) {
+    const alvo = Number(channel) || 0;
+    if (alvo <= 0) return { errorCode: 'channel.noTarget' };
+    if (alvo === this.state.scene.channel) return { channel: alvo, already: true };
+
+    const res = await this.request('switch_channel', { channel: alvo })
+      .catch(e => ({ caseName: 'error', value: { code: e.message } }));
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'channel.switchFailed' };
+    }
+    // A troca de canal recarrega a cena; sem esperar, a leitura de posição
+    // seguinte usaria a entidade antiga e nunca acharia o personagem.
+    await this.waitFor('scene_enter', 15000);
+    return {
+      channel: Number((res.value || {}).channel) || alvo,
+      cooldownUntil: Number((res.value || {}).cooldown_until_ms) || 0
+    };
+  }
+
+  /**
+   * Uma operação de troca. Tudo viaja dentro de `trade_request`, e a resposta é
+   * sempre `trade_response` ou `error`.
+   *
+   * `set_offer` nunca leva `items` nem `shadows` daqui: o câmbio transfere
+   * **só ouro**, e ofertar uma peça por engano não tem desfazer. `candidates`
+   * fica fora da lista pelo mesmo motivo — é a listagem de itens ofertáveis, e
+   * nada aqui tem motivo para olhar para ela.
+   */
+  async tradeRequest(op, value) {
+    if (!TRADE_OPS.has(op)) return { errorCode: 'trade.opNotAllowed' };
+    const res = await this.request('trade_request', { [op]: value })
+      .catch(e => ({ caseName: 'error', value: { code: e.message } }));
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'trade.failed' };
+    }
+    return res.value || {};
+  }
+
+  /** Oferta de ouro puro. Fechado de propósito: não aceita item nem sombra. */
+  tradeOfferGold(gold) {
+    const valor = uint64(gold);
+    if (valor === null) return Promise.resolve({ errorCode: 'trade.noGold' });
+    return this.tradeRequest('set_offer', { gold: valor });
+  }
+
+  /**
+   * Cancela a troca aberta, se houver. Erro aqui é esperado e ignorado: medido,
+   * `cancel` depois de a troca ter fechado responde `error` porque a sessão já
+   * é `idle` — tratar isso como falha marcaria um hop bem-sucedido como quebrado.
+   */
+  async tradeCancelQuiet() {
+    if (!this.isOpen()) return;
+    await this.tradeRequest('cancel', {}).catch(() => null);
   }
 
   // ------------------------------------------------------------------- saída
@@ -2516,6 +3494,11 @@ class LevelingHeadlessClient extends EventEmitter {
     // Sem socket não há painel para ler; `authenticate` religa o relógio.
     clearInterval(this.expeditionTimer);
     this.expeditionTimer = null;
+    // Mesma razão: sem socket não há estado de boss para ler, e `authenticate`
+    // religa os dois relógios.
+    clearInterval(this.bossTimer);
+    this.bossTimer = null;
+    this.clearBossReset();
     for (const entry of this.pending.values()) entry.reject(new Error('conexão perdida'));
     this.pending.clear();
     // Um ciclo de compra em curso ficaria preso esperando pacotes que não vêm
@@ -2560,6 +3543,17 @@ class LevelingHeadlessManager extends EventEmitter {
      * compartilhados, então não há leitura para economizar aqui.
      */
     this.expeditionConfig = expedition.normalizeConfig(options.expeditionConfig);
+    /**
+     * Auto-boss diário: uma configuração para o launcher inteiro, com a lista
+     * de contas excluídas dentro dela, igual à expedição.
+     *
+     * O laço vive nos clientes pela mesma razão: o estado é da conta — o que já
+     * foi feito hoje, o nível exigido, o recorde — e nenhuma leitura é
+     * compartilhável. Um relógio no manager teria de percorrer as contas de
+     * qualquer forma, e a rodada de cada uma é uma sequência longa que não pode
+     * bloquear as outras.
+     */
+    this.bossConfig = boss.normalizeConfig(options.bossConfig);
     /** Montagem de grupo em curso; uma por vez em todo o launcher. */
     this.partyBusy = false;
     /**
@@ -2641,6 +3635,75 @@ class LevelingHeadlessManager extends EventEmitter {
     this.sniperStats = {
       polls: 0, buys: 0, spentGold: 0, spentDiamond: 0, lastAtMs: 0, lastError: ''
     };
+
+    /**
+     * Auto-anunciar: preenche as vagas de anúncio de cada conta com o que ela
+     * tem de tesouro na bolsa.
+     *
+     * O laço vive no manager e percorre as contas, como o sniper e ao contrário
+     * do boss. A razão é a leitura de preço: a mediana e o anúncio rival de um
+     * item são os mesmos para qualquer conta, e um laço por cliente faria oito
+     * contas consultarem o mesmo `citrino@2+0` na mesma rodada. O que pertence
+     * à conta é só a bolsa e o `create`, e esses acontecem no socket dela.
+     *
+     * Escrita, portanto com teto. `maxPerRound` limita o estrago de um erro de
+     * preço a dois itens visíveis no relatório, em vez do inventário inteiro.
+     */
+    this.autosellConfig = autosell.normalizeConfig(options.autosellConfig);
+    this.autosellIntervalMs = this.autosellConfig.intervalMs;
+    this.autosellTimer = null;
+    this.autosellBusy = false;
+    /** Grava a configuração; mesma forma do `sniperSink`. */
+    this.autosellSink = typeof options.autosellSink === 'function' ? options.autosellSink : null;
+    /** Grava o relatório em disco: a pergunta "o que ele vendeu de noite?". */
+    this.autosellLogSink = typeof options.autosellLogSink === 'function' ? options.autosellLogSink : null;
+    this.autosellLog = [];
+    /**
+     * Preço por `defId@level+enchant` dentro de **uma** rodada.
+     *
+     * Não sobrevive à rodada de propósito: o anúncio rival é o dado que mais
+     * envelhece aqui, e um preço de dez minutos atrás é exatamente o que faria
+     * o launcher anunciar abaixo de um mercado que já subiu.
+     */
+    this.autosellPrices = new Map();
+    this.autosellStats = {
+      rounds: 0, listed: 0, claimed: 0, goldClaimed: 0,
+      lastAtMs: 0, lastError: '', lastCount: 0
+    };
+
+    /**
+     * Câmbio: desce o ouro pela cadeia até a conta que concentra tudo.
+     *
+     * O laço vive no manager, e aqui não é escolha de desempenho como no sniper
+     * — é necessidade. Um hop envolve **duas** contas ao mesmo tempo, e nenhum
+     * cliente sozinho pode conduzi-lo. Mesma razão de `assembleParty` morar
+     * aqui.
+     *
+     * Um hop por vez no launcher inteiro, e o seguinte só depois de o anterior
+     * ter fechado e o saldo ter sido conferido nos dois lados. É o que o pedido
+     * descreve, e é também o que evita duas trocas abertas lendo os
+     * `trade_push` uma da outra.
+     */
+    this.cambioConfig = cambio.normalizeConfig(options.cambioConfig);
+    this.cambioTimer = null;
+    this.cambioBusy = false;
+    /** Grava a configuração e o ponteiro da cadeia; mesma forma do `sniperSink`. */
+    this.cambioSink = typeof options.cambioSink === 'function' ? options.cambioSink : null;
+    /** Grava o relatório: a pergunta "quanto desceu, e de onde?". */
+    this.cambioLogSink = typeof options.cambioLogSink === 'function' ? options.cambioLogSink : null;
+    this.cambioLog = [];
+    /**
+     * Quando o último hop **fechou**, não quando começou: o intervalo tem de
+     * separar trocas confirmadas, e contar do início o encurtaria pelo tempo da
+     * própria troca.
+     */
+    this.cambioLastAtMs = Number(options.cambioLastAtMs) || 0;
+    /** Intervalo sorteado para a espera corrente, com jitter já aplicado. */
+    this.cambioWaitMs = 0;
+    this.cambioStats = {
+      hops: 0, goldMoved: 0, lastAtMs: 0, lastError: '', lastHop: '', etapa: ''
+    };
+    this.random = typeof options.random === 'function' ? options.random : Math.random;
   }
 
   // ------------------------------------------------------------- mercado
@@ -2652,7 +3715,10 @@ class LevelingHeadlessManager extends EventEmitter {
    * é estável enquanto ela existir.
    */
   marketClient() {
+    const dedicated = this.clients.get(-1);
+    if (dedicated && dedicated.status === 'connected') return dedicated;
     for (const index of [...this.clients.keys()].sort((a, b) => a - b)) {
+      if (index === -1) continue;
       const client = this.clients.get(index);
       if (client && client.status === 'connected') return client;
     }
@@ -2954,7 +4020,8 @@ class LevelingHeadlessManager extends EventEmitter {
       for (const rule of cfg.rules) {
         if (!rule.enabled || sniper.remainingOf(rule) <= 0) continue;
 
-        const client = this.sniperClient(rule);
+        const buyerAccount = cfg.buyerAccount;
+        const client = this.sniperClient({ account: buyerAccount });
         if (!client) {
           this.sniperStats.lastError = 'sniper.accountOffline';
           continue;
@@ -2975,11 +4042,15 @@ class LevelingHeadlessManager extends EventEmitter {
 
         // O anúncio entra no log antes da compra: se o item for levado por
         // outra pessoa no meio, a linha já existe para receber a notícia.
-        for (const buy of buys) this.sniperAnnounce(buy, rule, client);
+        for (const buy of buys) this.sniperAnnounce(buy, rule, client, buyerAccount);
 
         for (const buy of buys) {
           if (sniper.remainingOf(rule) <= 0) break;
-          compradas += await this.sniperBuy(buy, rule, client);
+          // A regra vai **por referência**: é nela que `sniperBuy` soma o
+          // `bought`, e é ela que a gravação salva. Uma cópia por espalhamento
+          // (para carimbar a conta compradora) somava num objeto descartado: o
+          // alvo nunca enchia e a compra se repetia.
+          compradas += await this.sniperBuy(buy, rule, client, buyerAccount);
         }
       }
 
@@ -2994,11 +4065,11 @@ class LevelingHeadlessManager extends EventEmitter {
   }
 
   /** Registra o anúncio visto, com a hora em que o vendedor o criou. */
-  sniperAnnounce(buy, rule, client) {
+  sniperAnnounce(buy, rule, client, buyerAccount = 0) {
     const id = String(buy.id);
     const l = buy.listing || {};
     if (this.sniperSeen.has(id)) return;
-    this.sniperSeen.set(id, { rule: rule.id, account: rule.account, atMs: Date.now() });
+    this.sniperSeen.set(id, { rule: rule.id, account: buyerAccount, atMs: Date.now() });
     this.sniperLogEntry({
       id,
       status: 'announced',
@@ -3016,7 +4087,7 @@ class LevelingHeadlessManager extends EventEmitter {
       // Hora do anúncio é a do vendedor, não a da nossa busca: o atraso entre
       // as duas é o que diz se o intervalo de verificação está largo demais.
       announcedAtMs: Number(l.created_at_ms) || 0,
-      account: rule.account,
+      account: buyerAccount,
       accountName: (client && client.state && client.state.name) || ''
     });
   }
@@ -3028,7 +4099,7 @@ class LevelingHeadlessManager extends EventEmitter {
    * anúncio pode ter sido levado. O log diz isso com o código do servidor, em
    * vez de tratar como erro do launcher.
    */
-  async sniperBuy(buy, rule, client) {
+  async sniperBuy(buy, rule, client, buyerAccount = 0) {
     const res = await client.marketBuy(buy.id, buy.quantity).catch(err => ({
       errorCode: (err && err.message) || 'market.buyFailed'
     }));
@@ -3076,7 +4147,7 @@ class LevelingHeadlessManager extends EventEmitter {
     if (this.sniperSink) {
       try { this.sniperSink(this.sniperConfig); } catch {}
     }
-    this.emit('sniper-bought', { index: rule.account, rule: rule.id, bought: rule.bought, total });
+    this.emit('sniper-bought', { index: buyerAccount, rule: rule.id, bought: rule.bought, total });
     return qty;
   }
 
@@ -3104,7 +4175,9 @@ class LevelingHeadlessManager extends EventEmitter {
         || this.marketClient();
       if (!client) continue;
 
-      const res = await client.marketGet(Number(id)).catch(() => ({ errorCode: 'market.gone' }));
+      // `id` já é string e `marketGet` converte: passar por `Number` aqui
+      // desfaria a precisão antes mesmo de a conversão certa acontecer.
+      const res = await client.marketGet(id).catch(() => ({ errorCode: 'market.gone' }));
       const l = (res && res.listing) || {};
       const status = String(l.status || '');
       const comprador = String(l.buyer_name || '');
@@ -3140,6 +4213,426 @@ class LevelingHeadlessManager extends EventEmitter {
     if (!this.sniperTimer) return false;
     clearInterval(this.sniperTimer);
     this.sniperTimer = null;
+    return true;
+  }
+
+  // ------------------------------------------------------------ auto-anunciar
+
+  setAutosellConfig(config) {
+    this.autosellConfig = autosell.normalizeConfig(config);
+    const antes = this.autosellIntervalMs;
+    this.autosellIntervalMs = this.autosellConfig.intervalMs;
+    // Intervalo novo com o laço em curso: o `setInterval` antigo continuaria
+    // no ritmo velho até ser recriado.
+    if (this.autosellTimer && antes !== this.autosellIntervalMs) {
+      this.stopAutosellPoll();
+      this.startAutosellPoll();
+    }
+    if (this.autosellSink) {
+      try { this.autosellSink(this.autosellConfig); } catch {}
+    }
+    return this.autosellConfig;
+  }
+
+  getAutosellConfig() {
+    return { ...this.autosellConfig, excluded: [...this.autosellConfig.excluded] };
+  }
+
+  getAutosellStats() {
+    return {
+      ...this.autosellStats,
+      running: !!this.autosellTimer,
+      intervalMs: this.autosellIntervalMs,
+      enabled: !!this.autosellConfig.enabled
+    };
+  }
+
+  getAutosellLog() {
+    return this.autosellLog.map(e => ({ ...e }));
+  }
+
+  setAutosellLog(entries) {
+    this.autosellLog = (Array.isArray(entries) ? entries : [])
+      .slice(0, AUTOSELL_LOG_MAX)
+      .map(e => ({ ...e }));
+    return this.autosellLog.length;
+  }
+
+  clearAutosellLog() {
+    this.autosellLog = [];
+    this.saveAutosellLog();
+    return true;
+  }
+
+  saveAutosellLog() {
+    if (!this.autosellLogSink) return;
+    try { this.autosellLogSink(this.autosellLog); } catch {}
+  }
+
+  /** Uma linha no relatório, no topo, com teto. */
+  autosellLogEntry(entry) {
+    const linha = { atMs: Date.now(), ...entry };
+    this.autosellLog.unshift(linha);
+    if (this.autosellLog.length > AUTOSELL_LOG_MAX) {
+      this.autosellLog.length = AUTOSELL_LOG_MAX;
+    }
+    this.saveAutosellLog();
+    this.emit('autosell', { entry: linha, stats: this.getAutosellStats() });
+    return linha;
+  }
+
+  /**
+   * O preço de referência de um item, com o nível e o encanto exatos.
+   *
+   * Duas fontes, e a divisão entre elas é deliberada:
+   *
+   *   mediana   do **banco local**, que é a única memória de preço efetivamente
+   *             pago com o nível anotado. `marketPriceHint` do servidor
+   *             responderia mais rápido e sem banco, mas ignora o nível — e
+   *             num item onde o nv. 2 vale 3x o nv. 1, uma média de todos os
+   *             níveis não é uma aproximação, é outro número.
+   *   rival     uma busca no mercado **filtrada pelo nível**, ordenada por
+   *             preço. A primeira página basta: o que interessa é o menor.
+   *
+   * O resultado fica em cache **dentro da rodada**. Oito contas com citrino
+   * nv. 2 fariam oito buscas idênticas; uma rodada depois o cache é jogado
+   * fora, porque o anúncio rival é o dado que envelhece mais rápido aqui.
+   */
+  async autosellPriceFor(item, client) {
+    const chave = autosell.priceKeyOf(item);
+    if (this.autosellPrices.has(chave)) return this.autosellPrices.get(chave);
+
+    const defId = String(item.defId || '');
+    const level = Number(item.level) || 0;
+    let median = 0;
+    let samples = 0;
+
+    if (this.marketDb) {
+      try {
+        // `level` exato: `salesForPricing` descarta as vendas sem nível
+        // anotado, que é o que impede uma venda de nível desconhecido de
+        // entrar na mediana de um nível específico.
+        const vendas = this.marketDb.salesForPricing(defId, {
+          level, days: 30, limit: listingRules.SAMPLE_SIZE
+        });
+        const conta = listingRules.suggestPrice(vendas);
+        median = conta.median;
+        samples = conta.samples;
+      } catch (err) {
+        this.autosellStats.lastError = 'autosell.dbFailed';
+      }
+    }
+
+    let rival = 0;
+    // Sem mediana a busca é desperdício: o item vai ser pulado de qualquer
+    // forma, e uma busca por item sem referência multiplicaria o tráfego pela
+    // parte do inventário que o auto-anunciar nunca vai vender.
+    if (median > 0) {
+      const busca = await client.marketSearch({
+        defId,
+        currency: 'gold',
+        sort: 'preco-asc',
+        // O servidor filtra por faixa; min e max iguais é o nível exato. Sem
+        // isto a primeira página viria cheia de nv. 1 baratos e o nv. 2 sairia
+        // pelo preço deles.
+        levelMin: level,
+        levelMax: level
+      }).catch(() => ({ errorCode: 'autosell.searchFailed', listings: [] }));
+      if (busca.errorCode) this.autosellStats.lastError = busca.errorCode;
+      else rival = autosell.lowestRival(busca.listings || [], item);
+    }
+
+    const ref = { median, samples, rival };
+    this.autosellPrices.set(chave, ref);
+    return ref;
+  }
+
+  /**
+   * Uma rodada de auto-anunciar, para uma conta.
+   *
+   * A ordem é a mesma que a aba Anunciar provou: recolher o correio, ler as
+   * vagas, ler a bolsa, precificar, mover do depósito, destrancar, e só então
+   * `create` — em série, item por item, para cada falha ser atribuível a um
+   * item e não à rodada.
+   *
+   * Nunca lança: roda sozinha em segundo plano, e uma falha de rede não pode
+   * derrubar o temporizador.
+   */
+  async runAutosell(index) {
+    const cfg = this.autosellConfig;
+    const client = this.clients.get(index);
+    if (!client || client.status !== 'connected') return 0;
+
+    const catalog = this.marketCatalogStore.value;
+    // Sem catálogo nada é classificado, e classificar por `def_id` adivinhado
+    // venderia equipamento como se fosse gema. A rodada espera a próxima.
+    if (!catalog || !catalog.items) {
+      this.autosellStats.lastError = 'autosell.noCatalog';
+      return 0;
+    }
+
+    // 1. Correio. Uma venda entrega o ouro por aqui, e um anúncio expirado
+    // devolve o item por aqui — sem recolher, a vaga some e o item não volta
+    // para a bolsa onde o passo 3 poderia reanunciá-lo.
+    if (cfg.claimMail) {
+      const caixa = await client.mailList().catch(() => ({ entries: [] }));
+      const ids = autosell.claimableMail(caixa.entries);
+      if (ids.length) {
+        const r = await client.mailClaim(ids).catch(() => ({ claimed: [] }));
+        if ((r.claimed || []).length) {
+          this.autosellStats.claimed += r.claimed.length;
+          this.autosellStats.goldClaimed += Number(r.gold) || 0;
+          this.autosellLogEntry({
+            account: index, action: 'claim',
+            count: r.claimed.length, gold: Number(r.gold) || 0
+          });
+        }
+        if (r.bagFull) {
+          // Bolsa cheia: anunciar exige trazer item do depósito e destrancar,
+          // e os dois pioram com a bolsa sem espaço. Melhor parar e dizer.
+          this.autosellStats.lastError = 'autosell.bagFull';
+          this.autosellLogEntry({ account: index, action: 'skip', reason: 'bagFull' });
+          return 0;
+        }
+      }
+    }
+
+    // 2. As vagas, do servidor. O teto de anúncios é do jogo e muda com a
+    // conta: um número nosso daria recusa em vez de um item a menos.
+    const mine = await client.marketMine().catch(() => ({ errorCode: 'autosell.mineFailed' }));
+    if (mine.errorCode) {
+      this.autosellStats.lastError = mine.errorCode;
+      return 0;
+    }
+
+    const limit = Number(mine.limit) || 0;
+    // Os de pé, contados por status. `mine.active` existe, mas `mine` devolve
+    // também vendido e expirado na mesma lista — contar o tamanho dela daria
+    // "sem vagas" com dez anúncios já fechados ocupando o número.
+    const active = listingRules.splitListings(mine.listings || []).active.length;
+    if (limit > 0 && active >= limit) {
+      // Nada a fazer, e não é erro: as vagas estão ocupadas por anúncios de
+      // pé. Reprecificar não está no escopo — o usuário cancela à mão.
+      return 0;
+    }
+
+    // 3. A bolsa. Só o escopo 1: o depósito aparece na aba Anunciar porque lá
+    // o usuário escolhe, mas uma automação que esvazia o depósito sozinha
+    // venderia o que foi guardado de propósito.
+    const inv = await client.inventoryItems({ scopes: [1] })
+      .catch(() => ({ errorCode: 'autosell.invFailed', items: [] }));
+    if (inv.errorCode) {
+      this.autosellStats.lastError = inv.errorCode;
+      return 0;
+    }
+
+    // 4. Preço. Só dos que passam o filtro de categoria, senão uma busca por
+    // item varreria o inventário inteiro atrás de preço para equipamento que
+    // nunca vai ser anunciado.
+    // A lista de bloqueio entra aqui também, e não só no plano: sem ela, o
+    // item barrado ainda custaria uma busca de mercado por rodada, por conta,
+    // para ser recusado no passo seguinte.
+    const barrados = new Set(cfg.blocked || []);
+    const candidatos = (inv.items || []).filter(it => !autosell.skipReason(it, catalog, barrados));
+    const prices = new Map();
+    for (const it of candidatos) {
+      const chave = autosell.priceKeyOf(it);
+      if (prices.has(chave)) continue;
+      prices.set(chave, await this.autosellPriceFor(it, client));
+    }
+
+    const plano = autosell.planRound({
+      items: inv.items || [], catalog, prices, limit, active, config: cfg
+    });
+    if (!plano.ready.length) {
+      // O relatório registra a rodada vazia com o motivo mais comum: é a
+      // diferença entre "não achou nada" e "não rodou".
+      if (plano.skipped.length) {
+        const motivos = {};
+        for (const s of plano.skipped) motivos[s.reason] = (motivos[s.reason] || 0) + 1;
+        this.autosellLogEntry({ account: index, action: 'none', skipped: motivos });
+      }
+      return 0;
+    }
+
+    // 5. Destrancar. O depósito não entra, então só o cadeado sobra do preparo
+    // que a aba Anunciar faz.
+    const preparo = listingRules.prepareListings(plano.ready, inv.items || []);
+    const travados = new Set();
+    for (const uid of preparo.unlock) {
+      const r = await client.lockItem(uid, false).catch(e => ({ errorCode: e.message }));
+      if (r.errorCode) travados.add(String(uid));
+    }
+
+    // 6. `create`, em série. Cada falha pertence a um item.
+    let anunciados = 0;
+    for (const draft of plano.ready) {
+      if (travados.has(draft.uid)) {
+        this.autosellLogEntry({
+          account: index, action: 'fail', uid: draft.uid,
+          defId: draft.defId, name: draft.name, error: 'inv.lockFailed'
+        });
+        continue;
+      }
+      const res = await client.marketCreate({
+        uid: draft.uid,
+        unitPrice: draft.unitPrice,
+        quantity: draft.quantity,
+        currency: 'gold',
+        hours: listingRules.LISTING_HOURS
+      }).catch(e => ({ errorCode: e.message }));
+
+      if (res.errorCode) {
+        this.autosellLogEntry({
+          account: index, action: 'fail', uid: draft.uid,
+          defId: draft.defId, name: draft.name, error: res.errorCode
+        });
+        this.autosellStats.lastError = res.errorCode;
+        continue;
+      }
+
+      anunciados++;
+      this.autosellStats.listed++;
+      this.autosellLogEntry({
+        account: index, action: 'list', uid: draft.uid,
+        defId: draft.defId, name: draft.name, level: draft.level,
+        quantity: draft.quantity, unitPrice: draft.unitPrice, total: draft.total,
+        listingId: (res.listing && String(res.listing.id)) || '',
+        // A conta do preço vai para o relatório: um anúncio automático que não
+        // dá para auditar depois é um anúncio em que não se pode confiar.
+        from: draft.from
+      });
+    }
+    return anunciados;
+  }
+
+  /**
+   * O que o auto-anunciar venderia, agregado por item — o picker da lista de
+   * bloqueio.
+   *
+   * Parte do inventário real das contas, não do catálogo inteiro. O catálogo
+   * tem milhares de definições e a pergunta do usuário é outra: "do que ele
+   * pode vender **do meu**, o que eu não quero que saia". Uma lista de tudo o
+   * que existe no jogo esconde justamente o punhado de itens que importa.
+   *
+   * Equipamento sai daqui, como sai da rodada: bloquear o que já nunca seria
+   * anunciado só encheria a lista de linhas sem efeito.
+   *
+   * Só a bolsa (escopo 1), pela mesma razão da rodada — é o escopo de onde o
+   * auto-anunciar tira itens, e mostrar o depósito sugeriria que o bloqueio
+   * importa para o que está guardado lá.
+   */
+  async autosellCandidates() {
+    const catalog = this.marketCatalogStore.value;
+    if (!catalog || !catalog.items) return { items: [], offline: [], errorCode: 'autosell.noCatalog' };
+
+    const ativos = [];
+    const offline = [];
+    for (const index of [...this.clients.keys()].sort((a, b) => a - b)) {
+      if (index === -1) continue;
+      const client = this.clients.get(index);
+      if (client && client.status === 'connected') ativos.push(client);
+      else if (client) offline.push({ index, name: (client.state && client.state.name) || '' });
+    }
+
+    // Em paralelo: são leituras, em sockets separados. Ao contrário da rodada,
+    // que é escrita e vai em série de propósito.
+    const leituras = await Promise.all(ativos.map(async client => ({
+      index: client.index,
+      name: (client.state && client.state.name) || '',
+      res: await client.inventoryItems({ scopes: [1] }).catch(() => ({ items: [] }))
+    })));
+
+    const porDef = new Map();
+    for (const leitura of leituras) {
+      for (const it of (leitura.res.items || [])) {
+        // Sem a lista de bloqueio: um item já barrado tem de continuar
+        // aparecendo, senão desmarcá-lo seria impossível.
+        if (autosell.skipReason(it, catalog)) continue;
+        const defId = String(it.defId || '');
+        const alvo = porDef.get(defId) || {
+          defId,
+          name: (catalog.items[defId] && catalog.items[defId].name) || defId,
+          category: autosell.categoryOf(it, catalog),
+          qty: 0,
+          accounts: new Set(),
+          levels: new Set()
+        };
+        alvo.qty += Math.max(1, Number(it.qty) || 1);
+        alvo.accounts.add(leitura.index);
+        if (Number(it.level)) alvo.levels.add(Number(it.level));
+        porDef.set(defId, alvo);
+      }
+    }
+
+    const items = [...porDef.values()]
+      .map(e => ({
+        defId: e.defId,
+        name: e.name,
+        category: e.category,
+        qty: e.qty,
+        accounts: e.accounts.size,
+        levels: [...e.levels].sort((a, b) => a - b)
+      }))
+      // Quantidade primeiro: o que o jogo produz aos montes é o que o usuário
+      // quer ver no topo para decidir.
+      .sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name, 'pt-BR'));
+
+    return { items, offline, readAtMs: Date.now() };
+  }
+
+  /**
+   * Uma rodada em todas as contas que participam.
+   *
+   * Em série, ao contrário de `inventoryOwners`: são escritas de mercado, e um
+   * erro de preço simultâneo em oito contas é oito vezes o prejuízo de um. O
+   * intervalo é de minutos, então a latência somada não custa nada.
+   */
+  async pollAutosell() {
+    if (this.autosellBusy) return 0;
+    if (!this.autosellConfig.enabled) return 0;
+
+    this.autosellBusy = true;
+    // O cache de preço vale uma rodada: o anúncio rival é o dado que mais
+    // envelhece, e um preço velho faria o launcher anunciar abaixo de um
+    // mercado que já subiu.
+    this.autosellPrices.clear();
+    let total = 0;
+    try {
+      this.autosellStats.rounds++;
+      this.autosellStats.lastAtMs = Date.now();
+      this.autosellStats.lastError = '';
+
+      for (const index of [...this.clients.keys()].sort((a, b) => a - b)) {
+        // A conta dedicada do sniper não tem inventário para vender.
+        if (index === -1) continue;
+        if (!autosell.includesAccount(this.autosellConfig, index)) continue;
+        total += await this.runAutosell(index).catch(() => 0);
+      }
+      this.autosellStats.lastCount = total;
+    } catch (err) {
+      this.autosellStats.lastError = err.message || 'autosell.failed';
+    } finally {
+      this.autosellBusy = false;
+      this.autosellPrices.clear();
+    }
+    return total;
+  }
+
+  /** Liga o laço. `unref` como nos outros: não prende o processo vivo. */
+  startAutosellPoll() {
+    if (this.autosellTimer) return false;
+    if (!autosell.isConfigured(this.autosellConfig)) return false;
+    this.autosellTimer = setInterval(() => { this.pollAutosell(); }, this.autosellIntervalMs);
+    if (this.autosellTimer.unref) this.autosellTimer.unref();
+    this.pollAutosell();
+    return true;
+  }
+
+  stopAutosellPoll() {
+    if (!this.autosellTimer) return false;
+    clearInterval(this.autosellTimer);
+    this.autosellTimer = null;
     return true;
   }
 
@@ -3375,6 +4868,101 @@ class LevelingHeadlessManager extends EventEmitter {
     return this.expeditionReport();
   }
 
+  /** Aplica a configuração de boss nos monitores já em execução. */
+  setBossConfig(config) {
+    this.bossConfig = boss.normalizeConfig(config);
+    for (const client of this.clients.values()) {
+      client.setBossConfig(this.bossConfig);
+    }
+    return this.bossConfig;
+  }
+
+  getBossConfig() {
+    return this.bossConfig;
+  }
+
+  /**
+   * O estado de boss diário de cada conta, para a janela.
+   *
+   * Mesma forma de `expeditionReport`, e pelas mesmas razões: contas em
+   * paralelo porque são sockets independentes, e conta desconectada aparece com
+   * `connected: false` em vez de sumir — esconder faria parecer que ela não
+   * existe, quando o que falta é ligar o monitor nela.
+   *
+   * `force` relê o estado no servidor. Sem ele a tela usa a última leitura, que
+   * é o caminho normal: o estado muda uma vez por dia, e reler em cada abertura
+   * da janela seria tráfego para mostrar o mesmo número.
+   */
+  async bossReport(options = {}) {
+    const force = !!options.force;
+    const indices = [...this.clients.keys()].sort((a, b) => a - b);
+
+    const contas = await Promise.all(indices.map(async index => {
+      const client = this.clients.get(index);
+      const base = {
+        index,
+        name: (client && client.state && client.state.name) || '',
+        level: (client && client.state && client.state.level) || 0,
+        connected: !!client && client.status === 'connected',
+        enabled: boss.accountEnabled(this.bossConfig, index),
+        errorCode: '',
+        summary: null,
+        stats: client ? client.getBossStats() : null
+      };
+      if (!base.connected) return base;
+
+      if (force || !client.bossState) {
+        const res = await client.bossStateRead().catch(err => ({
+          errorCode: (err && err.message) || 'boss.failed'
+        }));
+        if (res.errorCode) return { ...base, errorCode: res.errorCode };
+      }
+      return {
+        ...base,
+        summary: client.state.boss,
+        stats: client.getBossStats()
+      };
+    }));
+
+    return { accounts: contas, config: this.bossConfig };
+  }
+
+  /**
+   * Uma rodada agora em todas as contas que participam, sem esperar o relógio.
+   *
+   * `force` ignora o dia já feito. É o botão "fazer agora" da janela: o usuário
+   * que equipou a conta depois de uma rodada fraca quer tentar o que sobrou, e
+   * o servidor é quem recusa o que já foi — `done_today` tira o boss da fila na
+   * própria leitura, então forçar nunca gasta tentativa duas vezes.
+   */
+  async pollBoss(options = {}) {
+    const alvos = [...this.clients.values()].filter(c =>
+      c && c.status === 'connected'
+      && boss.accountEnabled(this.bossConfig, c.index));
+
+    // Em paralelo entre contas: cada rodada é uma sequência longa no socket da
+    // própria conta, e em série oito contas somariam os limites de tempo de
+    // todos os bosses de todas elas.
+    //
+    // `runBoss` direto, e não `maybeBoss`: este é o botão da janela, e passar
+    // pelas guardas de intervalo faria o clique não fazer nada. A trava de
+    // concorrência continua valendo — ela é o que impede duas rodadas na mesma
+    // conta.
+    await Promise.all(alvos.map(async client => {
+      if (client.bossBusy) return;
+      if (options.force) client.bossRunResetAtMs = 0;
+      client.bossBusy = true;
+      client.bossAt = Date.now() + (this.bossConfig.intervalMs || BOSS_POLL_MS);
+      try {
+        await client.runBoss();
+      } finally {
+        client.bossBusy = false;
+      }
+    }));
+
+    return this.bossReport();
+  }
+
   start(accountIndex, options = {}) {
     this.stop(accountIndex);
     const client = new LevelingHeadlessClient(accountIndex, {
@@ -3386,6 +4974,10 @@ class LevelingHeadlessManager extends EventEmitter {
       // `bootMonitor` ou por um clique no painel — já nasce participando, sem
       // depender de a janela de expedição ter sido aberta.
       expeditionConfig: this.expeditionConfig,
+      // Mesma razão para o boss: uma conta cujo monitor sobe depois já nasce
+      // participando, e se a virada do dia já passou a rodada acontece no
+      // próprio login.
+      bossConfig: this.bossConfig,
       // O catálogo de caçadas é do jogo, não da conta: a primeira conta a logar
       // o preenche e as outras já nascem com a lista pronta.
       huntStore: this.huntStore,
@@ -3396,7 +4988,9 @@ class LevelingHeadlessManager extends EventEmitter {
     });
     this.clients.set(accountIndex, client);
 
-    for (const event of ['update', 'status', 'error', 'ended', 'death', 'notice', 'token', 'arise', 'refill', 'expedition', 'hunts', 'market-catalog', 'market-sold']) {
+    for (const event of ['update', 'status', 'error', 'ended', 'death', 'notice', 'token', 'arise', 'refill', 'expedition', 'boss', 'hunts', 'market-catalog', 'market-sold']) {
+      // `cambio` não entra aqui: ele é emitido pelo manager, não pelo cliente —
+      // um hop pertence ao par de contas, não a uma delas.
       client.on(event, data => this.emit(event, data));
     }
     // Só a sessão substituída encerra o monitor: a conta está sendo usada
@@ -3446,6 +5040,523 @@ class LevelingHeadlessManager extends EventEmitter {
    * Uma montagem por vez: as etapas são encadeadas por push, e duas em paralelo
    * leriam os pushes uma da outra.
    */
+  // -------------------------------------------------------------- câmbio
+
+  /**
+   * Contas que podem participar da cadeia agora: em modo monitor, conectadas e
+   * fora de qualquer outra operação.
+   *
+   * A conta dedicada do sniper (índice -1) fica de fora: ela não é uma conta do
+   * usuário na cadeia, é um socket de leitura de mercado.
+   */
+  cambioAtivos() {
+    const out = [];
+    for (const index of [...this.clients.keys()].sort((a, b) => a - b)) {
+      if (index === -1) continue;
+      const client = this.clients.get(index);
+      if (!client || client.status !== 'connected') continue;
+      out.push(index);
+    }
+    return out;
+  }
+
+  /**
+   * Uma conta está livre para entrar num hop?
+   *
+   * Refill, boss e expedição tiram a conta da caçada e restauram o bilhete no
+   * fim; uma troca no meio disso brigaria pela mesma cena. O recíproco também
+   * vale: enquanto `cambioBusy` está marcado no cliente, `maybeRefill`,
+   * `maybeBoss` e `setHunt` recusam.
+   */
+  cambioLivre(client) {
+    if (!client || client.status !== 'connected') return false;
+    return !client.refillBusy && !client.bossBusy
+      && !client.expeditionBusy && !client.partyBusy && !client.cambioBusy;
+  }
+
+  /**
+   * Uma rodada: acha o próximo hop que vale a pena e o executa.
+   *
+   * Nunca lança. O laço roda em segundo plano para sempre, e uma falha de rede
+   * não pode derrubar o temporizador. O erro fica em `cambioStats`.
+   *
+   * Um hop por rodada, de propósito: o pedido é explícito que só pode haver
+   * outra troca quando a primeira terminar e o saldo for confirmado.
+   */
+  async pollCambio() {
+    if (this.cambioBusy) return null;
+    if (!this.cambioConfig.enabled) return null;
+    // O intervalo entre hops. `cambioWaitMs` guarda o sorteio da espera
+    // corrente para que o jitter não seja re-sorteado a cada tique — isso faria
+    // a espera efetiva ser sempre a menor que saísse no dado.
+    const espera = this.cambioWaitMs || this.cambioConfig.intervaloMs;
+    if (this.cambioLastAtMs && Date.now() - this.cambioLastAtMs < espera) return null;
+
+    const hops = cambio.planCadeia(this.cambioConfig, this.cambioAtivos());
+    if (!hops.length) {
+      this.cambioStats.lastError = 'cambio.semCadeia';
+      return null;
+    }
+
+    // O primeiro hop da cadeia que tem ouro sobrando. Varrer em vez de parar no
+    // primeiro: a conta mais alta pode estar abaixo da reserva enquanto a do
+    // meio já acumulou o bastante, e esperar por ela travaria a cadeia inteira.
+    for (const hop of hops) {
+      const de = this.getClient(hop.de);
+      const para = this.getClient(hop.para);
+      if (!this.cambioLivre(de) || !this.cambioLivre(para)) continue;
+
+      const plano = cambio.planHop(this.cambioConfig, de.state.gold);
+      if (plano.skip) continue;
+
+      return this.runCambioHop(hop, plano);
+    }
+
+    this.cambioStats.lastError = 'cambio.nadaASobrar';
+    return null;
+  }
+
+  /**
+   * Um hop completo: duas contas, uma troca, ouro conferido.
+   *
+   * As etapas, e por que são estas (todas medidas em `tools/trade-probe.js`):
+   *
+   *   amizade      `invite` sem amizade responde `trade.friends_only`. É a
+   *                única pré-condição que o servidor cobra por código, e é
+   *                persistente — vale uma vez por par.
+   *   reunião      as duas na cidade, no mesmo canal, perto uma da outra.
+   *   oferta       `set_offer{gold}` e **conferir** antes de travar: depois do
+   *                `lock` o servidor recusa mudar a oferta (`trade.locked`) e a
+   *                trava não cai, então o que for conferido aqui vale até o fim.
+   *   confirmação  os dois `confirm`, e o `completed` que fecha.
+   *   conferência  `given_gold`/`received_gold` contra o plano, e o saldo.
+   *   retorno      `start_hunt` nas duas, no `finally`, só em quem tinha
+   *                bilhete — medido, uma das contas pode legitimamente não ter.
+   *
+   * Não há etapa de correio: medido, `TradeCompleted.mailed` vem falso nas
+   * trocas de ouro e o valor cai direto no saldo. `mailed` continua sendo
+   * conferido, mas como aviso, não como caminho.
+   */
+  async runCambioHop(hop, plano) {
+    const de = this.getClient(hop.de);
+    const para = this.getClient(hop.para);
+    if (!de || !para) return null;
+
+    const rotulo = `${hop.de + 1}→${hop.para + 1}`;
+    const cidade = (de.catalog && de.catalog.citySceneId) || 'cidade-seul';
+
+    this.cambioBusy = true;
+    de.cambioBusy = true;
+    para.cambioBusy = true;
+    de.cambioDragged = false;
+    para.cambioDragged = false;
+    const bilheteDe = de.getHuntTicket();
+    const bilhetePara = para.getHuntTicket();
+    const cenaOrigemDe = de.state.scene.id;
+    const cenaOrigemPara = para.state.scene.id;
+    const ouroAntesDe = de.state.gold;
+    const ouroAntesPara = para.state.gold;
+
+    this.cambioStats.lastHop = rotulo;
+    this.cambioStats.lastError = '';
+
+    let resultado = { ok: false, error: 'cambio.failed', gold: 0 };
+    try {
+      resultado = await de.withTimeout(
+        this.cambioHopSteps(de, para, plano, cidade, { ouroAntesDe, ouroAntesPara }),
+        CAMBIO_HOP_TIMEOUT_MS
+      );
+    } catch (err) {
+      resultado = { ok: false, error: err.message || 'cambio.timeout', gold: 0 };
+    } finally {
+      // Limpeza em ordem: cancelar a troca antes de devolver as contas, senão o
+      // `start_hunt` sairia com uma janela de troca ainda aberta.
+      await de.tradeCancelQuiet();
+      await para.tradeCancelQuiet();
+
+      // Devolver as duas à caçada. Só quem tinha bilhete e de fato saiu: sem
+      // bilhete, viajar deixaria a conta parada na cidade, que é pior que não
+      // ter tentado.
+      for (const [client, bilhete, origem] of [
+        [de, bilheteDe, cenaOrigemDe],
+        [para, bilhetePara, cenaOrigemPara]
+      ]) {
+        client.cambioScene = '';
+        client.cambioDragged = false;
+        client.clearWaiters();
+        try {
+          if (bilhete && client.isOpen() && client.state.scene.id !== origem) {
+            // A espera abre antes do pedido, como no convite: o `scene_enter`
+            // pode chegar junto com a resposta do `start_hunt`, e abrir a
+            // espera depois cairia num push que já passou.
+            //
+            // `cambioBusy` continua marcado aqui de propósito: é ele que faz o
+            // `wake` acontecer, e sem o `wake` esta espera morreria no timeout
+            // de 15 s mesmo com o `scene_enter` tendo chegado.
+            const entrou = client.waitFor('scene_enter', 15000);
+            await client.request('start_hunt', bilhete);
+            await entrou;
+          }
+        } catch (err) {
+          // Falhar aqui deixa a conta na cidade: é o pior caso e tem de
+          // aparecer, não ser engolido.
+          this.cambioStats.lastError = `volta falhou (conta ${client.index + 1}): ${err.message}`;
+        } finally {
+          // Só agora: a marca é o que mantém o `wake` vivo durante a volta.
+          client.cambioBusy = false;
+        }
+      }
+
+      this.cambioBusy = false;
+      // O intervalo conta do fecho, e o jitter é sorteado agora — uma vez por
+      // hop, não a cada tique do laço.
+      this.cambioLastAtMs = Date.now();
+      this.cambioWaitMs = cambio.proximoIntervalo(this.cambioConfig, this.random);
+    }
+
+    this.cambioStats.lastAtMs = Date.now();
+    if (resultado.ok) {
+      this.cambioStats.hops++;
+      this.cambioStats.goldMoved += resultado.gold;
+    } else {
+      this.cambioStats.lastError = resultado.error;
+    }
+
+    this.pushCambioLog({
+      atMs: Date.now(),
+      de: hop.de,
+      para: hop.para,
+      rotulo,
+      gold: resultado.gold || 0,
+      ok: !!resultado.ok,
+      error: resultado.ok ? '' : resultado.error,
+      mailed: !!resultado.mailed,
+      saldoDe: de.state.gold,
+      saldoPara: para.state.gold,
+      proximoEmMs: this.cambioWaitMs
+    });
+    if (this.cambioSink) {
+      try { this.cambioSink(this.cambioConfig, this.cambioLastAtMs); } catch {}
+    }
+
+    this.emit('cambio', {
+      ok: !!resultado.ok,
+      de: hop.de,
+      para: hop.para,
+      gold: resultado.gold || 0,
+      error: resultado.ok ? '' : resultado.error
+    });
+    return resultado;
+  }
+
+  /**
+   * As etapas do hop, separadas do `runCambioHop` para que a limpeza e o
+   * retorno à caçada fiquem num `finally` que nenhum `throw` daqui possa pular.
+   */
+  async cambioHopSteps(de, para, plano, cidade, saldos) {
+    const etapa = nome => { this.cambioStats.etapa = nome; };
+    const fail = (error, gold = 0) => ({ ok: false, error, gold });
+
+    // ----------------------------------------------------------- 1. amizade
+    etapa('amizade');
+    const lista = await de.friendList();
+    if (lista.errorCode) return fail(lista.errorCode);
+    if (cambio.precisaAmizade(lista, para.state.accountId)) {
+      // Medido: `kind` vai como número, e o par só fica formado depois do
+      // `ACCEPT` do outro lado (`became_friends`).
+      const pedido = await de.friendAction(FRIEND_KIND.REQUEST, para.state.accountId, para.state.name);
+      if (pedido.errorCode) return fail(pedido.errorCode);
+      const aceite = await para.friendAction(FRIEND_KIND.ACCEPT, de.state.accountId, de.state.name);
+      if (aceite.errorCode) return fail(aceite.errorCode);
+      if (!aceite.becameFriends) return fail('cambio.amizadeNaoFormou');
+    }
+
+    // ----------------------------------------------------------- 2. reunião
+    etapa('reuniao');
+    for (const client of [de, para]) {
+      if (client.state.scene.id === cidade) continue;
+      client.emitPacket('travel', { scene_id: cidade });
+      const chegou = await client.waitFor('scene_enter', 15000);
+      if (!chegou || chegou.scene_id !== cidade) return fail('cambio.travelFailed');
+    }
+    // A cena de referência só é fixada depois de as duas chegarem: antes disso
+    // o próprio `travel` dispararia o detector de arrasto.
+    de.cambioScene = cidade;
+    para.cambioScene = cidade;
+
+    // Mesmo canal. O alvo é o canal de quem **recebe**, por ser o fim da linha
+    // da cadeia: mover o doador é o que mantém o destino parado enquanto várias
+    // contas descem ouro até ele.
+    if (de.state.scene.channel !== para.state.scene.channel) {
+      const alvo = para.state.scene.channel;
+      const canais = await de.channelList();
+      const info = (canais.channels || []).find(c => c.number === alvo);
+      // Medido: o canal 1 estava com 146/150. Tentar entrar num canal cheio
+      // falharia, e o `recommended` do servidor separaria as duas contas.
+      if (info && info.full) return fail('cambio.canalCheio');
+      const troca = await de.switchChannel(alvo);
+      if (troca.errorCode) return fail(troca.errorCode);
+      if (de.state.scene.channel !== alvo) return fail('cambio.canalNaoAlinhou');
+    }
+
+    // Proximidade. A troca exige as duas perto, e a caminhada é a mesma do
+    // refill: `move_to` e depois observar as snapshots até a distância cair.
+    // Na prática as contas nascem no mesmo ponto de spawn da cidade e a
+    // distância medida foi zero, mas isso é efeito colateral do spawn, não
+    // garantia — uma conta que já estava andando pela cidade estaria longe.
+    etapa('aproximar');
+    const perto = await this.cambioAproximar(de, para);
+    if (!perto.ok) return fail(perto.error);
+
+    // ------------------------------------------------------------ 3. oferta
+    etapa('oferta');
+    if (de.cambioDragged || para.cambioDragged) return fail('cambio.arrastado');
+
+    // A espera abre **antes** do `invite`, e não depois. Medido no grupo, e
+    // vale igual aqui: o `trade_push{invited}` chega no convidado antes de a
+    // resposta do `invite` voltar para quem convidou. Abrir a espera depois
+    // cairia num push que já passou, e o hop gastaria o timeout inteiro à
+    // espera de algo que nunca chega duas vezes.
+    const convidado = para.waitFor('trade_push', 10000);
+
+    const convite = await de.tradeRequest('invite', {
+      account: uint64(para.state.accountId), name: para.state.name || ''
+    });
+    if (convite.errorCode) return fail(convite.errorCode);
+
+    // Sem este push o `respond` poderia sair antes de o servidor ter
+    // registrado o convite naquela sessão.
+    await convidado;
+    const aceitou = await para.tradeRequest('respond', {
+      from: uint64(de.state.accountId), accept: true
+    });
+    if (aceitou.errorCode) return fail(aceitou.errorCode);
+
+    const oferta = await de.tradeOfferGold(plano.gold);
+    if (oferta.errorCode) return fail(oferta.errorCode);
+
+    // A conferência antes do ponto sem volta. Lê o estado do servidor em vez de
+    // confiar na resposta da própria oferta, porque é o estado que o `lock` vai
+    // congelar.
+    const estado = await de.tradeRequest('get_state', {});
+    if (estado.errorCode) return fail(estado.errorCode);
+    const confere = cambio.conferirOferta(estado.state, {
+      gold: plano.gold,
+      meAccount: de.state.accountId,
+      partnerAccount: para.state.accountId
+    });
+    if (!confere.ok) return fail(confere.reason);
+
+    // ------------------------------------------------------------ 4. travar
+    etapa('travar');
+    const travaDe = await de.tradeRequest('lock', { locked: true });
+    if (travaDe.errorCode) return fail(travaDe.errorCode);
+    const travaPara = await para.tradeRequest('lock', { locked: true });
+    if (travaPara.errorCode) return fail(travaPara.errorCode);
+
+    // Última chance de desistir sem custo: depois do `confirm` dos dois lados o
+    // servidor liquida e não há volta.
+    if (de.cambioDragged || para.cambioDragged) return fail('cambio.arrastado');
+
+    // -------------------------------------------------------- 5. confirmar
+    etapa('confirmar');
+    // As duas esperas são abertas **antes** dos `confirm`: medido, o
+    // `completed` chega ~30 ms depois do segundo `confirm`, junto com o
+    // `character_patch`. Abrir a espera depois perderia o push.
+    const fechoDe = this.cambioWaitCompleted(de);
+    const fechoPara = this.cambioWaitCompleted(para);
+
+    const confDe = await de.tradeRequest('confirm', { confirmed: true });
+    if (confDe.errorCode) return fail(confDe.errorCode);
+    const confPara = await para.tradeRequest('confirm', { confirmed: true });
+    if (confPara.errorCode) return fail(confPara.errorCode);
+
+    const [completedDe, completedPara] = await Promise.all([fechoDe, fechoPara]);
+
+    // --------------------------------------------------------- 6. conferir
+    etapa('conferir');
+    const fecho = cambio.conferirFecho(completedDe, completedPara, { gold: plano.gold });
+    if (!fecho.ok) return fail(fecho.reason, 0);
+
+    // O saldo, que é a confirmação independente do que o servidor disse. O
+    // `character_patch` do ouro chega junto com o `completed`, então em geral já
+    // está aplicado; a espera curta cobre a ordem inversa.
+    if (!fecho.mailed) {
+      if (de.state.gold === saldos.ouroAntesDe) await de.waitFor('character_patch', 5000);
+      if (para.state.gold === saldos.ouroAntesPara) await para.waitFor('character_patch', 5000);
+      const saldo = cambio.conferirSaldo(
+        saldos.ouroAntesDe, de.state.gold,
+        saldos.ouroAntesPara, para.state.gold,
+        plano.gold
+      );
+      // O ouro já saiu: isto não desfaz nada, só impede a cadeia de seguir
+      // empilhando trocas sobre uma premissa que não se confirmou.
+      if (!saldo.ok) return { ok: false, error: saldo.reason, gold: plano.gold };
+    }
+
+    etapa('');
+    return { ok: true, gold: fecho.gold, mailed: fecho.mailed, heldUntil: fecho.heldUntil };
+  }
+
+  /**
+   * Espera o `trade_push{completed}` de um lado.
+   *
+   * `waitFor('trade_push')` resolve no **primeiro** `trade_push` que chegar, e
+   * antes do `completed` ainda vem um `state` com `settling: true` — medido na
+   * sonda. Então a espera é repetida até o push certo, em vez de aceitar o
+   * primeiro.
+   */
+  async cambioWaitCompleted(client) {
+    for (let i = 0; i < 10; i++) {
+      const push = await client.waitFor('trade_push', 10000);
+      if (!push) return null;
+      if (push.completed) return push.completed;
+      // `closed` e `declined` encerram a troca sem transferir: insistir só
+      // gastaria o timeout.
+      if (push.closed || push.declined) return null;
+    }
+    return null;
+  }
+
+  /**
+   * Põe as duas contas ao alcance uma da outra.
+   *
+   * Mesmo mecanismo do refill: `move_to` e depois observar `world_snapshot` até
+   * a distância cair. Quem anda é quem **dá** o ouro, pela mesma razão de ser
+   * ele quem troca de canal — o destino fica parado.
+   *
+   * A posição só é lida durante `trip`, então o hop abre um `trip` só para
+   * isso. Sem ele, `applyTripPosition` descarta as snapshots e a distância
+   * nunca sairia de nula.
+   */
+  async cambioAproximar(de, para) {
+    de.trip = { pos: null, startedAt: Date.now() };
+    para.trip = { pos: null, startedAt: Date.now() };
+    try {
+      // Uma snapshot de cada lado para ter as duas posições antes de decidir.
+      await Promise.all([
+        de.waitFor('world_snapshot', 5000),
+        para.waitFor('world_snapshot', 5000)
+      ]);
+      const alvo = para.trip && para.trip.pos;
+      const meu = de.trip && de.trip.pos;
+      if (!alvo || !meu) return { ok: false, error: 'cambio.semPosicao' };
+
+      if (Math.hypot(meu.x - alvo.x, meu.y - alvo.y) <= NPC_REACH) return { ok: true };
+
+      de.emitPacket('move_to', { x: alvo.x, y: alvo.y });
+      const chegou = await de.walkTo(alvo);
+      return chegou ? { ok: true } : { ok: false, error: 'cambio.walkFailed' };
+    } finally {
+      de.trip = null;
+      para.trip = null;
+    }
+  }
+
+  getCambioConfig() {
+    return { ...this.cambioConfig, disabled: [...this.cambioConfig.disabled] };
+  }
+
+  getCambioLog() {
+    return this.cambioLog.map(e => ({ ...e }));
+  }
+
+  /**
+   * Restaura o relatório do disco no boot. Junto com ele vem o relógio do
+   * último hop: sem ele, religar o launcher logo depois de uma troca liberaria
+   * a seguinte na hora, furando o intervalo que o usuário escolheu.
+   */
+  setCambioLog(entries, lastAtMs) {
+    this.cambioLog = (Array.isArray(entries) ? entries : [])
+      .slice(0, CAMBIO_LOG_MAX)
+      .map(e => ({ ...e }));
+    if (lastAtMs != null) this.cambioLastAtMs = Math.max(0, Number(lastAtMs) || 0);
+    return this.cambioLog.length;
+  }
+
+  clearCambioLog() {
+    this.cambioLog = [];
+    if (this.cambioLogSink) {
+      try { this.cambioLogSink(this.cambioLog); } catch {}
+    }
+    return true;
+  }
+
+  /** Uma linha no relatório, com teto. Mesma forma do log do sniper. */
+  pushCambioLog(entry) {
+    this.cambioLog.unshift(entry);
+    if (this.cambioLog.length > CAMBIO_LOG_MAX) this.cambioLog.length = CAMBIO_LOG_MAX;
+    if (this.cambioLogSink) {
+      try { this.cambioLogSink(this.cambioLog); } catch {}
+    }
+  }
+
+  /** Liga o laço. `unref` como nos outros: não prende o processo vivo. */
+  startCambioPoll() {
+    if (this.cambioTimer) return false;
+    if (!cambio.isConfigured(this.cambioConfig)) return false;
+    // O tique é fixo e curto; quem decide se já pode trocar é `pollCambio`,
+    // contra `cambioLastAtMs`. Um `setInterval` do tamanho do intervalo faria o
+    // primeiro hop esperar dez minutos depois de ligar.
+    this.cambioTimer = setInterval(() => { this.pollCambio(); }, CAMBIO_TICK_MS);
+    if (this.cambioTimer.unref) this.cambioTimer.unref();
+    this.pollCambio();
+    return true;
+  }
+
+  stopCambioPoll() {
+    if (!this.cambioTimer) return false;
+    clearInterval(this.cambioTimer);
+    this.cambioTimer = null;
+    return true;
+  }
+
+  /**
+   * Troca a configuração do câmbio em quente.
+   *
+   * O laço é religado só se a configuração mudou de estado: desligar e ligar
+   * sem necessidade re-sortearia o jitter e poderia antecipar um hop.
+   */
+  setCambioConfig(raw) {
+    const antes = this.cambioConfig;
+    this.cambioConfig = cambio.normalizeConfig(raw);
+    if (this.cambioConfig.enabled !== antes.enabled) {
+      if (this.cambioConfig.enabled) this.startCambioPoll();
+      else this.stopCambioPoll();
+    }
+    if (this.cambioSink) {
+      try { this.cambioSink(this.cambioConfig, this.cambioLastAtMs); } catch {}
+    }
+    return this.cambioConfig;
+  }
+
+  /** O que a tela do câmbio mostra. */
+  cambioStatus() {
+    const ativos = this.cambioAtivos();
+    const hops = cambio.planCadeia(this.cambioConfig, ativos);
+    const espera = this.cambioWaitMs || this.cambioConfig.intervaloMs;
+    return {
+      config: this.cambioConfig,
+      ativos,
+      hops: hops.map(h => ({
+        de: h.de,
+        para: h.para,
+        // O saldo de cada origem, para a tela dizer qual hop está esperando
+        // acumular e qual já poderia sair.
+        saldo: (this.getClient(h.de) || { state: { gold: 0 } }).state.gold,
+        plano: cambio.planHop(this.cambioConfig, (this.getClient(h.de) || { state: { gold: 0 } }).state.gold)
+      })),
+      busy: this.cambioBusy,
+      etapa: this.cambioStats.etapa,
+      lastAtMs: this.cambioLastAtMs,
+      proximoEmMs: this.cambioLastAtMs
+        ? Math.max(0, this.cambioLastAtMs + espera - Date.now())
+        : 0,
+      stats: this.cambioStats,
+      log: this.cambioLog
+    };
+  }
+
   async assembleParty(indexes) {
     if (this.partyBusy) return { ok: false, error: 'party.busy', members: [] };
 
@@ -3582,9 +5693,19 @@ module.exports = {
   SNIPER_LOG_MAX,
   SNIPER_RESOLVE_MAX,
   SNIPER_LOST_CODES,
+  AUTOSELL_LOG_MAX,
   TRIP_TIMEOUT_MS,
   TRIP_CASES,
+  CAMBIO_CASES,
+  CAMBIO_TICK_MS,
+  CAMBIO_HOP_TIMEOUT_MS,
+  CAMBIO_LOG_MAX,
+  FRIEND_KIND,
+  TRADE_OPS,
   NPC_REACH,
+  BOSS_POLL_MS,
+  BOSS_BACKOFF_MS,
+  BOSS_GAP_MS,
   hunts
 };
 

@@ -26,6 +26,11 @@ const levelingState = () => ({
   hp: 5700,
   maxHp: 6275,
   power: 4297,
+  gold: 1840000,
+  diamonds: 320,
+  xp: 10000,
+  xpToNext: 188317,
+  scene: { id: 'castelo-demonios', kind: 'hunt', channel: 3 },
   hunt: {
     gateId: 'castelo-demonios',
     difficulty: 'normal',
@@ -50,24 +55,63 @@ test('Leveling declara as métricas da caçada, não as do PokeIdle', () => {
   assert.equal(resolved.game, 'leveling-idle');
   assert.ok(!keys.includes('balls'), 'Pokébolas não existem nesse jogo');
   assert.ok(!keys.includes('shinies'));
+  for (const removida of ['streak', 'wave', 'shadows', 'chests']) {
+    assert.ok(!keys.includes(removida), `${removida} saiu do painel`);
+  }
   assert.deepEqual(keys, [
-    'time', 'kills', 'xph', 'goldph', 'streak', 'wave', 'shadows', 'chests', 'bag',
+    'gold', 'diamonds', 'levelEta', 'time', 'kills', 'xph', 'goldph', 'bag',
     'statPoints', 'talentPoints', 'party'
   ]);
 
   const byKey = Object.fromEntries(resolved.columns.map(c => [c.key, c.value]));
+  assert.equal(byKey.gold, '1.8M');
+  assert.equal(byKey.diamonds, '320');
+  // 188317 xp a 376634 xp/h é meia hora.
+  assert.equal(byKey.levelEta, '30m 00s');
   assert.equal(byKey.time, '1h 00m 00s');
   assert.equal(byKey.kills, '248');
   assert.equal(byKey.xph, '377k');
-  assert.equal(byKey.streak, '86 / 36k', 'acima de 10k o formato compacto perde a decimal');
-  assert.equal(byKey.wave, '2 · T31');
-  assert.equal(byKey.shadows, '2 / 6', 'tentativas importam: a extração falha quase sempre');
   assert.equal(byKey.bag, '42 / 120');
   // Sem estado de pontos nem de grupo, as colunas mostram o zero e o "Sozinho"
   // em vez de sumir: elas valem sempre, ao contrário da mochila.
   assert.equal(byKey.statPoints, '0');
   assert.equal(byKey.talentPoints, '0');
   assert.equal(byKey.party, 'Sozinho');
+});
+
+test('sem taxa de xp medida, o prazo cai para o xp que falta', () => {
+  const state = levelingState();
+  state.a.xph = 0;
+  const byKey = Object.fromEntries(metrics.resolve(state).columns.map(c => [c.key, c.value]));
+  assert.equal(byKey.levelEta, '188k xp',
+    'um prazo inventado sem taxa seria pior que nenhum');
+
+  state.xpToNext = 0;
+  const nivelado = Object.fromEntries(metrics.resolve(state).columns.map(c => [c.key, c.value]));
+  assert.equal(nivelado.levelEta, '—');
+});
+
+test('local vira bloco próprio, com o id do servidor virando rótulo', () => {
+  const place = metrics.resolve(levelingState()).location;
+  assert.equal(place.label, 'Caçando em');
+  assert.equal(place.map, 'Castelo Demonios');
+  assert.equal(place.detail, 'Tier 31 · Normal · Canal 3');
+  assert.equal(place.hunting, true);
+});
+
+test('na cidade o local não diz que está caçando', () => {
+  const state = levelingState();
+  state.scene = { id: 'cidade-central', kind: 'city' };
+  const place = metrics.resolve(state).location;
+  assert.equal(place.label, 'Local');
+  assert.equal(place.hunting, false);
+});
+
+test('sem mapa conhecido o bloco de local não aparece', () => {
+  const state = levelingState();
+  state.hunt.gateId = '';
+  state.scene = {};
+  assert.equal(metrics.resolve(state).location, null);
 });
 
 test('pontos de talento separam as árvores em vez de somá-las', () => {

@@ -163,6 +163,49 @@ test('trocar a senha preserva a rota, e o status público esconde a do proxy', (
   assert.equal(store.get(0).proxy, 'http://zed:s3nha@1.2.3.4:9000');
 
   const status = store.getPublicStatus();
-  assert.equal(status.accounts[0].proxy, 'http://zed@1.2.3.4:9000');
+  // A senha vira marca em vez de sumir: apagá-la fazia uma rota completa e uma
+  // rota sem senha ficarem idênticas na tela.
+  assert.equal(status.accounts[0].proxy, 'http://zed:•••@1.2.3.4:9000');
   assert.ok(!JSON.stringify(status).includes('s3nha'), 'senha do proxy não sai do principal');
+});
+
+test('reenviar o campo mascarado preserva a senha do proxy', () => {
+  // O bug: o campo mostrava a rota sem a senha, e "Aplicar rota" sem mexer em
+  // nada gravava essa versão truncada. O proxy então recusava o CONNECT e a
+  // conta falhava com "erro de conexão no WebSocket", sem citar proxy.
+  const store = new LevelingCredentialStore({ filePath: tmpFile(), safeStorage: fakeSafeStorage });
+  store.setProxy(0, '1.2.3.4:9000:zed:s3nha');
+
+  const visto = store.getPublicStatus().accounts[0].proxy;
+  store.setProxy(0, visto);
+
+  assert.equal(store.get(0).proxy, 'http://zed:s3nha@1.2.3.4:9000',
+    'salvar o que estava à vista não pode esvaziar a senha');
+});
+
+test('a senha mascarada não é carregada para outra rota', () => {
+  // Mudar o host é outra rota: levar a senha antiga para ela seria adivinhação,
+  // e um proxy errado que "quase funciona" é pior que um que falha na hora.
+  const store = new LevelingCredentialStore({ filePath: tmpFile(), safeStorage: fakeSafeStorage });
+  store.setProxy(0, '1.2.3.4:9000:zed:s3nha');
+
+  store.setProxy(0, 'http://zed:•••@9.9.9.9:9000');
+  assert.equal(store.get(0).proxy, 'http://zed@9.9.9.9:9000');
+  assert.equal(store.getPublicStatus().accounts[0].proxyIncomplete, true,
+    'e a rota sem senha é denunciada, em vez de falhar calada');
+});
+
+test('rota com usuário e sem senha é sinalizada', () => {
+  // Foi exatamente o estado em que uma conta ficou: mesma rota das outras, só
+  // que sem a senha do proxy, e sem nada na tela que a distinguisse.
+  const store = new LevelingCredentialStore({ filePath: tmpFile(), safeStorage: fakeSafeStorage });
+
+  store.setProxy(0, 'http://zed@1.2.3.4:9000');
+  store.setProxy(1, '1.2.3.4:9000:zed:s3nha');
+  store.setProxy(2, '1.2.3.4:9000');
+
+  const contas = store.getPublicStatus().accounts;
+  assert.equal(contas[0].proxyIncomplete, true, 'usuário sem senha: o proxy recusa');
+  assert.equal(contas[1].proxyIncomplete, false, 'rota completa');
+  assert.equal(contas[2].proxyIncomplete, false, 'rota sem usuário nenhum não exige senha');
 });

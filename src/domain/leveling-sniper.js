@@ -25,9 +25,9 @@
 'use strict';
 
 /** Mínimo e máximo do intervalo de verificação, em milissegundos. */
-const MIN_INTERVAL_MS = 1000;
-const MAX_INTERVAL_MS = 60000;
-const DEFAULT_INTERVAL_MS = 5000;
+const MIN_INTERVAL_MS = 50;
+const MAX_INTERVAL_MS = 1000;
+const DEFAULT_INTERVAL_MS = 1000;
 
 /** Teto de regras. Cada regra é uma busca por tique; a lista é o tráfego. */
 const MAX_RULES = 30;
@@ -97,7 +97,7 @@ function currencyOf(listing) {
 
 /** Configuração vazia: desligada, sem regra nenhuma. */
 function defaultConfig() {
-  return { enabled: false, intervalMs: DEFAULT_INTERVAL_MS, rules: [] };
+  return { enabled: false, intervalMs: DEFAULT_INTERVAL_MS, buyerAccount: 0, rules: [] };
 }
 
 /**
@@ -177,6 +177,7 @@ function normalizeConfig(raw) {
     enabled: !!source.enabled,
     intervalMs: Math.min(MAX_INTERVAL_MS, Math.max(MIN_INTERVAL_MS,
       int(source.intervalMs, DEFAULT_INTERVAL_MS) || DEFAULT_INTERVAL_MS)),
+    buyerAccount: Math.max(0, int(source.buyerAccount, 0)),
     rules: [...porChave.values()]
   };
 }

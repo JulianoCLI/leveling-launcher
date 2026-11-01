@@ -57,13 +57,44 @@ function normalizeProxy(input) {
   return 'http://' + raw;
 }
 
-/** Visão do proxy sem a senha, para mostrar na interface. */
+/**
+ * Marca da senha omitida na visão do proxy.
+ *
+ * Existe para a tela poder **mostrar** que há senha sem revelá-la. Antes a
+ * senha era simplesmente apagada, e o efeito era pior que o segredo exposto:
+ * uma rota correta e uma rota sem senha ficavam idênticas na tela, e reenviar
+ * o que estava à vista gravava um proxy quebrado — que o servidor recusa antes
+ * de qualquer login, sem código de erro que explique.
+ */
+const PROXY_SECRET_MASK = '\u2022\u2022\u2022';
+
+/** O texto veio da tela com a senha mascarada, em vez de uma senha de verdade? */
+function isMaskedProxy(input) {
+  return String(input || '').includes(PROXY_SECRET_MASK);
+}
+
+/** A URL tem usuário mas não tem senha? Quase sempre é colagem incompleta. */
+function proxyMissingPassword(proxy) {
+  if (!proxy) return false;
+  try {
+    const url = new URL(proxy);
+    return !!url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+/** Visão do proxy com a senha mascarada, para mostrar na interface. */
 function describeProxy(proxy) {
   if (!proxy) return '';
   try {
     const url = new URL(proxy);
-    const user = url.username ? decodeURIComponent(url.username) + '@' : '';
-    return `${url.protocol.replace(':', '')}://${user}${url.host}`;
+    if (!url.username) return `${url.protocol.replace(':', '')}://${url.host}`;
+    const user = decodeURIComponent(url.username);
+    // A senha vira marca, não some: é a diferença entre "tem senha" e "não
+    // tem", que é justamente o que distingue a rota boa da quebrada.
+    const secret = url.password ? ':' + PROXY_SECRET_MASK : '';
+    return `${url.protocol.replace(':', '')}://${user}${secret}@${url.host}`;
   } catch {
     return proxy;
   }
@@ -131,7 +162,11 @@ class LevelingCredentialStore {
       // Arquivo corrompido não deve impedir o launcher de abrir.
     }
 
-    this.cache = { accounts };
+    this.cache = { accounts, sniper: emptyAccount() };
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, this.canEncrypt() ? 'utf8' : 'utf8'));
+      if (parsed.sniper) this.cache.sniper = { ...emptyAccount(), ...parsed.sniper };
+    } catch {}
     return this.cache;
   }
 
@@ -146,14 +181,14 @@ class LevelingCredentialStore {
       };
     });
 
-    const json = JSON.stringify({ accounts });
+    const json = JSON.stringify({ accounts, sniper: (data && data.sniper) || emptyAccount() });
     const file = this.getFilePath();
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, this.canEncrypt()
         ? this.safeStorage.encryptString(json)
         : Buffer.from(json, 'utf-8'));
-      this.cache = { accounts };
+       this.cache = { accounts, sniper: (data && data.sniper) || emptyAccount() };
       return true;
     } catch {
       return false;
@@ -203,8 +238,39 @@ class LevelingCredentialStore {
     if (index < 0 || index >= this.maxAccounts) return false;
     const data = this.load();
     const acc = data.accounts[index] || emptyAccount();
-    data.accounts[index] = { ...acc, proxy: normalizeProxy(proxy) };
+    data.accounts[index] = { ...acc, proxy: this.resolveProxy(acc.proxy, proxy) };
     return this.save(data);
+  }
+
+  /**
+   * A rota a gravar, dado o que a tela mandou e o que já estava salvo.
+   *
+   * O campo mostra a senha mascarada, então reenviar o valor à vista — sem
+   * tocar em nada — tem de **preservar** a senha guardada em vez de gravar a
+   * marca como se fosse senha. Era esse o caminho que deixava uma conta sem
+   * senha de proxy e sem nenhum aviso.
+   *
+   * A senha só é mantida se o resto da rota não mudou: trocar de host ou de
+   * usuário é outra rota, e carregar a senha antiga para ela seria adivinhação.
+   */
+  resolveProxy(current, input) {
+    const raw = String(input || '').trim();
+    if (!raw) return '';
+    if (!isMaskedProxy(raw)) return normalizeProxy(raw);
+
+    // Veio mascarado: a senha real é a que está salva, e só vale se for a
+    // mesma rota. Sem par, a marca é removida e a rota fica sem senha — o que
+    // o aviso de `proxyMissingPassword` então denuncia.
+    const semMarca = normalizeProxy(raw.split(PROXY_SECRET_MASK).join(''));
+    try {
+      const nova = new URL(semMarca);
+      const velha = new URL(current || '');
+      if (nova.host === velha.host && nova.username === velha.username && velha.password) {
+        nova.password = velha.password;
+        return nova.toString().replace(/\/$/, '');
+      }
+    } catch {}
+    return semMarca.replace(/:@/, '@');
   }
 
   /** Atualiza só o token de sessão, preservando as credenciais. */
@@ -214,6 +280,14 @@ class LevelingCredentialStore {
     const acc = data.accounts[index] || emptyAccount();
     if (acc.token === (token || '')) return true;
     data.accounts[index] = { ...acc, token: token || '' };
+    return this.save(data);
+  }
+
+  getSniper() { return { ...this.load().sniper }; }
+
+  setSniper(username, password, proxy) {
+    const data = this.load();
+    data.sniper = { username: username || '', password: password || '', token: '', proxy: normalizeProxy(proxy) };
     return this.save(data);
   }
 
@@ -231,8 +305,13 @@ class LevelingCredentialStore {
         username: acc.username,
         hasPassword: !!acc.password,
         hasToken: !!acc.token,
-        proxy: describeProxy(acc.proxy)
-      }))
+        proxy: describeProxy(acc.proxy),
+        // Rota com usuário e sem senha: o proxy recusa a conexão antes de
+        // qualquer login, e a falha chega como erro de WebSocket, sem código
+        // que a explique. A tela avisa em vez de deixar o usuário procurar.
+        proxyIncomplete: proxyMissingPassword(acc.proxy)
+      })),
+      sniper: { username: this.getSniper().username, hasPassword: !!this.getSniper().password, proxy: describeProxy(this.getSniper().proxy) }
     };
   }
 }
@@ -244,5 +323,8 @@ module.exports = {
   levelingCredentials,
   MAX_ACCOUNTS,
   normalizeProxy,
-  describeProxy
+  describeProxy,
+  proxyMissingPassword,
+  isMaskedProxy,
+  PROXY_SECRET_MASK
 };

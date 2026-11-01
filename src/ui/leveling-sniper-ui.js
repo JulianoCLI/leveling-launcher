@@ -89,11 +89,12 @@
 
   const PioSniper = {
     api: null,
-    config: { enabled: false, intervalMs: 5000, rules: [] },
+    config: { enabled: false, intervalMs: 1000, buyerAccount: 0, rules: [] },
     accounts: [],
     log: [],
     stats: null,
-    limits: { minIntervalMs: 1000, maxIntervalMs: 60000, maxRules: 30 },
+    marketAccount: null,
+    limits: { minIntervalMs: 50, maxIntervalMs: 1000, maxRules: 30 },
     /**
      * Itens do catálogo do jogo, para a busca por nome. Começa vazio e nunca
      * é esperado: sem catálogo a tela ainda funciona com regra por nome, e
@@ -168,6 +169,7 @@
       this.accounts = res.accounts || [];
       this.log = res.log || [];
       this.stats = res.stats || null;
+      this.marketAccount = res.marketAccount || null;
       if (res.limits) this.limits = res.limits;
       if (res.exchanges) this.exchanges = res.exchanges;
       // Conta padrão do formulário: a primeira em modo monitor, que é a única
@@ -517,11 +519,7 @@
             <input type="number" id="snTarget" min="0" step="1" value="${escape(d.target)}">
             <small>0 = sem limite</small>
           </label>
-          <label class="sn-field">
-            <span>Conta que compra</span>
-            <select id="snAccount">${this.accountOptions(d.account)}</select>
-            ${this.walletHtml(d.account)}
-          </label>
+          <p class="sn-form-note">A conta compradora é definida acima em <b>Comprar com</b>. Todas as regras usam essa conta.</p>
           <button type="button" id="snAdd" class="primary">Adicionar</button>
         </div>`;
 
@@ -545,22 +543,11 @@
       }
       for (const [id, chave] of [
         ['snMaxGold', 'maxGold'], ['snMaxDiamond', 'maxDiamond'],
-        ['snTarget', 'target'], ['snAccount', 'account']
+        ['snTarget', 'target']
       ]) {
         const campo = document.getElementById(id);
         if (!campo) continue;
         campo.oninput = () => { this.draft[chave] = campo.value; };
-      }
-      // A conta é o único campo que repinta ao mudar: o saldo embaixo dela
-      // tem de acompanhar a escolha, senão diria o ouro da conta anterior.
-      const seletorConta = document.getElementById('snAccount');
-      if (seletorConta) {
-        seletorConta.onchange = () => {
-          this.draft.account = seletorConta.value;
-          this.contaEscolhida = true;
-          this.loadWallets();
-          this.renderForm();
-        };
       }
       for (const botao of host.querySelectorAll('[data-pick]')) {
         botao.onclick = () => this.pick(botao.dataset.pick);
@@ -596,7 +583,6 @@
               <th>Teto unitário</th>
               <th>Alvo</th>
               <th>Comprado</th>
-              <th>Conta</th>
               <th></th>
             </tr>
           </thead>
@@ -619,7 +605,6 @@
                 <td>${alvo}</td>
                 <td class="${cumprido ? 'is-done' : ''}">${num(r.bought)}${
           cumprido ? ' · alvo cumprido' : ''}</td>
-                <td>${escape(this.accountLabel(r.account))}</td>
                 <td class="sn-c-act">
                   <button type="button" data-toggle="${escape(r.id)}">${r.enabled ? 'Pausar' : 'Ligar'}</button>
                   ${cumprido ? `<button type="button" data-reset="${escape(r.id)}">Zerar</button>` : ''}
@@ -680,7 +665,7 @@
         // "—" e "outra pessoa" são respostas diferentes e precisam parecer
         // diferentes: a primeira é "ainda aberto".
         const quem = e.mine
-          ? `<b class="is-ok">eu · ${escape(this.accountLabel(e.account))}</b>`
+          ? `<b class="is-ok">eu · conta selecionada em "Comprar com"</b>`
           : (e.status === 'announced' || e.status === 'unknown'
             ? '<small>—</small>'
             : `<span>${escape(e.buyer || 'outra pessoa')}</span>`);
@@ -728,22 +713,27 @@
             <input type="checkbox" id="snEnabled"${this.config.enabled ? ' checked' : ''}>
             <span>Ligar o sniper</span>
           </label>
-          <label class="sn-field sn-interval">
+           <label class="sn-field sn-interval">
             <span>Verificar a cada</span>
             <select id="snInterval">
-              ${[1000, 2000, 3000, 5000, 10000, 15000, 30000, 60000]
+              ${Array.from({ length: 20 }, (_, i) => (i + 1) * 50)
           .filter(ms => ms >= this.limits.minIntervalMs && ms <= this.limits.maxIntervalMs)
           .map(ms => `<option value="${ms}"${this.config.intervalMs === ms ? ' selected' : ''}>${
             ms < 60000 ? `${ms / 1000} s` : '1 min'}</option>`).join('')}
             </select>
-          </label>
-          <span class="sn-stats">
+           </label>
+           <label class="sn-field sn-buyer-account">
+             <span>Comprar com</span>
+             <select id="snBuyerAccount">${this.accountOptions(this.config.buyerAccount)}</select>
+           </label>
+           <span class="sn-stats">
             ${ligadas} ${ligadas === 1 ? 'regra ativa' : 'regras ativas'} ·
             ${num(s.polls)} ${s.polls === 1 ? 'varredura' : 'varreduras'} ·
             ${num(s.buys)} ${s.buys === 1 ? 'compra' : 'compras'} ·
             gasto 🪙 ${num(s.spentGold)}${s.spentDiamond ? ` · 💎 ${num(s.spentDiamond)}` : ''}
             ${s.running ? '' : ' · <b>parado</b>'}
-          </span>
+           </span>
+           ${this.marketAccountHtml()}
           <button type="button" id="snClear"${this.log.length ? '' : ' disabled'}
             title="O log fica gravado entre sessões; isto apaga tudo e não pode ser desfeito">
             Limpar o log${this.log.length ? ` (${num(this.log.length)})` : ''}
@@ -758,17 +748,61 @@
 
       const chave = document.getElementById('snEnabled');
       if (chave) chave.onchange = () => this.toggleMaster().catch(() => {});
-      const intervalo = document.getElementById('snInterval');
+       const intervalo = document.getElementById('snInterval');
       if (intervalo) {
         intervalo.onchange = () => this.setInterval(Number(intervalo.value)).catch(() => {});
-      }
-      const limpar = document.getElementById('snClear');
-      if (limpar) limpar.onclick = () => this.clearLog().catch(() => {});
+       }
+       const comprador = document.getElementById('snBuyerAccount');
+       if (comprador) comprador.onchange = () => this.setBuyerAccount(Number(comprador.value)).catch(() => {});
+       const limpar = document.getElementById('snClear');
+       if (limpar) limpar.onclick = () => this.clearLog().catch(() => {});
+       const configurar = document.getElementById('snAccountConfig');
+       if (configurar) configurar.onclick = () => this.configureMarketAccount().catch(() => {});
+       const verificarIp = document.getElementById('snAccountIp');
+       if (verificarIp) verificarIp.onclick = () => this.verifyMarketIp().catch(() => {});
 
       if (foco) {
         const volta = document.getElementById(foco);
         if (volta) volta.focus();
       }
+    },
+
+    async setBuyerAccount(account) {
+      if (await this.save({ ...this.config, buyerAccount: account })) this.renderStatus();
+    },
+
+    marketAccountHtml() {
+      const a = this.marketAccount || {};
+      const online = a.connected;
+      return `<span class="sn-market-account ${online ? 'is-online' : 'is-offline'}">
+        Conta Sniper: <b>${online ? 'Online' : 'Offline'}</b>
+        · Proxy: <b>${escape(a.proxy || 'não configurado')}</b>
+        · IP: <b>${escape(a.ip || 'não verificado')}</b>
+        <button type="button" id="snAccountConfig">Configurar conta</button>
+        <button type="button" id="snAccountIp">Verificar IP</button>
+      </span>`;
+    },
+
+    async configureMarketAccount() {
+      const current = await this.api.sniperAccountGet().catch(() => ({}));
+      const username = window.prompt('Usuário da conta Sniper', current.username || '');
+      if (username === null) return;
+      const password = window.prompt('Senha da conta Sniper (vazio mantém a atual)', '');
+      if (password === null) return;
+      const proxy = window.prompt('Proxy (host:porta:usuário:senha)', current.proxy || '');
+      if (proxy === null) return;
+      const res = await this.api.sniperAccountSet(username, password, proxy);
+      if (!res || !res.ok) return this.say('Falha ao salvar a conta Sniper.', true);
+      await this.load();
+      this.say('Conta Sniper salva. Conexão iniciada.');
+    },
+
+    async verifyMarketIp() {
+      const result = await this.api.sniperAccountIp().catch(e => ({ error: e.message }));
+      if (!result || !result.ip) return this.say('Falha ao verificar IP: ' + ((result && result.error) || 'desconhecida'), true);
+      this.marketAccount = { ...(this.marketAccount || {}), connected: true, ip: result.ip };
+      this.renderStatus();
+      this.say('IP do proxy confirmado: ' + result.ip);
     },
 
     say(text, isError) {

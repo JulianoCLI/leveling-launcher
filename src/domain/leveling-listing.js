@@ -45,9 +45,39 @@ const MIN_SAMPLES = 2;
 /** Duração do anúncio, em horas. */
 const LISTING_HOURS = 48;
 
+/**
+ * O escopo de inventário que é o depósito. Mochila é 1; o enum viaja como
+ * número, igual em `inventory_page`.
+ */
+const WAREHOUSE_SCOPE = 3;
+
 const int = (value, fallback = 0) => {
   const n = Math.floor(Number(value));
   return Number.isFinite(n) && n >= 0 ? n : fallback;
+};
+
+/**
+ * Um identificador uint64 do servidor, como **string**.
+ *
+ * `int()` não serve para uid nem para id de anúncio, e a diferença custou um
+ * item: `Number('1962493714927616001')` devolve `...616000`, porque o ponto
+ * flutuante não tem bits para o último dígito. O estrago não é um erro — é um
+ * uid **vizinho que existe**, então o servidor aceita e anuncia outra peça.
+ *
+ * Por isso o uid nunca é convertido para número aqui. Ele atravessa o domínio
+ * como texto e só vira `Long` na borda do codec, onde `uint64()` do serviço
+ * cuida disso. Texto também é a forma em que `inventory_page` o entrega.
+ *
+ * Devolve `''` para qualquer coisa que não seja um inteiro positivo em
+ * decimal: notação científica (`1e21`) e `-1` são recusadas junto com o lixo.
+ */
+const uid64 = value => {
+  const texto = String(value == null ? '' : value).trim();
+  if (!/^\d+$/.test(texto)) return '';
+  // `0` e `000` são ausência de uid, não um uid. Sem zeros à esquerda a
+  // comparação entre o rascunho e o inventário pode ser por igualdade crua.
+  const limpo = texto.replace(/^0+(?=\d)/, '');
+  return limpo === '0' ? '' : limpo;
 };
 
 /** Mediana de uma lista já ordenada. Par devolve a média dos dois do meio. */
@@ -124,23 +154,66 @@ function lotPrice(unitSuggestion, quantity) {
 /**
  * Um item do inventário pode ser anunciado?
  *
- * Três recusas, e cada uma é uma pergunta diferente que a tela precisa
+ * Duas recusas, e cada uma é uma pergunta diferente que a tela precisa
  * responder em vez de simplesmente esconder a linha:
  *
  *   `equipped` está no corpo — o servidor recusa, e o usuário pode querer
  *                tirar e tentar de novo;
- *   `locked`     o próprio usuário trancou dentro do jogo, de propósito;
  *   `no_uid`     linha sem `uid`, que `MarketCreate` exige. Não deve
  *                acontecer, mas uma linha sem uid anunciada às cegas
  *                venderia outro item.
+ *
+ * O cadeado saiu da lista. Ele continua impedindo o `MarketCreate`, mas é
+ * reversível por pedido — `lock_item` destranca — e o usuário pediu que
+ * anunciar destrancasse sozinho. Esconder a linha fazia a aba afirmar que o
+ * item não existia, quando bastava um pedido para ele poder ser vendido. A
+ * marca `locked` segue na linha, para o preparo saber o que destrancar e para
+ * a tela avisar antes de confirmar.
  */
 function sellableReason(item) {
   const it = item || {};
-  if (!int(it.uid)) return 'no_uid';
-  if (it.locked) return 'locked';
+  if (!uid64(it.uid)) return 'no_uid';
   const slot = String(it.equipped_slot || '');
   if (slot && slot !== 'EQUIP_SLOT_UNSPECIFIED') return 'equipped';
   return '';
+}
+
+/**
+ * O que precisa acontecer antes de `MarketCreate` aceitar estes itens.
+ *
+ * Dois estados do inventário recusam o anúncio e ambos são desfazíveis sem o
+ * usuário sair do launcher:
+ *
+ *   trancado   `market.locked` — `lock_item` tira o cadeado;
+ *   depósito   `inventory.item_not_in_bag` — era a recusa que aparecia num
+ *              item que o usuário via na conta: ele existe, só não está na
+ *              mochila. `warehouse_move` o traz.
+ *
+ * O escopo 3 é o depósito; 1 é a mochila. A ordem importa no uso: mover
+ * primeiro, destrancar depois, porque o depósito pode recusar por bolsa
+ * cheia e destrancar o que nem chegou a sair de lá não serviria para nada.
+ */
+function prepareListings(drafts, items) {
+  const porUid = new Map();
+  for (const it of Array.isArray(items) ? items : []) {
+    // `uid64` nos dois lados, não `String()`: um uid que já passou por
+    // `Number` em algum ponto chegaria como `1962493714927616000` e não
+    // casaria com o do inventário — e o efeito do não-casamento é silencioso,
+    // o item simplesmente não é destrancado nem trazido do depósito, e o
+    // `MarketCreate` é recusado sem ninguém saber por quê.
+    const chave = uid64(it && it.uid);
+    if (chave) porUid.set(chave, it);
+  }
+  const unlock = [];
+  const toBag = [];
+  for (const d of Array.isArray(drafts) ? drafts : []) {
+    const uid = uid64(d && d.uid);
+    const it = uid ? porUid.get(uid) : null;
+    if (!it) continue;
+    if (it.locked) unlock.push(uid);
+    if (int(it.scope) === WAREHOUSE_SCOPE) toBag.push(uid);
+  }
+  return { unlock, toBag };
 }
 
 /**
@@ -151,10 +224,15 @@ function sellableReason(item) {
  * então, é o do **pacote**, não o da unidade — e é `unit_price` que
  * `MarketCreate` recebe, então a divisão acontece aqui, uma vez, em vez de em
  * cada lugar que monta o pedido.
+ *
+ * O `uid` sai daqui como **string**. Era `int(source.uid)`, e esse era o
+ * caminho do "anunciei um item e no jogo era outro": uids do servidor passam
+ * de 2^53, e o arredondamento caía num uid vizinho que existe. O serviço já
+ * converte com cuidado na borda do codec, mas recebia o número já estragado.
  */
 function normalizeDraft(raw) {
   const source = raw && typeof raw === 'object' ? raw : {};
-  const uid = int(source.uid);
+  const uid = uid64(source.uid);
   if (!uid) return null;
 
   const quantity = Math.max(1, int(source.quantity, 1));
@@ -178,6 +256,103 @@ function normalizeDraft(raw) {
 }
 
 /**
+ * Separa o que `mine` devolve em "ainda à venda" e "já saiu".
+ *
+ * `MarketListing.status` existe e tem quatro valores — `ACTIVE`, `SOLD`,
+ * `EXPIRED`, `CANCELED` —, mas a aba ignorava o campo e punha tudo em "À
+ * venda agora". O resultado era a confusão relatada: anúncio sem data de
+ * expiração, que é justamente o já fechado, aparecia misturado ao que ainda
+ * está de pé, e a aba "Vendidos" ficava vazia porque ela lia só o banco
+ * local.
+ *
+ * `SOLD` volta como venda, e isso tapa um buraco real do histórico: o banco
+ * local só registra o push `market_push`, que exige o launcher aberto na hora
+ * exata da venda. O servidor sabe das outras, e `mine` as entrega — com
+ * `buyer_name` e `closed_at_ms`, que é tudo o que a tabela de vendidos mostra.
+ *
+ * `EXPIRED` e `CANCELED` não são venda nem anúncio de pé: saem das duas
+ * listas e viram contagem, porque o item voltou para a mochila e o que o
+ * usuário precisa saber é que ele está lá.
+ *
+ * `UNSPECIFIED` conta como ativo. proto3 omite o zero, então um servidor que
+ * não preencha o campo mandaria tudo para o lixo — e sumir com o anúncio de
+ * pé é o pior erro possível aqui.
+ */
+function splitListings(listings) {
+  const active = [];
+  const sold = [];
+  const closed = [];
+  for (const l of Array.isArray(listings) ? listings : []) {
+    if (!l) continue;
+    const status = String(l.status || '');
+    if (status === 'MARKET_STATUS_SOLD') sold.push(l);
+    else if (status === 'MARKET_STATUS_EXPIRED' || status === 'MARKET_STATUS_CANCELED') closed.push(l);
+    else active.push(l);
+  }
+  return { active, sold, closed };
+}
+
+/**
+ * Um anúncio vendido na forma que a tabela de vendidos espera.
+ *
+ * As duas fontes do histórico têm formatos diferentes: o banco local grava o
+ * push com `sold_at_ms`, `net` e `fee`; `mine` devolve um `MarketListing` com
+ * `closed_at_ms` e nenhum líquido — a taxa é do jogo e não vem na mensagem.
+ * Normalizar aqui é o que permite a tabela ter uma linha só.
+ *
+ * `net` fica em zero de propósito quando não se sabe. Estimá-lo pela taxa
+ * daria um número com cara de exato que nenhuma fonte confirmou.
+ */
+function saleFromListing(listing) {
+  const l = listing || {};
+  return {
+    listing_id: String(l.id || ''),
+    def_id: String(l.def_id || ''),
+    name: String(l.name || ''),
+    rarity: String(l.rarity || ''),
+    level: int(l.level),
+    quantity: int(l.quantity, 1),
+    currency: String(l.currency || ''),
+    unit_price: int(l.unit_price),
+    total: int(l.total),
+    /** Desconhecido: `MarketListing` não traz o líquido nem a taxa. */
+    net: 0,
+    fee: 0,
+    buyer_name: String(l.buyer_name || ''),
+    sold_at_ms: int(l.closed_at_ms),
+    /** De onde a linha veio. A tabela precisa poder explicar o líquido vazio. */
+    source: 'server'
+  };
+}
+
+/**
+ * Junta o histórico do banco com o que o servidor ainda lembra.
+ *
+ * Por `listing_id`, e o banco ganha: ele tem o líquido e a taxa reais do
+ * push, enquanto a versão do servidor só sabe o total pedido. Sem a chave —
+ * anúncio sem id — a linha entra assim mesmo, porque perder uma venda é pior
+ * que mostrá-la duas vezes.
+ */
+function mergeSales(local, fromServer) {
+  const out = [];
+  const vistos = new Set();
+  for (const s of Array.isArray(local) ? local : []) {
+    if (!s) continue;
+    const id = String(s.listing_id || '');
+    if (id) vistos.add(id);
+    out.push(s);
+  }
+  for (const s of Array.isArray(fromServer) ? fromServer : []) {
+    if (!s) continue;
+    const id = String(s.listing_id || '');
+    if (id && vistos.has(id)) continue;
+    if (id) vistos.add(id);
+    out.push(s);
+  }
+  return out.sort((a, b) => int(b.sold_at_ms) - int(a.sold_at_ms));
+}
+
+/**
  * A lista de anúncios a confirmar.
  *
  * Separa o que está pronto do que falta preço, porque são dois pedidos
@@ -190,10 +365,11 @@ function planListings(drafts) {
   for (const bruto of Array.isArray(drafts) ? drafts : []) {
     const draft = normalizeDraft(bruto);
     if (!draft) {
+      const uid = uid64(bruto && bruto.uid);
       blocked.push({
-        uid: int(bruto && bruto.uid),
+        uid,
         name: String((bruto && bruto.name) || ''),
-        reason: int(bruto && bruto.uid) ? 'price.missing' : 'no_uid'
+        reason: uid ? 'price.missing' : 'no_uid'
       });
       continue;
     }
@@ -211,11 +387,17 @@ module.exports = {
   suggestPrice,
   lotPrice,
   sellableReason,
+  prepareListings,
+  splitListings,
+  saleFromListing,
+  mergeSales,
   normalizeDraft,
   planListings,
   medianOf,
+  uid64,
   SAMPLE_SIZE,
   OUTLIER_FACTOR,
   MIN_SAMPLES,
-  LISTING_HOURS
+  LISTING_HOURS,
+  WAREHOUSE_SCOPE
 };

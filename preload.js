@@ -71,6 +71,10 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   // vêm do servidor; as vendas, do banco local, porque o servidor não guarda
   // a lista das vendas de uma conta.
   marketMine: (opts) => ipcRenderer.invoke('leveling:market:mine', opts),
+  // Retira um anúncio. Um por chamada e com confirmação na tela: é escrita, e
+  // `toMail` na resposta diz quando o item foi para a caixa em vez da mochila
+  // — sem esse aviso o usuário procura a peça e conclui que ela se perdeu.
+  marketCancel: (payload) => ipcRenderer.invoke('leveling:market:cancel', payload),
   marketWindow: () => ipcRenderer.invoke('leveling:market:window'),
   marketWindowClose: () => ipcRenderer.invoke('leveling:market:window-close'),
   onMarketCatalog: (cb) => ipcRenderer.on('leveling:market-catalog', (_e, data) => cb(data)),
@@ -91,6 +95,9 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   sniperLog: () => ipcRenderer.invoke('leveling:sniper:log'),
   sniperLogClear: () => ipcRenderer.invoke('leveling:sniper:log-clear'),
   sniperWindow: () => ipcRenderer.invoke('leveling:sniper:window'),
+  sniperAccountGet: () => ipcRenderer.invoke('leveling:sniper-account:get'),
+  sniperAccountSet: (username, password, proxy) => ipcRenderer.invoke('leveling:sniper-account:set', username, password, proxy),
+  sniperAccountIp: () => ipcRenderer.invoke('leveling:sniper-account:ip'),
   // Uma linha de log por acontecimento: anunciado, comprado, ou levado por
   // outra pessoa. A tela aberta acompanha sem perguntar.
   onSniper: (cb) => ipcRenderer.on('leveling:sniper', (_e, data) => cb(data)),
@@ -109,6 +116,57 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   expeditionWindow: () => ipcRenderer.invoke('leveling:expedition:window'),
   // Uma coleta ou um envio aconteceu: a janela aberta se atualiza sozinha.
   onExpedition: (cb) => ipcRenderer.on('leveling:expedition', (_e, data) => cb(data)),
+
+  // Auto-boss diário: faz todos os bosses do dia em cada conta, do mais fraco
+  // ao mais forte, e devolve a conta à caçada no fim. `force` relê o estado de
+  // cada conta no servidor; sem ele a resposta usa a última leitura, porque o
+  // estado muda uma vez por dia.
+  bossGet: (opts) => ipcRenderer.invoke('leveling:boss:get', opts),
+  bossSet: (config) => ipcRenderer.invoke('leveling:boss:set', config),
+  // `force` na rodada ignora o dia já feito; o servidor ainda recusa o boss que
+  // já saiu, então forçar nunca gasta a tentativa duas vezes.
+  bossPoll: (opts) => ipcRenderer.invoke('leveling:boss:poll', opts),
+  bossWindow: () => ipcRenderer.invoke('leveling:boss:window'),
+  // Uma rodada de boss terminou numa conta: a janela aberta se atualiza sozinha.
+  onBoss: (cb) => ipcRenderer.on('leveling:boss', (_e, data) => cb(data)),
+
+  // Auto-anunciar: preenche as vagas de anúncio de cada conta com o tesouro da
+  // bolsa e recolhe do correio o ouro das vendas. A configuração inteira vai e
+  // volta junta, como no sniper — e por um motivo a mais: o piso de preço e o
+  // interruptor só fazem sentido juntos, e salvar um sem o outro deixaria o
+  // launcher vendendo com um piso que a tela não está mostrando.
+  autosellGet: () => ipcRenderer.invoke('leveling:autosell:get'),
+  autosellSet: (config) => ipcRenderer.invoke('leveling:autosell:set', config),
+  // Uma rodada agora. É escrita, e o teto de itens por rodada vale aqui igual.
+  autosellPoll: () => ipcRenderer.invoke('leveling:autosell:poll'),
+  // O picker da lista de bloqueio: o que as contas têm na bolsa e que o
+  // auto-anunciar venderia. Sob demanda — é uma varredura de bolsa por conta.
+  autosellCandidates: () => ipcRenderer.invoke('leveling:autosell:candidates'),
+  // Uma caixinha do picker. Canal próprio para não reenviar a configuração
+  // inteira a cada item marcado.
+  autosellBlock: (payload) => ipcRenderer.invoke('leveling:autosell:block', payload),
+  autosellLog: () => ipcRenderer.invoke('leveling:autosell:log'),
+  autosellLogClear: () => ipcRenderer.invoke('leveling:autosell:log-clear'),
+  autosellWindow: () => ipcRenderer.invoke('leveling:autosell:window'),
+  // Cada anúncio ou resgate empurra uma linha: a janela aberta acompanha sem
+  // perguntar.
+  onAutosell: (cb) => ipcRenderer.on('leveling:autosell', (_e, data) => cb(data)),
+
+  // Câmbio: desce o ouro de todas as contas pela cadeia até a que concentra
+  // tudo, uma troca por vez. A configuração inteira vai e volta junta, como nas
+  // outras — aqui com o motivo mais forte da lista: destino, reserva e
+  // intervalo só fazem sentido juntos, e salvar o destino sem a reserva deixaria
+  // o launcher esvaziando contas que o usuário não autorizou esvaziar.
+  cambioGet: () => ipcRenderer.invoke('leveling:cambio:get'),
+  cambioSet: (config) => ipcRenderer.invoke('leveling:cambio:set', config),
+  // Um hop agora, sem esperar o intervalo. Move ouro de verdade; as guardas de
+  // reserva e conferência valem aqui igual.
+  cambioPoll: () => ipcRenderer.invoke('leveling:cambio:poll'),
+  cambioLog: () => ipcRenderer.invoke('leveling:cambio:log'),
+  cambioLogClear: () => ipcRenderer.invoke('leveling:cambio:log-clear'),
+  cambioWindow: () => ipcRenderer.invoke('leveling:cambio:window'),
+  // Cada hop empurra uma linha: a janela aberta acompanha sem perguntar.
+  onCambio: (cb) => ipcRenderer.on('leveling:cambio', (_e, data) => cb(data)),
 
   // O principal envia um lote por janela de tempo; aceitar também o formato
   // avulso mantém `leveling-panel.js` compartilhado com o launcher irmão.

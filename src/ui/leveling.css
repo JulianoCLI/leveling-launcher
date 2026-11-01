@@ -208,6 +208,13 @@
   opacity: .55;
 }
 
+/* Rota com usuário e sem senha: o proxy recusa a conexão, e o erro que chega
+   fala de WebSocket, não de proxy. A borda é o que liga um ao outro. */
+#levelingModal .lv-fields input.is-warn {
+  border-color: var(--color-warning, #d9a441);
+  background: color-mix(in srgb, var(--color-warning, #d9a441) 12%, var(--color-bg-elevated));
+}
+
 #levelingModal .lv-fields button {
   border-radius: 7px;
   padding: 6px 11px;
@@ -2243,29 +2250,36 @@ body.sniper-standalone {
 }
 
 /* ========================================================================
-   AUTO-EXPEDIÇÃO
+   JANELAS DE AUTOMAÇÃO (AUTO-EXPEDIÇÃO, AUTO-BOSS)
 
    Mesma moldura do sniper: janela própria, sem overlay escurecido nem
-   largura máxima. A diferença é o que a tela responde — aqui a pergunta é
-   "quando esta conta volta a ter sombra livre", então a coluna de prazo é a
-   que precisa ser lida de longe e é a única repintada a cada segundo. */
+   largura máxima. Dentro dela as duas telas têm a mesma forma — interruptor
+   e ritmo no topo, uma linha por conta no meio, o log do que aconteceu
+   embaixo —, então as classes são compartilhadas por `.lv-auto` em vez de
+   repetidas por janela: eram seletores idênticos com um `#id` diferente, e
+   um ajuste de espaçamento teria de ser feito duas vezes.
 
-body.expedition-standalone {
+   O que cada tela responde continua sendo o que decide a ênfase. Na
+   expedição é "quando esta conta volta a ter sombra livre"; no boss, "quais
+   bosses saíram hoje". A coluna de prazo é a única repintada a cada segundo
+   nas duas. */
+
+body.lv-auto-standalone {
   margin: 0;
   overflow: hidden;
   background: var(--color-bg-elevated);
 }
 
-#expOverlay {
+.lv-auto-overlay {
   display: none;
   height: 100vh;
 }
 
-#expOverlay.show {
+.lv-auto-overlay.show {
   display: block;
 }
 
-#expModal {
+.lv-auto {
   height: 100vh;
   box-sizing: border-box;
   padding: 16px 18px;
@@ -2277,7 +2291,7 @@ body.expedition-standalone {
   overflow: hidden;
 }
 
-#expModal .lv-head h2 {
+.lv-auto .lv-head h2 {
   color: var(--color-text-primary);
   font-size: 21px;
   display: flex;
@@ -2287,21 +2301,21 @@ body.expedition-standalone {
   font-weight: 700;
 }
 
-#expModal .hint {
+.lv-auto .hint {
   color: var(--color-text-secondary);
   margin: 0 0 10px;
   font-size: 12.5px;
   line-height: 1.45;
 }
 
-#expModal .lv-warn {
+.lv-auto .lv-warn {
   margin: 0 0 4px;
   font-size: 12px;
   line-height: 1.45;
   color: var(--color-warn, #e8b339);
 }
 
-#expModal .xp-section {
+.lv-auto .xp-section {
   margin: 14px 0 6px;
   font-size: 11px;
   font-weight: 700;
@@ -2313,7 +2327,7 @@ body.expedition-standalone {
 
 /* ---------------------------------------------------- interruptor e ritmo */
 
-#expModal #expControls {
+.lv-auto .lv-auto-controls {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -2323,7 +2337,7 @@ body.expedition-standalone {
   flex: 0 0 auto;
 }
 
-#expModal .xp-master {
+.lv-auto .xp-master {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2332,7 +2346,7 @@ body.expedition-standalone {
   cursor: pointer;
 }
 
-#expModal .xp-interval {
+.lv-auto .xp-interval {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2341,7 +2355,7 @@ body.expedition-standalone {
   margin-left: auto;
 }
 
-#expModal .xp-interval input {
+.lv-auto .xp-interval input {
   background: var(--color-bg-input, rgba(0, 0, 0, .25));
   border: 1px solid var(--border-strong);
   color: var(--color-text-primary);
@@ -2352,27 +2366,27 @@ body.expedition-standalone {
   font-variant-numeric: tabular-nums;
 }
 
-#expModal .xp-interval input:focus {
+.lv-auto .xp-interval input:focus {
   outline: 2px solid var(--color-accent);
   outline-offset: 1px;
 }
 
 /* ------------------------------------------------------ tabela de contas */
 
-#expModal #expAccounts {
+.lv-auto .lv-auto-accounts {
   flex: 0 0 auto;
   overflow: auto;
   max-height: 46vh;
   contain: layout paint style;
 }
 
-#expModal .xp-table {
+.lv-auto .xp-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12.5px;
 }
 
-#expModal .xp-table thead th {
+.lv-auto .xp-table thead th {
   position: sticky;
   top: 0;
   z-index: 1;
@@ -2388,7 +2402,7 @@ body.expedition-standalone {
   white-space: nowrap;
 }
 
-#expModal .xp-table td {
+.lv-auto .xp-table td {
   padding: 6px 8px;
   text-align: right;
   /* Prazos e contagens só se comparam entre contas se os dígitos alinharem. */
@@ -2397,24 +2411,24 @@ body.expedition-standalone {
   border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, .05));
 }
 
-#expModal .xp-table th.xp-th-on,
-#expModal .xp-table td.xp-th-on {
+.lv-auto .xp-table th.xp-th-on,
+.lv-auto .xp-table td.xp-th-on {
   text-align: center;
   width: 1%;
   padding-right: 4px;
 }
 
-#expModal .xp-table td.xp-th-on input {
+.lv-auto .xp-table td.xp-th-on input {
   cursor: pointer;
   margin: 0;
 }
 
-#expModal .xp-table th:nth-child(2),
-#expModal .xp-name {
+.lv-auto .xp-table th:nth-child(2),
+.lv-auto .xp-name {
   text-align: left;
 }
 
-#expModal .xp-name {
+.lv-auto .xp-name {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -2427,7 +2441,7 @@ body.expedition-standalone {
 
 /* Bolinha de monitor ligado. Vem acompanhada do texto "monitor desligado" na
    própria linha, para não deixar o estado só na cor. */
-#expModal .xp-dot {
+.lv-auto .xp-dot {
   flex: 0 0 auto;
   width: 7px;
   height: 7px;
@@ -2436,33 +2450,33 @@ body.expedition-standalone {
   opacity: .4;
 }
 
-#expModal .xp-dot.is-on {
+.lv-auto .xp-dot.is-on {
   background: var(--color-ok, #58c470);
   opacity: 1;
 }
 
-#expModal .xp-num {
+.lv-auto .xp-num {
   color: var(--color-text-primary);
 }
 
-#expModal .xp-num.is-ready,
-#expModal .xp-next .is-ready {
+.lv-auto .xp-num.is-ready,
+.lv-auto .xp-next .is-ready {
   color: var(--color-ok, #58c470);
   font-weight: 700;
 }
 
-#expModal .xp-next {
+.lv-auto .xp-next {
   min-width: 150px;
 }
 
 /* Horário de término em segundo plano: o que se lê é quanto falta, o relógio
    serve só para conferir. */
-#expModal .xp-at {
+.lv-auto .xp-at {
   color: var(--color-text-secondary);
   font-size: 11px;
 }
 
-#expModal .xp-vip {
+.lv-auto .xp-vip {
   color: var(--color-accent);
   font-size: 10px;
   font-weight: 700;
@@ -2471,13 +2485,13 @@ body.expedition-standalone {
 
 /* Linha sem dado útil (monitor desligado, lendo, expedição não liberada):
    apagada e à esquerda, porque é frase e não número. */
-#expModal .xp-off {
+.lv-auto .xp-off {
   text-align: left !important;
   color: var(--color-text-secondary);
   font-style: italic;
 }
 
-#expModal .xp-err {
+.lv-auto .xp-err {
   text-align: left !important;
   color: var(--color-warn, #e8b339);
 }
@@ -2485,18 +2499,18 @@ body.expedition-standalone {
 /* ----------------------------------------------------------------- o log */
 
 /* O log leva o espaço que sobra: é a parte que cresce. */
-#expModal #expLog {
+.lv-auto .lv-auto-log {
   flex: 1;
   min-height: 0;
   overflow: auto;
   contain: layout paint style;
 }
 
-#expModal #expLog .hint {
+.lv-auto .lv-auto-log .hint {
   margin: 4px 0;
 }
 
-#expModal .xp-line {
+.lv-auto .xp-line {
   display: flex;
   gap: 10px;
   align-items: baseline;
@@ -2505,33 +2519,124 @@ body.expedition-standalone {
   border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, .05));
 }
 
-#expModal .xp-line.is-err .xp-line-text {
+.lv-auto .xp-line.is-err .xp-line-text {
   color: var(--color-warn, #e8b339);
 }
 
-#expModal .xp-time {
+.lv-auto .xp-time {
   flex: 0 0 auto;
   color: var(--color-text-secondary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
-#expModal .xp-line-acc {
+.lv-auto .xp-line-acc {
   flex: 0 0 auto;
   color: var(--color-text-secondary);
   font-size: 11px;
   min-width: 68px;
 }
 
-#expModal .xp-line-text {
+.lv-auto .xp-line-text {
   color: var(--color-text-primary);
 }
 
-#expModal .lv-status-bar {
+/* ---- lista de bloqueio do auto-anunciar -------------------------------- */
+
+.lv-auto .lv-auto-blocked {
   flex: 0 0 auto;
 }
 
-#expModal .modal-actions {
+/* Os itens barrados, em fichas. Lista curta por natureza — e vista de
+   relance, que é como se confere "o que eu protegi". */
+.lv-auto .lv-auto-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.lv-auto .lv-auto-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 9px;
+  border: 1px solid rgba(255, 190, 90, .35);
+  border-radius: 999px;
+  background: rgba(255, 190, 90, .08);
+  color: #ffd79a;
+  font-size: 12px;
+}
+
+.lv-auto .lv-auto-chip button {
+  border: 0;
+  padding: 0 2px;
+  background: none;
+  color: inherit;
+  opacity: .6;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.lv-auto .lv-auto-chip button:hover {
+  opacity: 1;
+}
+
+.lv-auto .lv-auto-pick-acoes {
+  margin: 6px 0;
+}
+
+.lv-auto .lv-auto-pick-acoes button {
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .05);
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.lv-auto .lv-auto-pick-acoes button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, .1);
+}
+
+.lv-auto .lv-auto-pick-acoes button:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
+/* O picker rola sozinho: a bolsa de oito contas passa de cem itens distintos,
+   e deixá-lo empurrar o relatório para fora da janela esconderia a razão de o
+   usuário ter aberto a tela. */
+.lv-auto .lv-auto-pick {
+  display: block;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.lv-auto .lv-status-bar {
+  flex: 0 0 auto;
+}
+
+/* Falha de escrita na barra. O auto-anunciar é o único destes painéis que
+   vende item, e "não foi possível" tem de se distinguir de "pronto" sem o
+   usuário reler a frase. */
+.lv-auto .lv-status-bar.is-error {
+  color: #ffb4b4;
+  border-color: rgba(255, 110, 110, .35);
+  background: rgba(255, 70, 70, .08);
+}
+
+/* Aviso dentro de uma dica: hoje, "o catálogo ainda não foi lido", que é a
+   causa de uma rodada vazia que parece defeito. */
+.lv-auto .hint.is-warn {
+  color: #ffd79a;
+  border-left: 2px solid rgba(255, 190, 90, .5);
+  padding-left: 8px;
+}
+
+.lv-auto .modal-actions {
   flex: 0 0 auto;
 }
 
@@ -2539,8 +2644,94 @@ body.expedition-standalone {
 
   /* Com a tela estreita o armazém sai primeiro: é informação de folga, não de
      prazo. */
-  #expModal .xp-table th:nth-child(5),
-  #expModal .xp-table td:nth-child(5) {
+  .lv-auto .xp-table th:nth-child(5),
+  .lv-auto .xp-table td:nth-child(5) {
     display: none;
   }
+}
+
+/* ------------------------------------------------------- marcas do boss */
+
+/* Uma marca por boss do dia, na linha da conta.
+
+   Marcas e não nomes porque a pergunta na linha é "quantos e quais sobraram",
+   e cinco nomes de boss em oito contas não cabem na largura. O nome completo
+   e o veredito ficam no `title` de cada marca, e o relatório abaixo diz o
+   resto — a cor nunca é a única informação. */
+
+.lv-auto .xp-bosses {
+  text-align: left !important;
+  white-space: normal;
+  max-width: 180px;
+  line-height: 1.6;
+}
+
+.lv-auto .xp-boss {
+  display: inline-block;
+  min-width: 20px;
+  margin: 0 3px 0 0;
+  padding: 1px 3px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-align: center;
+  cursor: help;
+  border: 1px solid transparent;
+}
+
+.lv-auto .xp-boss.is-done {
+  background: color-mix(in srgb, var(--color-ok, #58c470) 22%, transparent);
+  border-color: color-mix(in srgb, var(--color-ok, #58c470) 55%, transparent);
+  color: var(--color-ok, #58c470);
+}
+
+/* Pendente é o estado que pede ação, então é o que leva a cor de destaque. */
+.lv-auto .xp-boss.is-pending {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  color: var(--color-accent);
+}
+
+/* Fora do nível não é falha nem pendência: é um boss que a conta não deve
+   tentar. Apagado, para não competir com o que ainda pode sair hoje. */
+.lv-auto .xp-boss.is-blocked {
+  border-color: var(--border-subtle, rgba(255, 255, 255, .12));
+  color: var(--color-text-secondary);
+  opacity: .65;
+}
+
+/* --------------------------------------------------- relatório do dia */
+
+/* No log cada boss aparece com o veredito ao lado do nome. O símbolo (✔/✖)
+   vem do próprio texto, então a leitura não depende de distinguir verde de
+   âmbar. */
+
+.lv-auto .xp-boss-ok,
+.lv-auto .xp-boss-fail {
+  display: inline-block;
+  margin-right: 10px;
+  white-space: nowrap;
+}
+
+.lv-auto .xp-boss-ok {
+  color: var(--color-ok, #58c470);
+  font-weight: 600;
+}
+
+.lv-auto .xp-boss-fail {
+  color: var(--color-warn, #e8b339);
+  font-weight: 600;
+  cursor: help;
+}
+
+/* O relatório é a única linha de log que quebra: uma rodada de cinco bosses
+   com tempo e posição não cabe numa linha, e cortar esconderia justamente o
+   que falhou — que costuma vir no fim. */
+.lv-auto .xp-line {
+  flex-wrap: wrap;
+}
+
+.lv-auto .xp-line-text {
+  white-space: normal;
 }

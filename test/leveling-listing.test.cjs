@@ -5,15 +5,28 @@ const {
   suggestPrice,
   lotPrice,
   sellableReason,
+  prepareListings,
+  splitListings,
+  saleFromListing,
+  mergeSales,
   normalizeDraft,
   planListings,
   medianOf,
+  uid64,
   SAMPLE_SIZE,
   OUTLIER_FACTOR
 } = require('../src/domain/leveling-listing');
 
 /** Vendas como o banco entrega: mais recente primeiro. */
 const vendas = (...precos) => precos.map(p => ({ unit_price: p }));
+
+/**
+ * Um uid de item real, acima de 2^53.
+ *
+ * `Number(UID_GRANDE)` devolve `...616000` — um uid vizinho que **existe** no
+ * jogo. Foi esse arredondamento que anunciou a peça errada.
+ */
+const UID_GRANDE = '1962493714927616001';
 
 // ------------------------------------------------------------- mediana
 
@@ -123,8 +136,37 @@ test('item equipado não pode ser anunciado, e o motivo é dito', () => {
   assert.equal(sellableReason({ uid: 1, equipped_slot: 'EQUIP_SLOT_UNSPECIFIED' }), '');
 });
 
-test('item trancado no jogo é respeitado', () => {
-  assert.equal(sellableReason({ uid: 1, locked: true }), 'locked');
+test('item trancado continua anunciável: o cadeado sai no preparo', () => {
+  // O cadeado é desfazível por pedido, e o usuário pediu que anunciar o
+  // tirasse sozinho. Recusar aqui escondia a linha e fazia a aba afirmar que o
+  // item não existia.
+  assert.equal(sellableReason({ uid: 1, locked: true }), '');
+});
+
+test('o preparo lista o que destrancar e o que trazer do depósito', () => {
+  const items = [
+    { uid: '1', locked: true, scope: 1 },
+    { uid: '2', locked: false, scope: 3 },
+    { uid: '3', locked: true, scope: 3 },
+    { uid: '4', locked: false, scope: 1 }
+  ];
+  const p = prepareListings([{ uid: '1' }, { uid: '2' }, { uid: '3' }, { uid: '4' }], items);
+  assert.deepEqual(p.unlock, ['1', '3']);
+  assert.deepEqual(p.toBag, ['2', '3']);
+});
+
+test('o preparo ignora rascunho que não está no inventário lido', () => {
+  // A tela pode estar olhando uma leitura antiga. Mexer no inventário por um
+  // uid que o servidor não confirmou seria agir às cegas.
+  const p = prepareListings([{ uid: '99' }], [{ uid: '1', locked: true, scope: 3 }]);
+  assert.deepEqual(p.unlock, []);
+  assert.deepEqual(p.toBag, []);
+});
+
+test('item já na mochila e destrancado não gera pedido nenhum', () => {
+  const p = prepareListings([{ uid: '4' }], [{ uid: '4', locked: false, scope: 1 }]);
+  assert.deepEqual(p.unlock, []);
+  assert.deepEqual(p.toBag, []);
 });
 
 test('linha sem uid é recusada: MarketCreate exige o uid', () => {
@@ -134,6 +176,130 @@ test('linha sem uid é recusada: MarketCreate exige o uid', () => {
 
 test('item solto e destrancado é vendável', () => {
   assert.equal(sellableReason({ uid: 77, qty: 3 }), '');
+});
+
+// ------------------------------------------------------- precisão do uid
+
+test('o uid atravessa o domínio como texto, sem arredondar', () => {
+  // A conversão para número é o bug: o uid vizinho existe, então o servidor
+  // aceita o anúncio e vende outra peça, sem erro nenhum.
+  assert.equal(uid64(UID_GRANDE), UID_GRANDE);
+  assert.notEqual(uid64(UID_GRANDE), String(Number(UID_GRANDE)));
+
+  // Ausência de uid é ausência, não um uid.
+  assert.equal(uid64(0), '');
+  assert.equal(uid64('000'), '');
+  assert.equal(uid64(''), '');
+  assert.equal(uid64(null), '');
+  assert.equal(uid64(undefined), '');
+  assert.equal(uid64('não é número'), '');
+  assert.equal(uid64(-7), '', 'uid negativo não existe');
+  // Notação científica chega a ter `Number` válido, e é justamente a forma em
+  // que um uid grande já estragado se apresenta.
+  assert.equal(uid64('1e21'), '');
+  // Zeros à esquerda são normalizados para a comparação com o inventário
+  // poder ser por igualdade crua.
+  assert.equal(uid64('007'), '7');
+});
+
+test('o rascunho preserva o uid grande: era o item errado no jogo', () => {
+  const d = normalizeDraft({ uid: UID_GRANDE, quantity: 1, total: 500 });
+  assert.equal(d.uid, UID_GRANDE, 'o uid não pode perder o último dígito');
+  assert.equal(typeof d.uid, 'string', 'número não representa uint64');
+});
+
+test('o preparo casa o uid grande: sem isso o anúncio é recusado', () => {
+  // O não-casamento era silencioso: nada é destrancado, nada vem do depósito,
+  // e o `MarketCreate` volta `market.locked` ou `item_not_in_bag` sem que a
+  // tela saiba que a culpa foi do arredondamento.
+  const items = [{ uid: UID_GRANDE, locked: true, scope: 3 }];
+  const p = prepareListings([{ uid: UID_GRANDE }], items);
+  assert.deepEqual(p.unlock, [UID_GRANDE]);
+  assert.deepEqual(p.toBag, [UID_GRANDE]);
+});
+
+test('o uid vizinho não é confundido com o pedido', () => {
+  // Os dois uids diferem no último dígito, e `Number` os torna iguais. Se o
+  // domínio ainda convertesse, este rascunho mexeria na peça errada.
+  const vizinho = '1962493714927616000';
+  const p = prepareListings([{ uid: UID_GRANDE }], [{ uid: vizinho, locked: true, scope: 3 }]);
+  assert.deepEqual(p.unlock, [], 'o item pedido não está no inventário lido');
+  assert.deepEqual(p.toBag, []);
+});
+
+test('o bloqueio por falta de preço reporta o uid intacto', () => {
+  // O relatório é o que o usuário usa para achar o item no jogo: um uid
+  // arredondado aponta para outra peça.
+  const plano = planListings([{ uid: UID_GRANDE, name: 'Citrino', quantity: 1, total: 0 }]);
+  assert.deepEqual(plano.ready, []);
+  assert.equal(plano.blocked[0].uid, UID_GRANDE);
+  assert.equal(plano.blocked[0].reason, 'price.missing');
+});
+
+// --------------------------------------------------- separação de anúncios
+
+test('anúncio vendido não entra em "à venda agora"', () => {
+  // Era a confusão relatada: `mine` devolve todos os status, e a aba punha
+  // tudo em "À venda agora". O vendido não tem expiração porque já fechou.
+  const r = splitListings([
+    { id: 1, status: 'MARKET_STATUS_ACTIVE' },
+    { id: 2, status: 'MARKET_STATUS_SOLD' }
+  ]);
+  assert.deepEqual(r.active.map(l => l.id), [1]);
+  assert.deepEqual(r.sold.map(l => l.id), [2]);
+});
+
+test('expirado e cancelado não são venda nem anúncio de pé', () => {
+  const r = splitListings([
+    { id: 1, status: 'MARKET_STATUS_EXPIRED' },
+    { id: 2, status: 'MARKET_STATUS_CANCELED' }
+  ]);
+  assert.deepEqual(r.active, []);
+  assert.deepEqual(r.sold, []);
+  assert.equal(r.closed.length, 2);
+});
+
+test('status ausente conta como ativo: proto3 omite o zero', () => {
+  // Sumir com um anúncio de pé é o pior erro possível aqui.
+  const r = splitListings([{ id: 1 }, { id: 2, status: 'MARKET_STATUS_UNSPECIFIED' }]);
+  assert.equal(r.active.length, 2);
+});
+
+test('a venda vinda do servidor admite não saber o líquido', () => {
+  // `MarketListing` não traz taxa nem líquido. Estimá-los daria um número com
+  // cara de exato que nenhuma fonte confirmou.
+  const s = saleFromListing({
+    id: 7, def_id: 'gema-opala', name: 'Opala', quantity: 2,
+    total: 300000, unit_price: 150000, buyer_name: 'alguem', closed_at_ms: 1700
+  });
+  assert.equal(s.listing_id, '7');
+  assert.equal(s.total, 300000);
+  assert.equal(s.net, 0);
+  assert.equal(s.sold_at_ms, 1700);
+  assert.equal(s.source, 'server');
+});
+
+test('a venda do banco ganha da do servidor: ela tem o líquido real', () => {
+  const local = [{ listing_id: '7', total: 300000, net: 285000, sold_at_ms: 1700 }];
+  const servidor = [saleFromListing({ id: 7, total: 300000, closed_at_ms: 1700 })];
+  const r = mergeSales(local, servidor);
+  assert.equal(r.length, 1, 'a mesma venda não pode aparecer duas vezes');
+  assert.equal(r[0].net, 285000);
+});
+
+test('a venda que só o servidor lembra entra no histórico', () => {
+  // O banco só grava o push `market_push`, que exige o launcher aberto na
+  // hora exata. O servidor cobre o buraco.
+  const r = mergeSales(
+    [{ listing_id: '7', sold_at_ms: 100 }],
+    [saleFromListing({ id: 9, closed_at_ms: 500 })]
+  );
+  assert.deepEqual(r.map(s => s.listing_id), ['9', '7'], 'mais recente primeiro');
+});
+
+test('venda sem listing_id entra mesmo assim: perder uma é pior que repetir', () => {
+  const r = mergeSales([], [{ listing_id: '', sold_at_ms: 1 }, { listing_id: '', sold_at_ms: 2 }]);
+  assert.equal(r.length, 2);
 });
 
 // ------------------------------------------------------------- rascunho

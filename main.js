@@ -28,8 +28,21 @@ const levelingRefill = require('./src/domain/leveling-refill');
 const marketDb = require('./src/domain/leveling-market-db');
 const levelingSniper = require('./src/domain/leveling-sniper');
 const levelingExpedition = require('./src/domain/leveling-expedition');
+const levelingBoss = require('./src/domain/leveling-boss');
 const levelingListing = require('./src/domain/leveling-listing');
+const levelingAutosell = require('./src/domain/leveling-autosell');
+const levelingCambio = require('./src/domain/leveling-cambio');
 const { levelingCredentials } = require('./src/domain/leveling-credentials');
+
+/** Conta isolada do sniper: somente leitura do mercado. Segredos vêm do ambiente. */
+function startDedicatedSniperMarketAccount() {
+  const saved = levelingCredentials.getSniper();
+  const username = saved.username || process.env.SNIPER_MARKET_USERNAME || '';
+  const password = saved.password || process.env.SNIPER_MARKET_PASSWORD || '';
+  const proxy = saved.proxy || process.env.SNIPER_MARKET_PROXY || '';
+  if (!username || !password) return;
+  levelingHeadlessManager.start(-1, { username, password, proxy });
+}
 const { createMemoryProbe, parseArgs: parseMemArgs } = require('./src/main/memory-probe');
 
 /** Contas por aba. A aba é a unidade de crescimento do launcher. */
@@ -107,14 +120,23 @@ const defaultPrefs = () => ({
   tabs: 1,
   activeTab: 0,
   /**
-   * Quantos painéis e se sobe em monitor, **por aba**: cada grupo de contas
-   * tende a ter um uso próprio — uma aba de quatro jogando, outra só de
-   * monitores. `panels` e `bootMonitor` na raiz são o padrão de uma aba nova.
+   * Quantos painéis cada aba mostra. É por aba porque cada grupo de contas
+   * tende a ter um uso próprio — uma aba de quatro jogando, outra de uma só.
+   * `panels` na raiz é o padrão de uma aba nova.
    */
   tabPrefs: [],
   keepAwake: false,
   muted: false,
   minToTray: true,
+  /**
+   * Sobe o launcher já em modo monitor, sem instanciar nenhum renderer do jogo
+   * — o item mais caro do processo.
+   *
+   * Vale para o launcher inteiro, não por aba. Por aba era uma pegadinha: o
+   * botão grava só na aba visível, então marcar numa e reiniciar deixava as
+   * outras no modo normal esperando uma visita, que é o oposto do que "no
+   * início" promete.
+   */
   bootMonitor: false,
   /**
    * Auto-refill do monitor headless: uma configuração só, para todas as contas.
@@ -137,7 +159,44 @@ const defaultPrefs = () => ({
    * dentro dela — o que varia entre contas não é a política, é quais contas o
    * usuário quer de fora.
    */
-  expedition: levelingExpedition.defaultConfig()
+  expedition: levelingExpedition.defaultConfig(),
+  /**
+   * Auto-boss diário: faz todos os bosses do dia em cada conta, do mais fraco
+   * ao mais forte, e devolve a conta à caçada no fim.
+   *
+   * Uma configuração para o launcher inteiro, com a lista de contas excluídas
+   * dentro dela, pelo mesmo motivo da expedição. Fica em disco porque o que o
+   * usuário deixou de fora tem de sobreviver a um reinício — o dia já feito,
+   * não: esse vem do servidor em cada leitura.
+   */
+  boss: levelingBoss.defaultConfig(),
+  /**
+   * Auto-anunciar: preenche as vagas de anúncio de cada conta com o tesouro
+   * que ela tem na bolsa, e recolhe do correio o ouro das vendas.
+   *
+   * Fica em disco por dois motivos. A lista de contas excluídas é escolha do
+   * usuário e tem de sobreviver a um reinício, como na expedição e no boss. E
+   * o piso de preço também: ele é o que separa "vendeu bem" de "liquidou o
+   * inventário num dia de despejo", e nascer no padrão depois de um reinício
+   * desfaria um ajuste deliberado.
+   */
+  autosell: levelingAutosell.defaultConfig(),
+  /**
+   * Câmbio: desce o ouro de todas as contas pela cadeia até a que concentra
+   * tudo, uma troca por vez.
+   *
+   * Fica em disco por três motivos, e os três são do usuário: a conta de
+   * destino, a reserva que fica em cada conta, e o intervalo entre trocas.
+   * Nascer no padrão depois de um reinício mandaria o ouro para a conta errada,
+   * que é a única coisa aqui que não tem desfazer.
+   */
+  cambio: levelingCambio.defaultConfig(),
+  /**
+   * Quando o último hop fechou. Não é configuração, é o relógio do intervalo:
+   * sem ele, reiniciar o launcher liberaria um hop na hora, por mais perto que
+   * estivesse do anterior.
+   */
+  cambioLastAtMs: 0
 });
 
 function readPrefs() {
@@ -160,12 +219,18 @@ function normalizePrefs(raw) {
   raw.activeTab = Math.min(raw.tabs - 1, Math.max(0, +raw.activeTab || 0));
 
   const herdado = Array.isArray(raw.tabPrefs) ? raw.tabPrefs : [];
+
+  // `bootMonitor` virou global. Quem já tinha marcado em **alguma** aba herda
+  // o valor ligado: desmarcar sozinho um launcher que subia em monitor seria
+  // uma surpresa pior que a migração.
+  if (herdado.some(tab => tab && tab.bootMonitor)) raw.bootMonitor = true;
+  raw.bootMonitor = !!raw.bootMonitor;
+
   raw.tabPrefs = Array.from({ length: raw.tabs }, (_, t) => {
     const tab = herdado[t] || {};
     const panels = Math.min(ACCOUNTS_PER_TAB, Math.max(1, +tab.panels || +raw.panels || ACCOUNTS_PER_TAB));
     return {
       panels,
-      bootMonitor: tab.bootMonitor === undefined ? !!raw.bootMonitor : !!tab.bootMonitor,
       /** Arranjo da grade. `split` é o de sempre; os outros vieram depois. */
       layout: LAYOUTS.includes(tab.layout) ? tab.layout : 'split',
       /** Painel grande em `focus` e único visível em `solo`. */
@@ -183,6 +248,19 @@ function normalizePrefs(raw) {
   // Não gasta moeda, mas ocupa as sombras do armazém por até 24 h: um
   // `prefs.json` editado à mão não entra em execução sem passar por aqui.
   raw.expedition = levelingExpedition.normalizeConfig(raw.expedition);
+  // Não gasta moeda, mas gasta a tentativa do dia, que não volta até o reset:
+  // um `prefs.json` editado à mão não entra em execução sem passar por aqui.
+  raw.boss = levelingBoss.normalizeConfig(raw.boss);
+  // **Vende** item das contas, e é a única automação daqui cujo erro não tem
+  // desfazer barato: um anúncio comprado não volta. Um `prefs.json` editado à
+  // mão com `floorPct: 1` ou `maxPerRound: 99` passa por aqui antes de
+  // qualquer rodada.
+  raw.autosell = levelingAutosell.normalizeConfig(raw.autosell);
+  // **Move ouro entre contas**, e é a única automação daqui sem desfazer
+  // nenhum: uma troca confirmada não volta. Um `prefs.json` com `reserva: 0` ou
+  // `intervaloMs: 1` passa por aqui antes de qualquer hop.
+  raw.cambio = levelingCambio.normalizeConfig(raw.cambio);
+  raw.cambioLastAtMs = Math.max(0, +raw.cambioLastAtMs || 0);
   return raw;
 }
 
@@ -343,6 +421,9 @@ levelingHeadlessManager.on('refill', data => broadcast('leveling:refill', data))
 // Coleta e envio da auto-expedição. A janela pode estar fechada; quem a abrir
 // depois lê o estado completo por `expedition:get`.
 levelingHeadlessManager.on('expedition', data => broadcast('leveling:expedition', data));
+// Rodada de boss diário de uma conta. Mesma razão do evento de expedição: a
+// janela pode estar fechada, e quem a abrir depois lê tudo por `boss:get`.
+levelingHeadlessManager.on('boss', data => broadcast('leveling:boss', data));
 levelingHeadlessManager.on('error', ({ index, error }) => logErro('headless', `conta ${index}: ${error.message}`));
 // Guardar o token permite reconectar por `resume`, que não gasta tentativa de login.
 levelingHeadlessManager.on('token', ({ index, token }) => levelingCredentials.setToken(index, token));
@@ -391,7 +472,11 @@ levelingHeadlessManager.marketSink = sales => {
  */
 levelingHeadlessManager.marketDb = {
   pendingLevels: (n, ids) => { try { return market().pendingLevels(n, ids); } catch { return []; } },
-  setLevels: linhas => { try { return market().setLevels(linhas); } catch { return 0; } }
+  setLevels: linhas => { try { return market().setLevels(linhas); } catch { return 0; } },
+  // A mediana do auto-anunciar. Sem ela nenhum item tem preço, e a rodada
+  // inteira sai como "sem vendas registradas deste nível" — que é exatamente o
+  // que o relatório mostrava enquanto este método faltava aqui.
+  salesForPricing: (defId, opts) => market().salesForPricing(defId, opts)
 };
 
 function syncMarketPoll() {
@@ -476,6 +561,130 @@ function syncSniperPoll() {
 levelingHeadlessManager.on('status', syncSniperPoll);
 levelingHeadlessManager.on('sniper', data => broadcast('leveling:sniper', data));
 
+// ----------------------------------------------------------- auto-anunciar
+
+/**
+ * Grava a configuração do auto-anunciar.
+ *
+ * Existe pelo mesmo motivo do `sniperSink`, com um detalhe a menos: aqui o
+ * laço não altera a configuração por conta própria — não há contador de
+ * vendidos dentro dela. A gravação acontece quando a tela muda algo, e o
+ * `sink` é o caminho único para isso ir ao disco.
+ */
+levelingHeadlessManager.autosellSink = config => {
+  try {
+    writePrefs({ autosell: config });
+  } catch (e) {
+    logErro('autosell', e.message);
+  }
+};
+
+/**
+ * Relatório do auto-anunciar em disco.
+ *
+ * Mais necessário que o log do sniper: aqui o launcher **vendeu** coisas
+ * enquanto o usuário dormia, e a pergunta da manhã seguinte — "o que ele
+ * anunciou, e por quanto" — é a única forma de auditar o preço. Cada linha
+ * carrega mediana, rival e piso justamente para essa conferência.
+ */
+const AUTOSELL_LOG_FILE = () => path.join(app.getPath('userData'), 'autosell-log.json');
+
+function readAutosellLogFile() {
+  try {
+    const lido = JSON.parse(fs.readFileSync(AUTOSELL_LOG_FILE(), 'utf-8'));
+    return Array.isArray(lido) ? lido : null;
+  } catch {
+    return null;
+  }
+}
+
+levelingHeadlessManager.autosellLogSink = entries => {
+  try {
+    fs.writeFileSync(AUTOSELL_LOG_FILE(), JSON.stringify(entries));
+  } catch (e) {
+    logErro('autosell', e.message);
+  }
+};
+
+/**
+ * Mesma lógica do sniper: escrita de mercado depende do interruptor da tela, e
+ * o status só serve para desligar o laço quando a última conta sai.
+ */
+function syncAutosellPoll() {
+  const cfg = levelingHeadlessManager.getAutosellConfig();
+  const ativa = [...levelingHeadlessManager.clients.values()]
+    .some(c => c && c.status === 'connected');
+  if (ativa && levelingAutosell.isConfigured(cfg)) levelingHeadlessManager.startAutosellPoll();
+  else levelingHeadlessManager.stopAutosellPoll();
+}
+
+levelingHeadlessManager.on('status', syncAutosellPoll);
+levelingHeadlessManager.on('autosell', data => broadcast('leveling:autosell', data));
+
+// ------------------------------------------------------------------- câmbio
+
+/**
+ * Grava a configuração do câmbio **e o relógio do último hop**.
+ *
+ * O segundo argumento é o que diferencia este sink dos outros: a configuração
+ * só muda quando a tela mexe nela, mas `cambioLastAtMs` muda a cada hop, e é o
+ * que faz o intervalo sobreviver a um reinício. Sem gravá-lo, religar o
+ * launcher logo depois de uma troca liberaria a seguinte na hora.
+ */
+levelingHeadlessManager.cambioSink = (config, lastAtMs) => {
+  try {
+    writePrefs({ cambio: config, cambioLastAtMs: Math.max(0, +lastAtMs || 0) });
+  } catch (e) {
+    logErro('cambio', e.message);
+  }
+};
+
+/**
+ * Relatório do câmbio em disco.
+ *
+ * O mais necessário dos três. O launcher **moveu ouro entre contas** enquanto
+ * o usuário dormia, e nada no jogo mostra isso depois: a janela de troca não
+ * guarda histórico. Cada linha traz o par, o valor e os dois saldos justamente
+ * para que a conferência da manhã seguinte seja possível sem o servidor.
+ */
+const CAMBIO_LOG_FILE = () => path.join(app.getPath('userData'), 'cambio-log.json');
+
+function readCambioLogFile() {
+  try {
+    const lido = JSON.parse(fs.readFileSync(CAMBIO_LOG_FILE(), 'utf-8'));
+    return Array.isArray(lido) ? lido : null;
+  } catch {
+    return null;
+  }
+}
+
+levelingHeadlessManager.cambioLogSink = entries => {
+  try {
+    fs.writeFileSync(CAMBIO_LOG_FILE(), JSON.stringify(entries));
+  } catch (e) {
+    logErro('cambio', e.message);
+  }
+};
+
+/**
+ * Mesma lógica do sniper e do auto-anunciar, com um motivo mais forte: um hop
+ * precisa de **duas** contas conectadas ao mesmo tempo, então ligar o laço com
+ * uma conta só acumularia `cambio.semCadeia` de quinze em quinze segundos.
+ */
+function syncCambioPoll() {
+  const cfg = levelingHeadlessManager.cambioConfig;
+  const conectadas = [...levelingHeadlessManager.clients.values()]
+    .filter(c => c && c.status === 'connected').length;
+  if (conectadas >= 2 && levelingCambio.isConfigured(cfg)) {
+    levelingHeadlessManager.startCambioPoll();
+  } else {
+    levelingHeadlessManager.stopCambioPoll();
+  }
+}
+
+levelingHeadlessManager.on('status', syncCambioPoll);
+levelingHeadlessManager.on('cambio', data => broadcast('leveling:cambio', data));
+
 /**
  * Venda da própria conta. O feed público anonimiza vendedor e comprador, então
  * esta é a única via que traz quem comprou. `MarketSold` não tem id de venda
@@ -509,7 +718,10 @@ levelingHeadlessManager.on('market-sold', ({ index, sold }) => {
  *
  * O frame tem de ser o principal: um iframe dentro da página não fala.
  */
-const LAUNCHER_PAGES = ['index.html', 'market.html', 'sniper.html', 'expedition.html'].map(
+const LAUNCHER_PAGES = [
+  'index.html', 'market.html', 'sniper.html', 'expedition.html', 'boss.html', 'autosell.html',
+  'cambio.html'
+].map(
   f => require('url').pathToFileURL(path.join(__dirname, f)).href
 );
 
@@ -991,6 +1203,16 @@ ipcMain.handle('leveling:market:sellable', async (event, opts) => {
  * recusado não pode desfazer nem esconder os quatro que entraram. O resultado
  * vem linha a linha para a tela poder dizer exatamente o que aconteceu com
  * cada item.
+ *
+ * Antes de anunciar, o inventário é posto no estado que o servidor exige. Duas
+ * recusas apareciam em item que o usuário via na conta e não conseguia vender:
+ * `inventory.item_not_in_bag`, de peça guardada no depósito, e `market.locked`,
+ * de peça com cadeado. As duas são desfazíveis por pedido, então o preparo as
+ * desfaz aqui em vez de mandar o usuário ao jogo item por item.
+ *
+ * A ordem é mover e depois destrancar: a volta do depósito pode ser recusada
+ * por bolsa cheia, e destrancar o que não chegou a sair de lá só mexeria no
+ * inventário à toa.
  */
 ipcMain.handle('leveling:market:announce', async (event, payload) => {
   launcherOnly(event);
@@ -1001,6 +1223,29 @@ ipcMain.handle('leveling:market:announce', async (event, payload) => {
   }
 
   const plano = levelingListing.planListings((payload && payload.drafts) || []);
+
+  // O estado real do inventário, relido agora: os rascunhos vêm da tela, e a
+  // tela pode estar olhando uma leitura de minutos atrás.
+  const inv = await client.inventoryItems().catch(() => ({ items: [] }));
+  const preparo = levelingListing.prepareListings(plano.ready, inv.items || []);
+
+  const prepared = { moved: [], refused: [], unlocked: [], failed: [] };
+  if (preparo.toBag.length) {
+    const r = await client.warehouseMove(preparo.toBag, 'bag')
+      .catch(() => ({ moved: [], refused: preparo.toBag }));
+    prepared.moved = r.moved || [];
+    prepared.refused = r.refused || [];
+  }
+  // Só destranca o que de fato está na mochila agora. Uma peça recusada pela
+  // bolsa cheia continua trancada, que é o estado em que o usuário a deixou.
+  const recusados = new Set(prepared.refused.map(String));
+  for (const uid of preparo.unlock) {
+    if (recusados.has(String(uid))) continue;
+    const r = await client.lockItem(uid, false).catch(e => ({ errorCode: e.message }));
+    if (r.errorCode) prepared.failed.push({ uid: String(uid), error: r.errorCode });
+    else prepared.unlocked.push(String(uid));
+  }
+
   const results = [];
   for (const draft of plano.ready) {
     const res = await client.marketCreate(draft).catch(e => ({ errorCode: e.message }));
@@ -1014,7 +1259,7 @@ ipcMain.handle('leveling:market:announce', async (event, payload) => {
       listingId: (res.listing && String(res.listing.id)) || ''
     });
   }
-  return { results, blocked: plano.blocked };
+  return { results, blocked: plano.blocked, prepared };
 });
 
 /**
@@ -1051,18 +1296,54 @@ ipcMain.handle('leveling:market:mine', async (event, opts) => {
       client.marketMine().catch(() => ({ listings: [] })),
       client.marketOverview().catch(() => ({}))
     ]);
+
+    // `mine` devolve os anúncios de todos os status, não só os de pé.
+    // Separá-los é o que impede um anúncio já vendido — sem data de expiração,
+    // porque ele fechou — de aparecer em "À venda agora".
+    const split = levelingListing.splitListings(mine.listings || []);
     contas.push({
       ...conta,
       offline: false,
-      listings: mine.listings || [],
+      listings: split.active,
+      // O que expirou ou foi cancelado não é venda nem anúncio: o item voltou
+      // para a mochila, e a aba só precisa dizer quantos foram.
+      closed: split.closed.length,
       active: mine.active || 0,
       limit: mine.limit || 0,
-      sales: vendas,
+      // O servidor lembra de vendas que o launcher não viu acontecer: ele só
+      // grava o push `market_push`, que exige estar aberto na hora exata.
+      sales: levelingListing.mergeSales(
+        vendas, split.sold.map(levelingListing.saleFromListing)
+      ),
       overview: overview && !overview.errorCode ? overview : null
     });
   }
 
   return { contas, readAtMs: Date.now() };
+});
+
+/**
+ * Retira um anúncio do mercado, a pedido do usuário.
+ *
+ * Escrita, e por isso por anúncio e por conta: não existe "cancelar todos".
+ * Cada linha da aba tem o seu botão e a sua confirmação, porque o item que
+ * volta pode ser o que o usuário queria vender e o anúncio que ele quis tirar
+ * era o vizinho na tabela.
+ *
+ * `toMail` é repassado e importa: com a bolsa cheia o item não volta para o
+ * inventário, vai para a caixa. Sem esse aviso o usuário procura a peça na
+ * mochila, não acha, e conclui que o cancelamento a perdeu.
+ */
+ipcMain.handle('leveling:market:cancel', async (event, payload) => {
+  launcherOnly(event);
+  const index = Number(payload && payload.index) || 0;
+  const id = String((payload && payload.id) || '');
+  const client = levelingHeadlessManager.getClient(index);
+  if (!client || client.status !== 'connected') return { ok: false, error: 'inv.offline' };
+
+  const res = await client.marketCancel(id).catch(e => ({ errorCode: e.message }));
+  if (res.errorCode) return { ok: false, error: res.errorCode };
+  return { ok: true, id: res.id, toMail: !!res.toMail };
 });
 
 /** Saúde do acúmulo: desde quando, quantas vendas, tamanho do arquivo. */
@@ -1154,6 +1435,73 @@ ipcMain.handle('leveling:expedition:poll', async event => {
 });
 
 /**
+ * Estado do auto-boss para a tela. Mesma forma de `expeditionState`, e pelas
+ * mesmas razões: a lista é a das contas **configuradas**, não a dos monitores
+ * ativos — uma conta sem monitor tem de aparecer para poder ser marcada.
+ *
+ * O nível vai junto porque é o que explica um boss fora da fila: "nível 40
+ * exigido, a conta tem 32" é a resposta que a tela precisa dar, e sem o nível
+ * ela só poderia dizer "não deu".
+ */
+async function bossState(force) {
+  const creds = levelingCredentials.getPublicStatus();
+  const report = await levelingHeadlessManager.bossReport({ force });
+  const porIndice = new Map(report.accounts.map(a => [a.index, a]));
+
+  const accounts = (creds.accounts || []).map((entry, index) => {
+    const vivo = porIndice.get(index);
+    return {
+      index,
+      username: (entry && entry.username) || '',
+      name: (vivo && vivo.name) || '',
+      level: (vivo && vivo.level) || 0,
+      connected: !!(vivo && vivo.connected),
+      enabled: !levelingHeadlessManager.getBossConfig().disabled.includes(index),
+      errorCode: (vivo && vivo.errorCode) || '',
+      summary: (vivo && vivo.summary) || null,
+      stats: (vivo && vivo.stats) || null
+    };
+  });
+
+  return {
+    config: levelingHeadlessManager.getBossConfig(),
+    accounts,
+    limits: {
+      minIntervalMs: levelingBoss.MIN_INTERVAL_MS,
+      maxIntervalMs: levelingBoss.MAX_INTERVAL_MS
+    }
+  };
+}
+
+ipcMain.handle('leveling:boss:get', async (event, opts) => {
+  launcherOnly(event);
+  return bossState(!!(opts && opts.force));
+});
+
+ipcMain.handle('leveling:boss:set', async (event, config) => {
+  launcherOnly(event);
+  const saved = writePrefs({ boss: config }).boss;
+  // Aplica nos monitores em execução: o usuário acabou de mexer na janela, e
+  // esperar o próximo login da conta seria inexplicável.
+  levelingHeadlessManager.setBossConfig(saved);
+  return { ok: true, ...(await bossState(false)) };
+});
+
+/**
+ * Uma rodada agora em todas as contas que participam.
+ *
+ * `force` ignora o dia já feito. Existe porque o usuário que equipou a conta
+ * depois de uma rodada fraca quer tentar o que sobrou — e forçar não gasta
+ * tentativa duas vezes: o servidor marca `done_today`, e o boss já feito sai da
+ * fila na própria leitura do estado.
+ */
+ipcMain.handle('leveling:boss:poll', async (event, opts) => {
+  launcherOnly(event);
+  await levelingHeadlessManager.pollBoss({ force: !!(opts && opts.force) });
+  return bossState(false);
+});
+
+/**
  * Estado do sniper para a tela: regras salvas, o log da sessão e quais contas
  * podem pagar.
  *
@@ -1183,11 +1531,33 @@ function sniperAccounts() {
   });
 }
 
+function sniperMarketAccountStatus() {
+  const client = levelingHeadlessManager.getClient(-1);
+  return {
+    connected: !!client && client.status === 'connected',
+    status: client ? client.status : 'disconnected',
+    name: client?.state?.name || '',
+    proxy: client?.proxy ? String(client.proxy).replace(/:\/\/[^@/]+@/, '://***@') : '',
+    configured: !!levelingCredentials.getSniper().username,
+    ip: client?.proxyIpAddress || ''
+  };
+}
+
+ipcMain.handle('leveling:sniper-account:ip', async event => {
+  launcherOnly(event);
+  const client = levelingHeadlessManager.getClient(-1);
+  if (!client) return { ip: '', error: 'Conta Sniper offline.' };
+  const result = await client.proxyPublicIp();
+  if (result.ip) client.proxyIpAddress = result.ip;
+  return result;
+});
+
 ipcMain.handle('leveling:sniper:get', event => {
   launcherOnly(event);
   return {
     config: readPrefs().sniper,
     accounts: sniperAccounts(),
+    marketAccount: sniperMarketAccountStatus(),
     log: levelingHeadlessManager.getSniperLog(),
     stats: levelingHeadlessManager.getSniperStats(),
     limits: {
@@ -1288,6 +1658,210 @@ ipcMain.handle('leveling:sniper:log', event => {
 ipcMain.handle('leveling:sniper:log-clear', event => {
   launcherOnly(event);
   levelingHeadlessManager.clearSniperLog();
+  return { ok: true };
+});
+
+// ----------------------------------------------------------- auto-anunciar
+
+/**
+ * Estado do auto-anunciar para a tela.
+ *
+ * As contas vêm junto, como no sniper, porque a tela tem uma caixinha por
+ * conta — e saber se o monitor daquela conta está conectado importa: uma conta
+ * fora do monitor nunca anuncia, e dizer isso aqui é melhor que deixar o
+ * usuário esperar uma rodada que não vem.
+ *
+ * `catalogReady` existe porque é a causa mais provável de uma rodada vazia que
+ * parece quebrada: sem catálogo nada é classificado, logo nada é anunciado, e
+ * a tela precisa poder dizer "espere o primeiro login" em vez de nada.
+ */
+function autosellState() {
+  const creds = levelingCredentials.getPublicStatus();
+  const catalogo = levelingHeadlessManager.getMarketCatalog();
+  return {
+    config: levelingHeadlessManager.getAutosellConfig(),
+    accounts: (creds.accounts || []).map((entry, index) => {
+      const client = levelingHeadlessManager.getClient(index);
+      return {
+        index,
+        username: (entry && entry.username) || '',
+        name: (client && client.state && client.state.name) || '',
+        connected: !!client && client.status === 'connected'
+      };
+    }),
+    log: levelingHeadlessManager.getAutosellLog(),
+    stats: levelingHeadlessManager.getAutosellStats(),
+    catalogReady: !!(catalogo && catalogo.items),
+    limits: {
+      minIntervalMs: levelingAutosell.MIN_INTERVAL_MS,
+      maxIntervalMs: levelingAutosell.MAX_INTERVAL_MS,
+      maxPerRoundCap: levelingAutosell.MAX_PER_ROUND_CAP
+    }
+  };
+}
+
+ipcMain.handle('leveling:autosell:get', event => {
+  launcherOnly(event);
+  return autosellState();
+});
+
+/**
+ * Salva a configuração e aplica na hora.
+ *
+ * Aplica antes de gravar, e grava o que o serviço aceitou — pelo mesmo motivo
+ * do sniper: o que o serviço normaliza é o que vai rodar, e persistir a cópia
+ * da tela deixaria no disco um valor que nunca foi usado.
+ */
+ipcMain.handle('leveling:autosell:set', (event, config) => {
+  launcherOnly(event);
+  const aplicada = levelingHeadlessManager.setAutosellConfig(config);
+  writePrefs({ autosell: aplicada });
+  syncAutosellPoll();
+  return { ok: true, ...autosellState() };
+});
+
+/**
+ * Uma rodada agora, sem esperar o intervalo.
+ *
+ * É escrita: o botão da tela é o que o usuário aperta para ver o que o laço
+ * faria, e o teto de `maxPerRound` vale aqui igual — não há caminho que
+ * anuncie mais que isso de uma vez.
+ */
+ipcMain.handle('leveling:autosell:poll', async event => {
+  launcherOnly(event);
+  const listed = await levelingHeadlessManager.pollAutosell();
+  return { listed, ...autosellState() };
+});
+
+ipcMain.handle('leveling:autosell:log', event => {
+  launcherOnly(event);
+  return {
+    log: levelingHeadlessManager.getAutosellLog(),
+    stats: levelingHeadlessManager.getAutosellStats()
+  };
+});
+
+/**
+ * O que o auto-anunciar venderia, agregado por item: o picker da lista de
+ * bloqueio.
+ *
+ * Leitura cara (uma varredura de bolsa por conta), então é pedida sob demanda
+ * — ao abrir o picker — e não junto de `autosell:get`, que a tela chama a cada
+ * salvamento.
+ */
+ipcMain.handle('leveling:autosell:candidates', async event => {
+  launcherOnly(event);
+  return levelingHeadlessManager.autosellCandidates();
+});
+
+/**
+ * Liga ou desliga o bloqueio de um item.
+ *
+ * Canal próprio em vez de passar pelo `set` inteiro: o picker mexe numa lista
+ * que pode ter dezenas de linhas, e mandar a configuração completa a cada
+ * caixinha marcada arriscaria sobrescrever um piso de preço que o usuário
+ * acabou de ajustar na outra metade da tela.
+ */
+ipcMain.handle('leveling:autosell:block', (event, payload) => {
+  launcherOnly(event);
+  const defId = String((payload && payload.defId) || '');
+  const bloquear = !!(payload && payload.blocked);
+  const atual = levelingHeadlessManager.getAutosellConfig();
+  const aplicada = levelingHeadlessManager.setAutosellConfig(
+    levelingAutosell.withBlocked(atual, defId, bloquear)
+  );
+  writePrefs({ autosell: aplicada });
+  return { ok: true, config: aplicada };
+});
+
+ipcMain.handle('leveling:autosell:log-clear', event => {
+  launcherOnly(event);
+  levelingHeadlessManager.clearAutosellLog();
+  return { ok: true };
+});
+
+// ------------------------------------------------------------------- câmbio
+
+/**
+ * O que a tela do câmbio precisa saber.
+ *
+ * `limits` vai junto porque os pisos do módulo são a explicação dos campos
+ * travados: a tela mostra "mínimo 100.000" ao lado da reserva em vez de aceitar
+ * um valor e silenciosamente subi-lo.
+ */
+function cambioState() {
+  const creds = levelingCredentials.getPublicStatus();
+  return {
+    ...levelingHeadlessManager.cambioStatus(),
+    // As contas vêm junto, como no auto-anunciar, e aqui são indispensáveis: a
+    // tela precisa nomear a conta de destino e mostrar o saldo de cada uma.
+    // Dizer qual está fora do monitor evita a espera por um hop que não vem —
+    // um hop precisa de **duas** contas conectadas.
+    accounts: (creds.accounts || []).map((entry, index) => {
+      const client = levelingHeadlessManager.getClient(index);
+      return {
+        index,
+        username: (entry && entry.username) || '',
+        name: (client && client.state && client.state.name) || '',
+        gold: (client && client.state && client.state.gold) || 0,
+        connected: !!client && client.status === 'connected'
+      };
+    }),
+    limits: {
+      minReserva: levelingCambio.MIN_RESERVE,
+      minIntervalMs: levelingCambio.MIN_INTERVAL_MS,
+      maxIntervalMs: levelingCambio.MAX_INTERVAL_MS,
+      minAmount: levelingCambio.MIN_AMOUNT
+    }
+  };
+}
+
+ipcMain.handle('leveling:cambio:get', event => {
+  launcherOnly(event);
+  return cambioState();
+});
+
+/**
+ * Salva a configuração e aplica na hora.
+ *
+ * Aplica antes de gravar, e grava o que o serviço aceitou — mesmo motivo do
+ * sniper e do auto-anunciar: o que o serviço normaliza é o que vai rodar, e
+ * persistir a cópia da tela deixaria no disco um valor que nunca foi usado.
+ * Aqui isso pesa mais: a reserva da tela pode vir abaixo do piso.
+ */
+ipcMain.handle('leveling:cambio:set', (event, config) => {
+  launcherOnly(event);
+  const aplicada = levelingHeadlessManager.setCambioConfig(config);
+  writePrefs({ cambio: aplicada });
+  syncCambioPoll();
+  return { ok: true, ...cambioState() };
+});
+
+/**
+ * Um hop agora, sem esperar o intervalo.
+ *
+ * Move ouro de verdade, então é o botão mais perigoso do launcher — mas é
+ * também o único jeito de o usuário ver a cadeia funcionando antes de confiar
+ * nela por uma noite. As mesmas guardas valem: reserva, conferência antes de
+ * travar, e um hop por vez.
+ */
+ipcMain.handle('leveling:cambio:poll', async event => {
+  launcherOnly(event);
+  const resultado = await levelingHeadlessManager.pollCambio();
+  return { resultado, ...cambioState() };
+});
+
+ipcMain.handle('leveling:cambio:log', event => {
+  launcherOnly(event);
+  return {
+    log: levelingHeadlessManager.getCambioLog(),
+    stats: levelingHeadlessManager.cambioStats
+  };
+});
+
+ipcMain.handle('leveling:cambio:log-clear', event => {
+  launcherOnly(event);
+  levelingHeadlessManager.clearCambioLog();
   return { ok: true };
 });
 
@@ -1394,6 +1968,21 @@ function openMarketWindow() {
   marketWindow.on('closed', () => { marketWindow = null; });
   return true;
 }
+
+ipcMain.handle('leveling:sniper-account:get', event => {
+  launcherOnly(event);
+  return levelingCredentials.getPublicStatus().sniper;
+});
+ipcMain.handle('leveling:sniper-account:set', (event, username, password, proxy) => {
+  launcherOnly(event);
+  const old = levelingCredentials.getSniper();
+  const ok = levelingCredentials.setSniper(username, password || old.password, proxy);
+  if (ok) {
+    levelingHeadlessManager.stop(-1);
+    startDedicatedSniperMarketAccount();
+  }
+  return { ok, account: levelingCredentials.getPublicStatus().sniper };
+});
 
 ipcMain.handle('leveling:market:window', event => {
   launcherOnly(event);
@@ -1520,6 +2109,178 @@ ipcMain.handle('leveling:expedition:window', event => {
   return openExpeditionWindow();
 });
 
+/**
+ * Janela do auto-boss. Mesma decisão das outras três: a pergunta desta tela é
+ * "quais bosses saíram hoje em cada conta", e isso se consulta com o jogo na
+ * frente. Como modal ela cobriria os painéis para mostrar um relatório diário.
+ *
+ * Fecha por Esc através de `leveling:market:window-close`, que fecha a janela
+ * do remetente — não a do mercado especificamente.
+ */
+let bossWindow = null;
+
+function openBossWindow() {
+  if (bossWindow && !bossWindow.isDestroyed()) {
+    if (bossWindow.isMinimized()) bossWindow.restore();
+    bossWindow.focus();
+    return true;
+  }
+
+  bossWindow = new BrowserWindow({
+    width: 1000,
+    height: 740,
+    minWidth: 680,
+    minHeight: 440,
+    title: 'Auto-boss diário · Leveling Idle 2D',
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#0b0f14',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      // A contagem até a virada do dia corre na tela de segundo em segundo, e
+      // cada boss terminado empurra uma linha no relatório. Sem isto a janela
+      // em segundo plano juntaria as repinturas.
+      backgroundThrottling: false,
+      spellcheck: false
+    }
+  });
+
+  bossWindow.loadFile(path.join(__dirname, 'boss.html'));
+  bossWindow.once('ready-to-show', () => bossWindow.show());
+
+  bossWindow.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith('file://')) {
+      e.preventDefault();
+      openOutside(url);
+    }
+  });
+  bossWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openOutside(url);
+    return { action: 'deny' };
+  });
+
+  bossWindow.on('closed', () => { bossWindow = null; });
+  return true;
+}
+
+ipcMain.handle('leveling:boss:window', event => {
+  launcherOnly(event);
+  return openBossWindow();
+});
+
+/**
+ * Janela do auto-anunciar. Mesma decisão das outras: a pergunta desta tela —
+ * "o que ele anunciou, por quanto, e com base em qual preço" — se confere com
+ * o jogo na frente, e como modal ela cobriria os painéis.
+ */
+let autosellWindow = null;
+
+function openAutosellWindow() {
+  if (autosellWindow && !autosellWindow.isDestroyed()) {
+    if (autosellWindow.isMinimized()) autosellWindow.restore();
+    autosellWindow.focus();
+    return true;
+  }
+
+  autosellWindow = new BrowserWindow({
+    width: 1060,
+    height: 760,
+    minWidth: 720,
+    minHeight: 460,
+    title: 'Auto-anunciar · Leveling Idle 2D',
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#0b0f14',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      // Cada anúncio empurra uma linha no relatório por evento. Sem isto a
+      // janela em segundo plano juntaria as repinturas e a linha do item que
+      // acabou de ser vendido apareceria minutos depois.
+      backgroundThrottling: false,
+      spellcheck: false
+    }
+  });
+
+  autosellWindow.loadFile(path.join(__dirname, 'autosell.html'));
+  autosellWindow.once('ready-to-show', () => autosellWindow.show());
+
+  autosellWindow.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith('file://')) {
+      e.preventDefault();
+      openOutside(url);
+    }
+  });
+  autosellWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openOutside(url);
+    return { action: 'deny' };
+  });
+
+  autosellWindow.on('closed', () => { autosellWindow = null; });
+  return true;
+}
+
+ipcMain.handle('leveling:autosell:window', event => {
+  launcherOnly(event);
+  return openAutosellWindow();
+});
+
+/**
+ * Janela do câmbio. Mesma decisão das outras, e com o motivo mais forte: a
+ * pergunta desta tela — "quanto saiu de qual conta, e quando" — só se confere
+ * com os saldos do jogo na frente, e como modal ela cobriria exatamente os
+ * painéis que precisam ser lidos.
+ */
+let cambioWindow = null;
+
+function openCambioWindow() {
+  if (cambioWindow && !cambioWindow.isDestroyed()) {
+    if (cambioWindow.isMinimized()) cambioWindow.restore();
+    cambioWindow.focus();
+    return true;
+  }
+
+  cambioWindow = new BrowserWindow({
+    width: 1020,
+    height: 740,
+    minWidth: 720,
+    minHeight: 460,
+    title: 'Câmbio · Leveling Idle 2D',
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#0b0f14',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      // O hop leva segundos e a etapa corrente muda a cada um deles. Com a
+      // repintura estrangulada, a tela mostraria "aproximar" muito depois de a
+      // troca já ter fechado.
+      backgroundThrottling: false,
+      spellcheck: false
+    }
+  });
+
+  cambioWindow.loadFile(path.join(__dirname, 'cambio.html'));
+  cambioWindow.once('ready-to-show', () => cambioWindow.show());
+
+  cambioWindow.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith('file://')) {
+      e.preventDefault();
+      openOutside(url);
+    }
+  });
+  cambioWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openOutside(url);
+    return { action: 'deny' };
+  });
+
+  cambioWindow.on('closed', () => { cambioWindow = null; });
+  return true;
+}
+
+ipcMain.handle('leveling:cambio:window', event => {
+  launcherOnly(event);
+  return openCambioWindow();
+});
+
 ipcMain.handle('leveling:market:window-close', event => {
   launcherOnly(event);
   // Fecha a janela de quem pediu. Vem da própria janela do mercado (Esc), e
@@ -1605,12 +2366,40 @@ function createWindow() {
   // janela abrir, e é justamente o cenário de deixar o launcher recolhendo e
   // reenviando expedições sozinho por horas.
   levelingHeadlessManager.setExpeditionConfig(prefs.expedition);
+  // E para o boss: a rodada é uma por dia, e a janela do auto-boss não fica
+  // aberta. Sem a config valendo no boot, um launcher que subiu em monitor
+  // perderia o dia inteiro esperando alguém abrir a tela.
+  levelingHeadlessManager.setBossConfig(prefs.boss);
   // Repõe o log gravado antes de qualquer tela abrir. Aqui, e não no topo do
   // arquivo, porque `app.getPath('userData')` só é confiável depois do ready —
   // e `sniper:get` responde com este log: sem a reposição a janela diria "o
   // log está vazio" por cima de um arquivo que existe.
   const sniperLogSalvo = readSniperLogFile();
   if (sniperLogSalvo) levelingHeadlessManager.setSniperLog(sniperLogSalvo);
+
+  // E para o auto-anunciar, pelo motivo mais forte da lista: é o único que
+  // **vende** item. Com `bootMonitor` as contas conectam sem nenhuma tela
+  // aberta, e a configuração que vale nesse instante é a que decide o piso de
+  // preço. Subir no padrão por cima de um piso ajustado à mão seria vender
+  // mais barato do que o usuário autorizou.
+  levelingHeadlessManager.setAutosellConfig(prefs.autosell);
+  const autosellLogSalvo = readAutosellLogFile();
+  if (autosellLogSalvo) levelingHeadlessManager.setAutosellLog(autosellLogSalvo);
+
+  // E para o câmbio, que é o fim da escala: ele **move ouro entre contas**, e
+  // uma troca confirmada não volta. A configuração que vale no boot é a que
+  // decide para qual conta o ouro vai — subir no padrão (`destino: 1`) por cima
+  // de uma escolha deliberada mandaria tudo para a conta errada.
+  //
+  // `cambioLastAtMs` entra junto, e não é detalhe: sem ele, um launcher que
+  // reinicia logo depois de um hop liberaria o seguinte na hora, furando o
+  // intervalo inteiro que o usuário escolheu.
+  levelingHeadlessManager.setCambioConfig(prefs.cambio);
+  levelingHeadlessManager.setCambioLog(readCambioLogFile() || [], prefs.cambioLastAtMs);
+  // O laço não parte aqui mesmo com o câmbio ligado: um hop precisa de duas
+  // contas conectadas, e nenhuma está no boot. Quem o liga é o `status` da
+  // segunda conta, via `syncCambioPoll`.
+  syncCambioPoll();
 
   mainWindow = new BrowserWindow({
     width: 1600,
@@ -1738,6 +2527,7 @@ ipcMain.on('leveling:token:set', (event, token) => {
 app.whenReady().then(() => {
   createWindow();
   buildTray();
+  startDedicatedSniperMarketAccount();
 });
 
 app.on('second-instance', showWindow);

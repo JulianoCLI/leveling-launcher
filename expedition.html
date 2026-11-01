@@ -18,9 +18,9 @@
   <link rel="stylesheet" href="src/ui/leveling.css">
 </head>
 
-<body class="expedition-standalone">
-  <div id="expOverlay" class="show">
-    <div id="expModal" role="region" aria-labelledby="expTitle">
+<body class="lv-auto-standalone">
+  <div id="expOverlay" class="lv-auto-overlay show">
+    <div id="expModal" class="lv-auto" role="region" aria-labelledby="expTitle">
       <div class="lv-head">
         <h2><span class="lv-icon" aria-hidden="true">🗡️</span><span id="expTitle">Auto-expedição</span></h2>
       </div>
@@ -34,13 +34,13 @@
         para fundir, equipar nem vender. Só contas em <b>modo monitor</b> participam.
       </div>
 
-      <div id="expControls"></div>
+      <div id="expControls" class="lv-auto-controls"></div>
 
       <h3 class="xp-section">Contas</h3>
-      <div id="expAccounts"></div>
+      <div id="expAccounts" class="lv-auto-accounts"></div>
 
       <h3 class="xp-section">O que aconteceu</h3>
-      <div id="expLog"></div>
+      <div id="expLog" class="lv-auto-log"></div>
 
       <div class="lv-status-bar" id="expStatusBar" role="status" aria-live="polite"></div>
 

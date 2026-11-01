@@ -48,13 +48,15 @@
   let activeTab = 0;
 
   /**
-   * Painéis e boot em monitor valem por aba: um grupo pode estar jogando em
-   * quatro painéis enquanto outro é só monitor. Ler da aba atual é o que faz a
-   * escolha voltar ao trocar de aba.
+   * Quantos painéis e como eles se arranjam valem **por aba**: um grupo pode
+   * estar jogando em quatro painéis enquanto outro usa um só. Ler da aba atual
+   * é o que faz a escolha voltar ao trocar de aba.
+   *
+   * O boot em monitor não está aqui: ele é do launcher inteiro.
    */
   const tabPrefs = t => {
     const list = prefs.tabPrefs || (prefs.tabPrefs = []);
-    if (!list[t]) list[t] = { panels: PER_TAB, bootMonitor: false, layout: 'split', focus: 0 };
+    if (!list[t]) list[t] = { panels: PER_TAB, layout: 'split', focus: 0 };
     const tab = list[t];
     if (!LAYOUTS.includes(tab.layout)) tab.layout = 'split';
     if (!(tab.focus >= 0)) tab.focus = 0;
@@ -195,12 +197,11 @@
 
     buildTabs();
 
-    // A contagem de painéis e o botão de monitor passam a refletir a aba nova.
+    // A contagem de painéis e o arranjo passam a refletir a aba nova. O botão
+    // de monitor não entra aqui: ele é do launcher, e não muda com a aba.
     const tab = tabPrefs(activeTab);
     const count = document.getElementById('panelCount');
     if (count) count.value = String(tab.panels);
-    const bootMonitor = document.getElementById('bootMonitorBtn');
-    if (bootMonitor) bootMonitor.classList.toggle('is-on', !!tab.bootMonitor);
     const layout = document.getElementById('layoutMode');
     if (layout) layout.value = tab.layout;
 
@@ -623,6 +624,36 @@
     api.expeditionWindow().catch(e => report('expedition', e));
   }
 
+  /**
+   * Auto-boss diário. Janela própria pela mesma razão: a tela diz quais bosses
+   * saíram hoje em cada conta, e isso se consulta com o jogo na frente.
+   */
+  function openBoss() {
+    if (!api.bossWindow) return;
+    api.bossWindow().catch(e => report('boss', e));
+  }
+
+  /**
+   * Auto-anunciar. Janela própria, e aqui o motivo é mais forte que nos outros:
+   * é a única automação que **vende** item, e a conferência do preço anunciado
+   * contra o mercado do jogo é exatamente o que um modal sobre os painéis
+   * impediria.
+   */
+  function openAutosell() {
+    if (!api.autosellWindow) return;
+    api.autosellWindow().catch(e => report('autosell', e));
+  }
+
+  /**
+   * Câmbio. Janela própria, com o motivo mais forte da série: é a única
+   * automação que **move ouro entre contas**, e conferir os saldos nos painéis
+   * contra o relatório é exatamente o que um modal cobriria.
+   */
+  function openCambio() {
+    if (!api.cambioWindow) return;
+    api.cambioWindow().catch(e => report('cambio', e));
+  }
+
   // ------------------------------------------------------------------- grupo
 
   /**
@@ -754,6 +785,13 @@
     if (sniperBtn) sniperBtn.onclick = () => openSniper();
     const expeditionBtn = document.getElementById('expeditionBtn');
     if (expeditionBtn) expeditionBtn.onclick = () => openExpedition();
+
+    const bossBtn = document.getElementById('bossBtn');
+    if (bossBtn) bossBtn.onclick = () => openBoss();
+    const autosellBtn = document.getElementById('autosellBtn');
+    if (autosellBtn) autosellBtn.onclick = () => openAutosell();
+    const cambioBtn = document.getElementById('cambioBtn');
+    if (cambioBtn) cambioBtn.onclick = () => openCambio();
     if (marketOverlay) {
       document.getElementById('marketCloseBtn').onclick = closeMarket;
       document.getElementById('marketClose').onclick = closeMarket;
@@ -807,13 +845,15 @@
     const remove = document.getElementById('tabRemove');
     if (remove) remove.onclick = () => setTabCount(tabs - 1).catch(e => report('tabs', e));
 
-    // Abrir já em monitor: nenhum renderer do jogo é criado no boot. Vale por
-    // aba, porque é a aba que define o uso daquele grupo de contas.
+    // Abrir já em monitor: nenhum renderer do jogo é criado no boot. Vale para
+    // o launcher inteiro — por aba, o botão gravava só na aba visível, e as
+    // outras ficavam no modo normal esperando uma visita.
     const bootMonitor = document.getElementById('bootMonitorBtn');
     if (bootMonitor) {
       bootMonitor.onclick = async () => {
-        await saveTabPrefs({ bootMonitor: !tabPrefs(activeTab).bootMonitor });
-        bootMonitor.classList.toggle('is-on', !!tabPrefs(activeTab).bootMonitor);
+        const next = !prefs.bootMonitor;
+        prefs = await api.setPrefs({ bootMonitor: next }).catch(() => prefs);
+        bootMonitor.classList.toggle('is-on', !!prefs.bootMonitor);
       };
     }
 
@@ -836,6 +876,8 @@
     buildTabs();
 
     document.getElementById('awakeBtn').classList.toggle('is-on', !!prefs.keepAwake);
+    const bootBtn = document.getElementById('bootMonitorBtn');
+    if (bootBtn) bootBtn.classList.toggle('is-on', !!prefs.bootMonitor);
 
     // Monitores que já estavam rodando antes do recarregamento da janela. São
     // lidos de todas as abas, não só da visível: eles não param ao trocar de
@@ -859,15 +901,31 @@
     }
 
     // Boot em monitor: liga as contas com credencial sem passar pela WebView.
-    if (tabPrefs(activeTab).bootMonitor) await startMonitors();
+    //
+    // Percorre **todas** as abas, não só a visível. O monitor não depende de
+    // painel pintado — uma conta de aba escondida conecta e farma igual —, e
+    // olhar só a aba ativa deixava as outras esperando uma visita do usuário
+    // para ligar, que é o oposto de "no início".
+    if (prefs.bootMonitor) {
+      for (let t = 0; t < tabs; t++) await startMonitors(t);
+    }
   }
 
-  /** Liga o monitor em todas as contas visíveis que ainda não o têm. */
-  async function startMonitors() {
-    for (const panel of panels) {
-      const index = panel.account;
+  /**
+   * Liga o monitor nas contas de uma aba que ainda não o têm.
+   *
+   * Sem argumento é a aba visível, que é o caso do botão. O recorte é a
+   * contagem de painéis **daquela** aba: painel escondido não deve conectar,
+   * nem na aba que está na tela nem nas outras.
+   */
+  async function startMonitors(tab = activeTab) {
+    const tabConfig = tabPrefs(tab);
+    const total = Math.min(PER_TAB, Math.max(1, +tabConfig.panels || 1));
+
+    for (let slot = 0; slot < total; slot++) {
+      const index = tab * PER_TAB + slot;
       const entry = stateOf(index);
-      if (panel.root.hidden || ACTIVE.has(entry.status)) continue;
+      if (ACTIVE.has(entry.status)) continue;
       const result = await api.levelingStart(index).catch(e => {
         report('leveling:start', e);
         return null;
