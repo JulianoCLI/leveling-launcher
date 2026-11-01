@@ -562,6 +562,25 @@ test('o relógio restaurado do disco segura o primeiro hop depois de um reiníci
   assert.equal(par.manager.cambioLog.length, 1, 'o relatório volta do disco');
 });
 
+test('"Transferir agora" fura o intervalo, mas não as outras guardas', async () => {
+  const par = await bootPar();
+  par.manager.setCambioLog([], Date.now());
+
+  // Sem `force`, o intervalo recém-reiniciado segura o hop.
+  assert.equal(await par.manager.pollCambio(), null);
+  assert.equal(par.manager.cambioStats.lastError, 'cambio.aguardandoIntervalo');
+
+  const parar = serveHop(par);
+  try {
+    const r = await par.manager.pollCambio({ force: true });
+    assert.ok(r, 'o botão tem de furar a espera');
+    assert.equal(r.ok, true, r.error);
+  } finally { parar(); }
+
+  // A reserva continua valendo mesmo forçado: o que o botão pula é o ritmo.
+  assert.equal(par.de.client.state.gold, 100000);
+});
+
 test('relógio antigo não segura nada: o intervalo já venceu', async () => {
   const par = await bootPar();
   par.manager.setCambioLog([], Date.now() - 3600000);

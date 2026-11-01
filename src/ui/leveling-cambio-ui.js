@@ -86,6 +86,9 @@
   const MOTIVOS = {
     'cambio.semCadeia': 'não há cadeia: faltam duas contas conectadas, ou a conta de destino está fora do monitor',
     'cambio.nadaASobrar': 'nenhuma conta passou da reserva ainda',
+    'cambio.aguardandoIntervalo': 'esperando o intervalo entre trocas',
+    'cambio.jaEmTroca': 'já há uma troca em andamento',
+    'cambio.desligado': 'o câmbio está desligado',
     'cambio.abaixoDaReserva': 'o saldo está na reserva ou abaixo dela',
     'cambio.poucoParaValer': 'a sobra é menor que o mínimo por troca',
     'cambio.semTrocaAberta': 'o servidor não abriu a troca',

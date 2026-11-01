@@ -5098,15 +5098,30 @@ class LevelingHeadlessManager extends EventEmitter {
    *
    * Um hop por rodada, de propósito: o pedido é explícito que só pode haver
    * outra troca quando a primeira terminar e o saldo for confirmado.
+   *
+   * `force` é o botão "Transferir agora": ele fura **o intervalo**, e só ele.
+   * Sem isso o botão não teria uso nenhum — o laço já roda de quinze em quinze
+   * segundos, e o que separa um hop do seguinte é justamente a espera. O que
+   * `force` não fura é o resto: um hop por vez, a reserva, a conferência antes
+   * de travar. Essas são as guardas que protegem o ouro, não o ritmo.
    */
-  async pollCambio() {
-    if (this.cambioBusy) return null;
-    if (!this.cambioConfig.enabled) return null;
+  async pollCambio(opts = {}) {
+    if (this.cambioBusy) {
+      this.cambioStats.lastError = 'cambio.jaEmTroca';
+      return null;
+    }
+    if (!this.cambioConfig.enabled) {
+      this.cambioStats.lastError = 'cambio.desligado';
+      return null;
+    }
     // O intervalo entre hops. `cambioWaitMs` guarda o sorteio da espera
     // corrente para que o jitter não seja re-sorteado a cada tique — isso faria
     // a espera efetiva ser sempre a menor que saísse no dado.
     const espera = this.cambioWaitMs || this.cambioConfig.intervaloMs;
-    if (this.cambioLastAtMs && Date.now() - this.cambioLastAtMs < espera) return null;
+    if (!opts.force && this.cambioLastAtMs && Date.now() - this.cambioLastAtMs < espera) {
+      this.cambioStats.lastError = 'cambio.aguardandoIntervalo';
+      return null;
+    }
 
     const hops = cambio.planCadeia(this.cambioConfig, this.cambioAtivos());
     if (!hops.length) {

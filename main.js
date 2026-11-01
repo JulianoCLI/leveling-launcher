@@ -1847,7 +1847,10 @@ ipcMain.handle('leveling:cambio:set', (event, config) => {
  */
 ipcMain.handle('leveling:cambio:poll', async event => {
   launcherOnly(event);
-  const resultado = await levelingHeadlessManager.pollCambio();
+  // `force`: fura o intervalo, e só ele. O laço já roda sozinho — o que o
+  // botão existe para pular é justamente a espera entre um hop e o seguinte.
+  // A reserva, o hop único e a conferência antes de travar continuam valendo.
+  const resultado = await levelingHeadlessManager.pollCambio({ force: true });
   return { resultado, ...cambioState() };
 });
 
