@@ -271,8 +271,12 @@ test('o correio lido separa o que já foi recolhido', async () => {
 
   const promessa = client.mailList();
   await sleep(5);
+  // `page` é 0-based, e o lote é 20. Medido contra o servidor real: o
+  // deslocamento é `page * page_size`, então `page:1, page_size:50` cai depois
+  // do fim de uma caixa de 26 e responde `entries: []` **sem erro** — era o
+  // que escondia as cartas novas, as únicas por recolher.
   assert.deepEqual(ws.sent.find(m => m.mail_request).mail_request,
-    { list: { page: 1, page_size: 50 } });
+    { list: { page_size: 20 } });
 
   ws.reply('mail_request', 'mail_response', {
     page: {

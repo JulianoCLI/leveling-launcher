@@ -371,6 +371,13 @@ diamante, porque isso é recompensa, não venda; nunca as retidas para análise,
 que o servidor recusa antes do prazo. Recompensa de evento, prêmio e item
 guardado de propósito ficam intocados.
 
+A página do correio é **0-based**, e o lote é 20. Medido
+(`tools/mail-probe.js`): o deslocamento é `page * page_size`, então pedir
+`page:1, page_size:50` numa caixa de 26 cai depois do fim e responde
+`entries: []` com o `total` certo e **sem erro nenhum**. Parecia caixa vazia, e
+eram as cartas novas — as únicas por recolher, já que elas ficam todas na
+página zero. Provado com resgate real: 803.694 → 2.530.837.
+
 A leitura é estrangulada em dois minutos por conta — o laço varre a cadeia a
 cada quinze segundos, e sem isso seriam oito leituras por tique para quase
 sempre não achar nada. "Transferir agora" ignora o estrangulamento.

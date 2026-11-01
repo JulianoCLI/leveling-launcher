@@ -130,7 +130,10 @@ test('a rodada recolhe a venda, lê a vaga, precifica pelo nível e anuncia', as
   // 1. Correio primeiro: sem recolher, a vaga do anúncio vendido continua
   // ocupada e o ouro não entra.
   await sleep(5);
-  assert.deepEqual(ws.mails()[0], { list: { page: 1, page_size: 50 } });
+  // `page` é 0-based e o lote é 20: medido contra o servidor real. Pedir
+  // `page:1, page_size:50` caía depois do fim da caixa e voltava vazio **sem
+  // erro**, escondendo as cartas novas — que ficam todas na página zero.
+  assert.deepEqual(ws.mails()[0], { list: { page_size: 20 } });
   ws.reply('mail_request', 'mail_response', {
     page: {
       entries: [

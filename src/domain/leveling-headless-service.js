@@ -338,6 +338,16 @@ const CAMBIO_HOP_TIMEOUT_MS = 45000;
 const CAMBIO_LOG_MAX = 300;
 
 /**
+ * Tamanho de página do correio, e o índice da primeira página é **zero**.
+ *
+ * Medido contra o servidor real (`tools/mail-probe.js`): o deslocamento é
+ * `page * page_size`, então `page:1, page_size:50` cai depois do fim de uma
+ * caixa de 26 e responde `entries: []` **sem erro**. Era o que escondia as
+ * cartas novas, que ficam todas na página zero.
+ */
+const MAIL_PAGE_SIZE = 20;
+
+/**
  * Intervalo mínimo entre duas leituras do correio da mesma conta.
  *
  * O laço varre a cadeia a cada 15 s e lê o correio de cada origem antes de
@@ -3168,9 +3178,17 @@ class LevelingHeadlessClient extends EventEmitter {
    *
    * `kind` é texto livre do servidor, e é ele que separa a venda do resto.
    */
-  async mailList(page = 1) {
+  async mailList(page = 0) {
     const res = await this.request('mail_request', {
-      list: { page: Math.max(1, Math.floor(Number(page) || 1)), page_size: 50 }
+      // **`page` é 0-based.** Medido (`tools/mail-probe.js`, conta 14801, 26
+      // cartas): `page:0` traz as 10 mais novas, `page:1` as 10 seguintes.
+      // Pedir `page:1` pulava a primeira página inteira — que é exatamente
+      // onde ficam as cartas novas, as únicas por recolher.
+      //
+      // O sintoma disfarçava: `page:1, page_size:50` devolvia `entries: []`
+      // com `total: 26` e **sem erro**, porque o deslocamento (50) passa do
+      // fim. Parecia caixa vazia; eram 314.994 de ouro parados.
+      list: { page: Math.max(0, Math.floor(Number(page) || 0)), page_size: MAIL_PAGE_SIZE }
     }).catch(e => ({ caseName: 'error', value: { code: e.message } }));
     if (res.caseName === 'error') {
       return { errorCode: (res.value && res.value.code) || 'mail.failed', entries: [] };
