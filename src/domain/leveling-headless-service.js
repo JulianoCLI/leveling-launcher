@@ -5399,6 +5399,20 @@ class LevelingHeadlessManager extends EventEmitter {
       try { this.cambioSink(this.cambioConfig, this.cambioLastAtMs); } catch {}
     }
 
+    // Correio das duas contas, **depois** do hop.
+    //
+    // Na origem, porque uma venda pode ter fechado durante os segundos da
+    // troca: sem isto esse ouro esperaria o hop seguinte, que é dez minutos
+    // depois. No destino, porque é ele que vai doar no hop de baixo — a conta
+    // 8 que acabou de receber da 9 é a origem do 8→7, e chegar lá com ouro
+    // parado na caixa faria a cadeia descer menos do que a conta tem.
+    //
+    // Fora do `finally` e depois de a trava cair: é leitura de rede, não
+    // limpeza, e nada aqui pode atrasar a devolução das contas à caçada. Falha
+    // é engolida de propósito — o hop já aconteceu e já foi conferido.
+    await this.cambioCorreio(de, true).catch(() => 0);
+    await this.cambioCorreio(para, true).catch(() => 0);
+
     this.emit('cambio', {
       ok: !!resultado.ok,
       de: hop.de,

@@ -378,6 +378,12 @@ A página do correio é **0-based**, e o lote é 20. Medido
 eram as cartas novas — as únicas por recolher, já que elas ficam todas na
 página zero. Provado com resgate real: 803.694 → 2.530.837.
 
+Logo **depois** do hop as duas contas são lidas de novo. Na origem, porque uma
+venda pode ter fechado durante os segundos da troca — sem isso esse ouro
+esperaria o hop seguinte, dez minutos depois. No destino, porque ele é a origem
+do hop de baixo: a conta 8 que acabou de receber da 9 é quem doa no 8 → 7, e
+chegar lá com ouro parado na caixa faria a cadeia descer menos do que ela tem.
+
 A leitura é estrangulada em dois minutos por conta — o laço varre a cadeia a
 cada quinze segundos, e sem isso seriam oito leituras por tique para quase
 sempre não achar nada. "Transferir agora" ignora o estrangulamento.

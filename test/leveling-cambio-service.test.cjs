@@ -196,13 +196,25 @@ function serveHop(par, opts = {}) {
     // ---------------------------------------------------------- correio
     // O hop lê o correio da origem antes de planejar: ouro de venda de mercado
     // fica parado ali e não entra no saldo sozinho.
+    // O destino também é lido, depois do hop: ele é a origem do hop de baixo.
+    while (para.ws.pending('mail_request')) {
+      const pedido = para.ws.pending('mail_request');
+      para.ws.reply('mail_request', 'mail_response', pedido.list
+        ? { page: { entries: [] } }
+        : { claimed: { claimed: [], gold: 0 } });
+    }
+
     while (de.ws.pending('mail_request')) {
       const pedido = de.ws.pending('mail_request');
       if (pedido.list) {
+        // A caixa esvazia depois do resgate, como no servidor real: o hop lê o
+        // correio antes de planejar **e** de novo depois de fechar, e servir a
+        // mesma carta duas vezes contaria o ouro em dobro.
         de.ws.reply('mail_request', 'mail_response', {
-          page: { entries: opts.correio || [], total: (opts.correio || []).length }
+          page: { entries: feito.correio ? [] : (opts.correio || []) }
         });
       } else {
+        feito.correio = true;
         de.ws.reply('mail_request', 'mail_response', {
           claimed: { claimed: [String(pedido.claim.id)], gold: opts.correioOuro || 0 }
         });
@@ -427,6 +439,24 @@ test('o ouro do correio entra no saldo antes de o hop ser planejado', async () =
   const correio = par.manager.cambioLog.find(l => l.correio);
   assert.ok(correio, 'o resgate tem de aparecer no relatório');
   assert.equal(correio.gold, 480000);
+});
+
+test('depois do hop o correio das duas contas é lido de novo', async () => {
+  // A conta que acabou de receber é a origem do hop de baixo: chegar lá com
+  // ouro parado na caixa faria a cadeia descer menos do que ela tem. E na
+  // origem, uma venda pode ter fechado durante os segundos da troca.
+  const par = await bootPar();
+  const parar = serveHop(par);
+  try {
+    const r = await par.manager.pollCambio();
+    assert.equal(r.ok, true, r.error);
+  } finally { parar(); }
+
+  const lista = ws => ws.sent.filter(m => m.mail_request && m.mail_request.list).length;
+  // Origem: uma antes de planejar, uma depois de fechar.
+  assert.equal(lista(par.de.ws), 2);
+  // Destino: só a de depois — ele não doa neste hop.
+  assert.equal(lista(par.para.ws), 1);
 });
 
 test('correio só com item não é tocado, e o hop usa só o saldo', async () => {
