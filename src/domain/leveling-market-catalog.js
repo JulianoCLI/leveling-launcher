@@ -114,7 +114,12 @@ function readMarketCatalog(value) {
     rarities[id] = {
       name: str(r.name) || id,
       color: str(r.color),
-      order: Number(r.order) || 0
+      order: Number(r.order) || 0,
+      // `RarityDef.stat_mult` e o que deixa a auto-forja estimar o ganho de um
+      // degrau sem forjar antes: a peca que sai da fusao ainda nao existe, e
+      // sem este numero nao ha com o que comparar a equipada. Zero significa
+      // ausente, e a forja trata ausencia com a politica permissiva.
+      statMult: Number(r.stat_mult) || 0
     };
   }
 
@@ -155,10 +160,66 @@ function readMarketCatalog(value) {
     rarities,
     shadowRanks,
     monsters,
+    fusion: readFusionRules(safe.fusion),
     origin: ASSET_ORIGIN,
     version: str(safe.version),
     readAtMs: Date.now()
   };
+}
+
+/**
+ * Regras de fusão e desmonte, para a auto-forja.
+ *
+ * Entram neste recorte, e não num módulo próprio, porque a auto-forja já
+ * depende de `rarities` (a `order` é o que diz qual raridade é mais alta) e de
+ * `items` (o `slot` de cada `def_id`, que `ItemInstance` só traz quando a peça
+ * está no corpo). Guardá-las em outro lugar faria duas leituras do mesmo
+ * catálogo de 1 MB para montar uma única decisão.
+ *
+ * Os mapas por raridade vêm como `map<string,double>` e são copiados chave a
+ * chave: a referência do catálogo não pode ficar retida, pelo mesmo motivo do
+ * resto deste arquivo.
+ *
+ * Devolve `null` sem `fusion_inputs`. É o campo que diz quantas peças uma
+ * fusão come, e um recorte sem ele faria a auto-forja chutar — num gasto de
+ * peças que não voltam.
+ */
+function readFusionRules(value) {
+  if (!value) return null;
+  const inputs = Number(value.fusion_inputs) || 0;
+  if (inputs <= 0) return null;
+
+  const mapa = src => {
+    const out = {};
+    for (const [k, v] of Object.entries(src && typeof src === 'object' ? src : {})) {
+      const n = Number(v);
+      if (Number.isFinite(n)) out[k] = n;
+    }
+    return out;
+  };
+
+  const linha = {
+    fusionInputs: inputs,
+    swapInputs: Number(value.swap_inputs) || 0,
+    dustItemId: str(value.dust_item_id),
+    coreItemId: str(value.core_item_id),
+    dustPerRarity: mapa(value.dust_per_rarity),
+    fusionDustCost: mapa(value.fusion_dust_cost),
+    fusionGoldKills: mapa(value.fusion_gold_kills),
+    swapDustCost: mapa(value.swap_dust_cost),
+    swapGoldKills: mapa(value.swap_gold_kills),
+    dismantleStones: mapa(value.dismantle_stones)
+  };
+
+  // Os slots que a fusão aceita como saída. Vazio significa "todos": o campo é
+  // `repeated` e proto3 não distingue ausente de vazio, então uma lista vazia
+  // não pode ser lida como "nenhum" — seria recusar toda fusão.
+  const slots = (Array.isArray(value.output_slots) ? value.output_slots : [])
+    .map(s => enumTail(s, 'EQUIP_SLOT_'))
+    .filter(Boolean);
+  if (slots.length) linha.outputSlots = slots;
+
+  return linha;
 }
 
 /** Tem conteúdo suficiente para valer a pena guardar? */
@@ -168,6 +229,7 @@ function hasCatalog(cat) {
 
 module.exports = {
   readMarketCatalog,
+  readFusionRules,
   hasCatalog,
   iconPath,
   ASSET_ORIGIN,

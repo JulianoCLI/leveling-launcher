@@ -307,6 +307,44 @@ test('recolher sem id não gera tráfego nenhum', async () => {
   client.disconnect();
 });
 
+test('recolher todo o correio percorre todas as páginas e inclui qualquer recompensa', async () => {
+  const { client, ws } = await conectado();
+
+  const promessa = client.mailClaimAll();
+  await sleep(5);
+  ws.reply('mail_request', 'mail_response', {
+    page: {
+      entries: Array.from({ length: 20 }, (_, i) => ({
+        id: i + 1, kind: 'reward', claimed_at_ms: 0
+      })),
+      unclaimed: 21, total: 21
+    }
+  });
+  await sleep(5);
+  ws.reply('mail_request', 'mail_response', {
+    page: {
+      entries: [{ id: 21, kind: 'reward', diamonds: 5, claimed_at_ms: 0 }],
+      unclaimed: 21, total: 21
+    }
+  });
+
+  // A lista da página 1 vem antes dos claims: assim a segunda página não some
+  // quando o resgate da primeira desloca as entradas.
+  await sleep(5);
+  for (let id = 1; id <= 21; id++) {
+    ws.reply('mail_request', 'mail_response', {
+      claimed: { claimed: [id], items: id === 21 ? 1 : 0 }
+    });
+    await sleep(1);
+  }
+
+  const res = await promessa;
+  assert.equal(res.claimed.length, 21);
+  assert.equal(res.items, 1);
+  assert.equal(ws.sent.some(m => m.mail_request && m.mail_request.claim_all), false);
+  client.disconnect();
+});
+
 // ----------------------------------------------------------- precisão uint64
 
 /**

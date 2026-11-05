@@ -25,7 +25,7 @@
 
   const PER_TAB = 4;
   const MAX_TABS = 16;
-  const LAYOUTS = ['split', 'focus', 'solo', 'cols', 'rows'];
+  const LAYOUTS = ['focus', 'solo', 'cols'];
   const api = window.pokeAPI;
   const ACTIVE = new Set(['connecting', 'connected', 'reconnecting']);
 
@@ -46,6 +46,7 @@
   let prefs = { panels: 4, tabs: 1, activeTab: 0, tabPrefs: [], keepAwake: false };
   let tabs = 1;
   let activeTab = 0;
+  let closeAutomationMenu = () => {};
 
   /**
    * Quantos painéis e como eles se arranjam valem **por aba**: um grupo pode
@@ -56,9 +57,9 @@
    */
   const tabPrefs = t => {
     const list = prefs.tabPrefs || (prefs.tabPrefs = []);
-    if (!list[t]) list[t] = { panels: PER_TAB, layout: 'split', focus: 0 };
+    if (!list[t]) list[t] = { panels: PER_TAB, layout: 'cols', focus: 0 };
     const tab = list[t];
-    if (!LAYOUTS.includes(tab.layout)) tab.layout = 'split';
+    if (tab.layout === 'split' || tab.layout === 'rows' || !LAYOUTS.includes(tab.layout)) tab.layout = 'cols';
     if (!(tab.focus >= 0)) tab.focus = 0;
     return tab;
   };
@@ -114,7 +115,8 @@
         <div class="panel-head">
           <span class="panel-title" data-role="title">Conta ${i + 1}</span>
           <span class="panel-who" data-role="who"></span>
-          <button type="button" data-role="focus" title="Destacar este painel (tela cheia ou painel grande)">⤢</button>
+          <button type="button" data-role="focus" title="Deixar este painel grande, com os demais ao lado">▣</button>
+          <button type="button" data-role="solo" title="Deixar este painel em tela cheia">⛶</button>
           <button type="button" data-role="reload" title="Recarregar o jogo neste painel">⟳</button>
           <button type="button" data-role="hunt" title="Trocar a caçada desta conta sem desligar o monitor">🗺️</button>
           <button type="button" data-role="headless" title="Monitor somente leitura da caçada">Monitor</button>
@@ -146,7 +148,9 @@
       panel.huntBtn = root.querySelector('[data-role="hunt"]');
       panel.huntBtn.onclick = () => openHunt([panel.account]);
       panel.focusBtn = root.querySelector('[data-role="focus"]');
-      panel.focusBtn.onclick = () => focusPanel(panel.slot);
+      panel.focusBtn.onclick = () => toggleFocus(panel.slot);
+      panel.soloBtn = root.querySelector('[data-role="solo"]');
+      panel.soloBtn.onclick = () => toggleSolo(panel.slot);
       panels.push(panel);
     }
   }
@@ -202,9 +206,6 @@
     const tab = tabPrefs(activeTab);
     const count = document.getElementById('panelCount');
     if (count) count.value = String(tab.panels);
-    const layout = document.getElementById('layoutMode');
-    if (layout) layout.value = tab.layout;
-
     applyPanelCount(tab.panels);
     if (window.PioLeveling && window.PioLeveling.setTab) window.PioLeveling.setTab(activeTab);
   }
@@ -281,9 +282,29 @@
     loadGame(index);
   }
 
+  /**
+   * Aguarda a composição liberar o WebView anterior antes de montar outro.
+   * Destruir e recriar um renderer WebGL no mesmo frame deixa o compositor
+   * disputando o surface antigo, especialmente ao sair do modo monitor.
+   */
+  function waitForRendererRelease() {
+    return new Promise(resolve => {
+      let frames = 0;
+      const next = () => {
+        frames++;
+        if (frames >= 2) resolve();
+        else if (typeof requestAnimationFrame === 'function') requestAnimationFrame(next);
+        else setTimeout(next, 16);
+      };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(next);
+      else setTimeout(next, 16);
+    });
+  }
+
   function applyPanelCount(count) {
     const total = Math.min(PER_TAB, Math.max(1, +count || 1));
     grid.dataset.panels = String(total);
+    grid.style.setProperty('--panel-count', String(total));
     panels.forEach((panel, i) => {
       const shown = i < total;
       panel.root.hidden = !shown;
@@ -309,32 +330,27 @@
     const tab = tabPrefs(activeTab);
     const total = Math.min(PER_TAB, Math.max(1, +tab.panels || PER_TAB));
     const focus = Math.min(total - 1, Math.max(0, +tab.focus || 0));
-    const mode = total < 2 && (tab.layout === 'focus' || tab.layout === 'solo') ? 'split' : tab.layout;
+    const mode = total < 2 && (tab.layout === 'focus' || tab.layout === 'solo') ? 'cols' : tab.layout;
 
     grid.dataset.layout = mode;
     panels.forEach((panel, i) => {
       const shown = i < total;
       panel.root.classList.toggle('is-focus', shown && mode === 'focus' && i === focus);
       panel.root.classList.toggle('is-bg', shown && mode === 'solo' && i !== focus);
-      panel.focusBtn.classList.toggle('is-on', shown && i === focus && mode !== 'split');
-      panel.focusBtn.hidden = mode === 'split' || mode === 'cols' || mode === 'rows';
+      panel.focusBtn.classList.toggle('is-on', shown && i === focus && mode === 'focus');
+      panel.soloBtn.classList.toggle('is-on', shown && i === focus && mode === 'solo');
     });
   }
 
-  /**
-   * Clique no ⤢. Em `split`, `cols` e `rows` o botão não aparece, então isto só
-   * chega vindo de `focus`/`solo`: escolhe quem é o painel grande.
-   */
-  async function focusPanel(slot) {
+  async function toggleFocus(slot) {
     const tab = tabPrefs(activeTab);
-    if (tab.focus === slot) return;
-    await saveTabPrefs({ focus: slot });
+    await saveTabPrefs({ layout: tab.layout === 'focus' && tab.focus === slot ? 'cols' : 'focus', focus: slot });
     applyLayout();
   }
 
-  async function setLayout(mode) {
-    if (!LAYOUTS.includes(mode)) return;
-    await saveTabPrefs({ layout: mode });
+  async function toggleSolo(slot) {
+    const tab = tabPrefs(activeTab);
+    await saveTabPrefs({ layout: tab.layout === 'solo' && tab.focus === slot ? 'cols' : 'solo', focus: slot });
     applyLayout();
   }
 
@@ -414,6 +430,7 @@
       entry.pending = null;
       panelOf(index)?.hud.clear();
       paintPanel(index);
+      await waitForRendererRelease();
       loadGame(index);
       return;
     }
@@ -654,6 +671,26 @@
     api.cambioWindow().catch(e => report('cambio', e));
   }
 
+  /**
+   * Status. Janela própria: a tela tem uma linha por conta, com a build e a
+   * prévia da divisão de cada uma, e como modal cobriria o painel que mostra o
+   * nível e os pontos parados — o que o usuário confere antes de ligar.
+   */
+  function openStats() {
+    if (!api.statsWindow) return;
+    api.statsWindow().catch(e => report('stats', e));
+  }
+
+  /**
+   * Forja. Janela propria, e aqui o motivo e o mais forte da serie: a tela tem
+   * uma grade de onze slots por conta, e ela e a conferencia que o usuario faz
+   * antes de autorizar o launcher a destruir pecas de equipamento.
+   */
+  function openForge() {
+    if (!api.forgeWindow) return;
+    api.forgeWindow().catch(e => report('forge', e));
+  }
+
   // ------------------------------------------------------------------- grupo
 
   /**
@@ -792,6 +829,30 @@
     if (autosellBtn) autosellBtn.onclick = () => openAutosell();
     const cambioBtn = document.getElementById('cambioBtn');
     if (cambioBtn) cambioBtn.onclick = () => openCambio();
+
+    const statsBtn = document.getElementById('statsBtn');
+    if (statsBtn) statsBtn.onclick = () => openStats();
+    const forgeBtn = document.getElementById('forgeBtn');
+    if (forgeBtn) forgeBtn.onclick = () => openForge();
+
+    const automationBtn = document.getElementById('automationBtn');
+    const automationItems = document.getElementById('automationItems');
+    const automationMenu = document.getElementById('automationMenu');
+    if (automationBtn && automationItems) {
+      closeAutomationMenu = () => {
+        automationItems.hidden = true;
+        automationBtn.setAttribute('aria-expanded', 'false');
+      };
+      automationBtn.onclick = e => {
+        e.stopPropagation();
+        automationItems.hidden = !automationItems.hidden;
+        automationBtn.setAttribute('aria-expanded', String(!automationItems.hidden));
+      };
+      automationItems.addEventListener('click', closeAutomationMenu);
+      document.addEventListener('click', e => {
+        if (!automationMenu?.contains(e.target)) closeAutomationMenu();
+      });
+    }
     if (marketOverlay) {
       document.getElementById('marketCloseBtn').onclick = closeMarket;
       document.getElementById('marketClose').onclick = closeMarket;
@@ -800,6 +861,11 @@
 
     window.addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
+      if (!document.getElementById('automationItems')?.hidden) {
+        e.preventDefault();
+        closeAutomationMenu();
+        return;
+      }
       // Do mais recente para o mais antigo: o seletor de caçada abre por cima.
       if (marketOverlay && marketOverlay.classList.contains('show')) {
         e.preventDefault();
@@ -833,9 +899,6 @@
       applyPanelCount(count.value);
       await saveTabPrefs({ panels: +count.value });
     };
-
-    const layout = document.getElementById('layoutMode');
-    if (layout) layout.onchange = () => setLayout(layout.value).catch(e => report('layout', e));
 
     const add = document.getElementById('tabAdd');
     if (add) add.onclick = () => setTabCount(tabs + 1).catch(e => report('tabs', e));
@@ -950,8 +1013,6 @@
     setTabCount,
     applyPanelCount,
     applyLayout,
-    setLayout,
-    focusPanel,
     openAccounts,
     closeAccounts,
     openHunt,

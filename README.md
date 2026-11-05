@@ -278,21 +278,63 @@ mercado.
 
 ### O preço, e o nível
 
-Duas referências: a **mediana das vendas daquele item naquele nível** e o
-**anúncio rival mais barato** ativo. Anuncia um ouro abaixo do rival, nunca
-abaixo do **piso** — `floorPct` da mediana, padrão 70%.
+Dois critérios, e a escolha é do usuário porque o objetivo é dele:
+
+- **abaixo do rival mais barato** (`priceMode: 'rival'`, padrão). Duas
+  referências: a **mediana das vendas daquele item naquele nível** e o
+  **anúncio rival mais barato** ativo. Anuncia um ouro abaixo do rival, nunca
+  abaixo do **piso** — `floorPct` da mediana, padrão 70%. É o que de fato
+  vende: quem compra olha a primeira página ordenada por preço.
+- **pela média do item** (`priceMode: 'average'`). A **média ponderada pela
+  quantidade** das vendas daquele nível, ignorando a concorrência por completo.
+  Afirma um preço e espera. `floorPct` e `undercut` não se aplicam — os dois
+  existem para negociar com o rival, e este modo não negocia — e nenhuma busca
+  de mercado é feita, o que torna a rodada mais barata.
+
+A média é **ponderada**: uma venda de 3.000 unidades diz muito mais sobre o
+preço corrente que uma de 1. O descarte de vendas anormais vale nos dois modos
+e importa mais na média, onde um zero digitado a mais contamina o resultado
+inteiro em vez de ser só cortado.
 
 O **nível é decisivo**: um citrino nv. 2 vale perto de três vezes um nv. 1.
 Preço por `def_id` sozinho erra por 3×, então:
 
 - a mediana é pedida **com o nível exato**, e sem ela (menos de duas vendas
   registradas desse nível) o item é **pulado** — `price.noLevelData`;
+- o **encanto** também entra, em dois degraus: primeiro `nível + encanto`
+  exatos e, só quando aquela amostra não alcança duas vendas, o nível sozinho —
+  marcado como `encanto aproximado` no relatório. **Nunca** cai para "qualquer
+  nível";
 - `market_price_hint` **não** serve de reserva: ele ignora o nível, e usá-lo
   reintroduziria exatamente o erro de 3×;
 - a busca de rival sai com `level_min == level_max`.
 
 Rival abaixo do piso **não** define o preço: o item fica, e o relatório diz
 `price.marketDumped`. Alguém liquidando estoque num dia não liquida o seu.
+
+### A moeda
+
+Ouro (padrão) ou **diamante**. Em diamante o preço tem duas origens:
+
+- **direta** — o item já foi vendido em diamante naquele nível, e o preço sai
+  daquelas vendas. Nenhuma conversão;
+- **convertida** — não foi, e o preço em ouro é dividido pela **cotação do
+  câmbio**: a mediana de `cambio:diamante` dos últimos 7 dias, do banco local.
+  Sem cotação o item é recusado com `price.noRate`, em vez de converter por um
+  palpite.
+
+A taxa de venda do jogo é 10% nas duas moedas e o teto de preço é o mesmo, então
+a conversão é proporcional. O que ela não resolve é a **granularidade**: o
+diamante é grosso, e um lote que valha menos de **3 diamantes** não tem preço
+inteiro que o represente — arredondar distorceria mais que a margem. Esses são
+recusados com `price.tooCheapForDiamond`.
+
+Tudo é decidido **em ouro** primeiro e convertido por último, porque o preço do
+NPC é em ouro: comparar "4 diamantes" com "900 de ouro" aprovaria como ótimo um
+anúncio que vale um décimo do que o balcão dá. `minGold` é sempre em ouro, pelo
+mesmo motivo — em diamante nenhum lote chegaria perto daquele número na própria
+moeda. O relatório mostra a taxa usada e o equivalente em ouro de cada anúncio
+convertido.
 
 **Não há reprecificação.** O auto-anunciar só preenche vaga vazia; anúncio
 parado fica onde está, e quem decide retirar é o usuário.
@@ -448,12 +490,87 @@ existe: a janela de troca do jogo não guarda nada, e depois de um hop não há 
 conferir o que aconteceu além do saldo. Sobrevive ao fechamento do launcher,
 em `cambio-log.json`.
 
+## Status
+
+**🧬 Status** distribui os pontos de atributo de cada nível, sozinho, na build
+que você escolher para cada conta. Fica em janela própria e nasce **desligado**.
+
+O gatilho não é "subiu de nível": é **ponto livre maior que zero**. Não existe
+pacote de level-up no protocolo, e pontos parados também chegam de um login com
+níveis acumulados — uma conta que subiu oito níveis com o launcher fechado
+distribui os 40 pontos no próprio login.
+
+### A fórmula é copiada do jogo
+
+Alocar ponto é irreversível: desfazer custa token de respec ou cristal. Uma
+fórmula só *parecida* com a do botão "Distribuir pela build" gastaria pontos de
+verdade numa divisão que você não escolheu.
+
+Então ela não foi inferida. `tools/leveling-extract-build-math.js` baixa os
+chunks publicados do jogo e localiza a função; `src/domain/leveling-stats.js`
+traz a transcrição dela, com o original minificado no cabeçalho do arquivo. A
+suíte `test/leveling-stats.test.cjs` tem o original como **oráculo** e compara as
+duas em mil combinações aleatórias de pesos, investido e pontos livres.
+
+Re-rodar o extrator depois de cada deploy do jogo é o que mantém isso honesto.
+
+### A base é o investido, não o total
+
+A divisão olha só `StatsState.allocated` — o que **você** gastou. O que a classe
+dá de graça (`class_base`) e o que vem de equipamento (`from_items`) ficam fora.
+
+Isso não é escolha do launcher: é o que o jogo faz, e o que a descrição da build
+"Rajada Arcana" diz com todas as letras — *"a Inteligência inicial da classe não
+conta"*. Usar `total` mandaria menos pontos para o atributo principal de toda
+classe que já começa forte nele.
+
+O alvo de cada atributo é proporcional ao total **depois** de gastar, e só quem
+está abaixo do alvo recebe. Atributo já adiantado recebe zero, e o ponto dele vai
+para quem está atrás. Numa build já cumprida — ninguém abaixo do alvo — a divisão
+cai nos pesos crus, senão os pontos ficariam parados para sempre.
+
+### Por conta, não global
+
+É a única automação do launcher com configuração **por conta**. As outras têm uma
+política global e uma lista de contas de fora; aqui classe e build são do
+personagem, e não existe valor global que sirva.
+
+Conta sem escolha própria usa a **primeira build da classe** dela, que é a ordem
+em que o jogo as mostra e é a build de dano puro. Há também o modo **pesos
+meus**, que dispensa classe e catálogo: os números são proporção livre, porque a
+fórmula divide cada peso pela soma — `20/40` e `50/100` dão a mesma divisão.
+
+Se a build salva sumir num deploy do jogo, o launcher **recusa** com
+`stats.buildGone` em vez de cair calado noutra divisão. Trocar a build sem avisar
+seria pior que não distribuir.
+
+### Nunca reseta
+
+`reset_stats` está fora da lista de pacotes que podem sair do launcher. O
+auto-status só gasta o que está livre; nunca realoca o que já foi gasto, porque
+isso cobraria token ou cristal da conta.
+
+### A prévia e o relatório
+
+A coluna **Vai sair** da janela mostra a divisão exata que será enviada, e é
+calculada pelo mesmo código do envio — não por uma conta paralela da tela. É a
+conferência que evita queimar pontos numa build errada.
+
+O relatório traz nível, build e a divisão de cada distribuição, à vista. O jogo
+não guarda registro de alocação, então é o único histórico que existe. Sobrevive
+ao fechamento do launcher, em `stats-log.json`.
+
 ## Retirar um anúncio
 
 Em **💰 Mercado · Meus anúncios**, cada linha tem o seu botão de retirar, com
 confirmação **na própria linha**. Um por clique, sem seleção múltipla: o risco
 não é cancelar, é cancelar o anúncio **vizinho** — a tabela é ordenada por
 expiração e troca de posição a cada repintura.
+
+Acima da tabela, **Retirar todos** faz o lote: retira exatamente os anúncios
+listados ali — se o filtro de conta estiver ativo, só os daquela conta. A
+confirmação diz o número, e as retiradas vão uma a uma, com o progresso à
+vista. Um anúncio que falhe não aborta o resto.
 
 O item volta para a mochila. Com a mochila cheia ele vai para o **correio**, e
 a tela avisa: sem isso o usuário procura a peça, não acha, e conclui que o

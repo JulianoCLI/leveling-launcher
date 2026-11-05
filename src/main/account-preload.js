@@ -95,7 +95,22 @@ function watchToken() {
   }
 }
 
+function watchWebgl() {
+  if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
+  const report = kind => {
+    try {
+      ipcRenderer.send('graphics:webgl', kind);
+    } catch {}
+  };
+
+  // O jogo pode criar vários canvas; escutar no document cobre tanto o canvas
+  // atual quanto os que surgirem depois sem tocar no código remoto do jogo.
+  document.addEventListener('webglcontextlost', () => report('contextlost'), true);
+  document.addEventListener('webglcontextrestored', () => report('contextrestored'), true);
+}
+
 if (isGameOrigin()) {
   seedToken();
   watchToken();
+  watchWebgl();
 }

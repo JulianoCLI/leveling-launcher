@@ -79,6 +79,8 @@
     'price.noLevelData': 'sem vendas registradas deste nível',
     'price.marketDumped': 'alguém está despejando abaixo do piso',
     'price.belowNpc': 'o NPC paga mais que o mercado',
+    'price.noRate': 'sem cotação do câmbio para converter em diamante',
+    'price.tooCheapForDiamond': 'vale menos que 3 diamantes: o arredondamento distorceria o preço',
     'autosell.noCatalog': 'o catálogo do jogo ainda não foi lido',
     'autosell.bagFull': 'bolsa cheia',
     'autosell.mineFailed': 'não foi possível ler os anúncios da conta',
@@ -96,6 +98,7 @@
     api: null,
     config: {
       enabled: false, intervalMs: 600000, maxPerRound: 2,
+      priceMode: 'rival', currency: 'gold',
       floorPct: 70, undercut: 1, minGold: 0, claimMail: true,
       excluded: [], blocked: []
     },
@@ -109,6 +112,8 @@
     log: [],
     stats: {},
     catalogReady: false,
+    /** A cotação do câmbio, do processo principal. Só usada no modo diamante. */
+    rate: { rate: 0, samples: 0, days: 0 },
     limits: { minIntervalMs: 60000, maxIntervalMs: 21600000, maxPerRoundCap: 10 },
     busy: false,
 
@@ -142,6 +147,7 @@
       if (res.log) this.log = res.log;
       if (res.stats) this.stats = res.stats;
       if (res.limits) this.limits = res.limits;
+      if (res.rate) this.rate = res.rate;
       if (res.catalogReady !== undefined) this.catalogReady = !!res.catalogReady;
     },
 
@@ -285,6 +291,10 @@
       const min = Math.round((this.limits.minIntervalMs || 60000) / 60000);
       const max = Math.round((this.limits.maxIntervalMs || 21600000) / 60000);
 
+      const modo = this.config.priceMode === 'average' ? 'average' : 'rival';
+      const media = modo === 'average';
+      const diamante = this.config.currency === 'diamond';
+
       host.innerHTML = `
         <label class="xp-master">
           <input type="checkbox" id="autosellEnabled" ${this.config.enabled ? 'checked' : ''}>
@@ -303,21 +313,41 @@
           <span>itens por rodada</span>
         </label>
         <label class="xp-interval"
-          title="Piso de preço, em por cento da mediana. Se o anúncio rival mais barato estiver abaixo disso, o item NÃO é anunciado: alguém despejando estoque não pode definir o seu preço.">
+          title="Como o preço é decidido. Pelo rival persegue a venda rápida e acompanha o mercado; pela média afirma o preço que o item vem fazendo e espera o comprador.">
+          <span>Preço</span>
+          <select id="autosellPriceMode">
+            <option value="rival" ${modo === 'rival' ? 'selected' : ''}>abaixo do rival mais barato</option>
+            <option value="average" ${modo === 'average' ? 'selected' : ''}>pela média do item</option>
+          </select>
+        </label>
+        <label class="xp-interval"
+          title="Em que moeda anunciar. Em diamante o preço sai das vendas em diamante do nível exato; quando não houver nenhuma, é convertido pela cotação do câmbio.">
+          <span>Moeda</span>
+          <select id="autosellCurrency">
+            <option value="gold" ${diamante ? '' : 'selected'}>ouro 🪙</option>
+            <option value="diamond" ${diamante ? 'selected' : ''}>diamante 💎</option>
+          </select>
+        </label>
+        <label class="xp-interval${media ? ' is-off' : ''}"
+          title="${media
+            ? 'Só vale no modo “abaixo do rival”: pela média não há rival na conta, e um piso proporcional à própria média não decidiria nada.'
+            : 'Piso de preço, em por cento da mediana. Se o anúncio rival mais barato estiver abaixo disso, o item NÃO é anunciado: alguém despejando estoque não pode definir o seu preço.'}">
           <span>Nunca abaixo de</span>
           <input type="number" id="autosellFloorPct" min="10" max="200" step="1"
-            value="${Math.floor(this.config.floorPct) || 70}">
+            value="${Math.floor(this.config.floorPct) || 70}" ${media ? 'disabled' : ''}>
           <span>% da mediana</span>
         </label>
-        <label class="xp-interval"
-          title="Quanto abaixo do rival mais barato anunciar. Um ouro basta para ficar na frente na ordenação por preço; zero empata com ele.">
+        <label class="xp-interval${media ? ' is-off' : ''}"
+          title="${media
+            ? 'Só vale no modo “abaixo do rival”: pela média o preço não é descontado de ninguém.'
+            : 'Quanto abaixo do rival mais barato anunciar. Um ouro basta para ficar na frente na ordenação por preço; zero empata com ele.'}">
           <span>Anunciar</span>
           <input type="number" id="autosellUndercut" min="0" max="1000000" step="1"
-            value="${Math.floor(this.config.undercut) || 0}">
-          <span>de ouro abaixo do rival</span>
+            value="${Math.floor(this.config.undercut) || 0}" ${media ? 'disabled' : ''}>
+          <span>${diamante ? 'de diamante' : 'de ouro'} abaixo do rival</span>
         </label>
         <label class="xp-interval"
-          title="Lote que valha menos que isto não ocupa uma vaga de anúncio. Zero aceita qualquer valor.">
+          title="Lote que valha menos que isto não ocupa uma vaga de anúncio. Sempre em ouro, mesmo anunciando em diamante: é um valor de referência, e em diamante nenhum lote chegaria perto deste número na própria moeda. Zero aceita qualquer valor.">
           <span>Ignorar lote abaixo de</span>
           <input type="number" id="autosellMinGold" min="0" step="1000"
             value="${Math.floor(this.config.minGold) || 0}">
@@ -328,10 +358,35 @@
           <input type="checkbox" id="autosellClaimMail" ${this.config.claimMail ? 'checked' : ''}>
           <span>Recolher as vendas do correio</span>
         </label>
+        ${diamante ? this.rateHintHtml() : ''}
         ${this.catalogReady ? '' : `
           <p class="hint is-warn">O catálogo do jogo ainda não foi lido nesta execução. Sem ele o launcher não
             distingue tesouro de equipamento, e <b>nada é anunciado</b> — ligue o monitor em uma conta e aguarde o
             primeiro login.</p>`}`;
+    },
+
+    /**
+     * A cotação que converte ouro em diamante, à vista.
+     *
+     * Existe porque o preço em diamante de um item sem histórico em diamante é
+     * uma divisão por este número, e um anúncio é irreversível. Esconder a
+     * taxa deixaria o usuário aprovando uma conversão que ele não pode
+     * conferir — e ela vem de um mercado volátil, não de uma tabela.
+     */
+    rateHintHtml() {
+      const r = this.rate || {};
+      const taxa = Math.floor(Number(r.rate) || 0);
+      if (!taxa) {
+        return `<p class="hint is-warn">💎 O banco não tem vendas de câmbio suficientes para calcular uma
+          cotação. Itens <b>com</b> histórico de venda em diamante continuam sendo anunciados pelo preço
+          daquelas vendas; os outros são recusados com
+          <code>price.noRate</code> em vez de converter por um palpite.</p>`;
+      }
+      return `<p class="hint">💎 Convertendo a <b>${cheio(taxa)}</b> de ouro por diamante${
+        r.samples ? `, mediana de ${r.samples} venda${r.samples === 1 ? '' : 's'} de câmbio` : ''}${
+        r.days ? ` nos últimos ${r.days} dias` : ''}. Item que saia abaixo de
+        <b>3 diamantes</b> não é anunciado: o arredondamento distorceria o preço mais que a margem.
+        Quando o item já tem venda em diamante no nível exato, o preço vem dela e esta taxa não entra.</p>`;
     },
 
     renderAccounts() {
@@ -415,18 +470,32 @@
         const nome = escape(linha.name || linha.defId || 'item');
         const lote = Number(linha.quantity) > 1 ? ` ×${linha.quantity}` : '';
         const nivel = linha.level ? ` <span class="xp-at">nv ${linha.level}</span>` : '';
+        const dia = (linha.currency || from.currency) === 'diamond';
+        const simbolo = dia ? '💎' : '🪙';
         // A conta do preço vai à vista, não no `title`: é a razão de ser do
         // relatório, e escondê-la num tooltip faria a auditoria depender de
         // passar o mouse em cada linha.
         const base = [
-          from.median ? `mediana ${ouro(from.median)}` : '',
-          from.rival ? `rival ${ouro(from.rival)}` : 'sem rival',
-          from.floor ? `piso ${ouro(from.floor)}` : '',
-          from.samples ? `${from.samples} venda${from.samples === 1 ? '' : 's'}` : ''
+          // No modo média a mediana e o rival não decidiram nada; mostrá-los do
+          // mesmo jeito sugeriria que o preço saiu deles.
+          from.mode === 'average'
+            ? (from.average ? `média ${ouro(from.average)}` : '')
+            : [
+              from.median ? `mediana ${ouro(from.median)}` : '',
+              from.rival ? `rival ${ouro(from.rival)}` : 'sem rival',
+              from.floor ? `piso ${ouro(from.floor)}` : ''
+            ].filter(Boolean).join(' · '),
+          from.samples ? `${from.samples} venda${from.samples === 1 ? '' : 's'}` : '',
+          // A conversão, quando houve. Sem a taxa e o valor em ouro não há
+          // como julgar depois se o preço em diamante foi justo.
+          from.rate ? `convertido a ${ouro(from.rate)}/💎 de ${ouro(from.goldPrice)} 🪙` : '',
+          // A aproximação de encanto é dita em voz alta: o preço é do nível
+          // certo, mas de encantos misturados.
+          from.enchantApprox ? 'encanto aproximado' : ''
         ].filter(Boolean).join(' · ');
         return envelope('', `
           <span class="xp-boss-ok">✔ ${nome}${lote}${nivel}</span>
-          <b title="${cheio(linha.total)} de ouro no lote">${ouro(linha.total)}</b>
+          <b title="${cheio(linha.total)} ${dia ? 'de diamante' : 'de ouro'} no lote">${ouro(linha.total)} ${simbolo}</b>
           <span class="xp-at" title="unitário ${cheio(linha.unitPrice)}">(${ouro(linha.unitPrice)} cada)</span>
           <span class="xp-at">${escape(base)}</span>`);
       }
@@ -539,6 +608,10 @@
         const el = document.getElementById(id);
         return !!(el && el.checked);
       };
+      const escolha = (id, fallback) => {
+        const el = document.getElementById(id);
+        return (el && el.value) || fallback;
+      };
 
       const excluded = [];
       for (const caixa of document.querySelectorAll('[data-account]')) {
@@ -549,6 +622,11 @@
         enabled: marcado('autosellEnabled'),
         intervalMs: valor('autosellInterval', 10) * 60000,
         maxPerRound: valor('autosellMaxPerRound', 2),
+        priceMode: escolha('autosellPriceMode', 'rival'),
+        currency: escolha('autosellCurrency', 'gold'),
+        // Lidos mesmo quando desabilitados: um `<input disabled>` conserva o
+        // `value`, e `valor()` o devolve. Se viessem do fallback, trocar para
+        // o modo média e voltar apagaria o piso que o usuário tinha ajustado.
         floorPct: valor('autosellFloorPct', 70),
         undercut: valor('autosellUndercut', 1),
         minGold: valor('autosellMinGold', 0),
@@ -576,8 +654,15 @@
       this.render();
 
       const fora = (this.config.excluded || []).length;
+      const moeda = this.config.currency === 'diamond' ? 'em diamante' : 'em ouro';
+      // O critério de preço entra na confirmação porque é o que muda o
+      // resultado: "até 2 itens por rodada" é igual nos dois modos, e saber
+      // qual está no ar é a única forma de perceber uma troca sem intenção.
+      const criterio = this.config.priceMode === 'average'
+        ? 'pela média do item'
+        : `nunca abaixo de ${this.config.floorPct}% da mediana`;
       this.say(this.config.enabled
-        ? `Salvo. Anunciando até ${this.config.maxPerRound} ${this.config.maxPerRound === 1 ? 'item' : 'itens'} por rodada, nunca abaixo de ${this.config.floorPct}% da mediana${fora ? `, ${fora} conta${fora === 1 ? '' : 's'} de fora` : ''}.`
+        ? `Salvo. Anunciando até ${this.config.maxPerRound} ${this.config.maxPerRound === 1 ? 'item' : 'itens'} por rodada ${moeda}, ${criterio}${fora ? `, ${fora} conta${fora === 1 ? '' : 's'} de fora` : ''}.`
         : 'Salvo. O auto-anunciar está desligado.');
     },
 

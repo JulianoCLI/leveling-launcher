@@ -85,6 +85,37 @@ body {
   background: var(--color-surface-hover);
 }
 
+.automation-menu {
+  position: relative;
+  -webkit-app-region: no-drag;
+}
+
+.automation-items {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  min-width: 150px;
+  padding: 4px;
+  gap: 2px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+}
+
+.automation-items[hidden] {
+  display: none;
+}
+
+.automation-items button {
+  width: 100%;
+  border: 0;
+  border-radius: 5px;
+  text-align: left;
+}
+
 #titlebar button.is-on {
   background: rgba(110, 231, 183, .16);
   border-color: rgba(110, 231, 183, .35);
@@ -112,8 +143,7 @@ body {
 
 /* Sem `no-drag` o clique nestes seletores é capturado pela região de arrasto da
    barra de título e o menu nunca abre. */
-#panelCount,
-#layoutMode {
+#panelCount {
   -webkit-app-region: no-drag;
   background: var(--color-surface-1);
   color: var(--color-text-primary);
@@ -192,17 +222,10 @@ body {
   grid-template-columns: 1fr;
 }
 
-#grid[data-panels="2"] {
-  grid-template-columns: 1fr 1fr;
-}
-
-#grid[data-panels="3"] {
-  grid-template-columns: repeat(3, 1fr);
-}
-
+#grid[data-panels="2"],
+#grid[data-panels="3"],
 #grid[data-panels="4"] {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
+  grid-template-columns: repeat(var(--panel-count, 1), minmax(0, 1fr));
 }
 
 /* --------------------------------------------------------------- arranjos */
@@ -214,13 +237,6 @@ body {
   grid-template-rows: 1fr;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
-}
-
-#grid[data-layout="rows"] {
-  grid-template-columns: 1fr;
-  grid-template-rows: none;
-  grid-auto-flow: row;
-  grid-auto-rows: 1fr;
 }
 
 /* Um painel grande à esquerda e os demais numa coluna estreita à direita. A

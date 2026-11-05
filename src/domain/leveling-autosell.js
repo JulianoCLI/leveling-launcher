@@ -8,7 +8,7 @@
  *
  * ## O preço
  *
- * O usuário pediu duas referências, e elas servem a propósitos opostos:
+ * Há duas referências, e elas servem a propósitos opostos:
  *
  *   mediana   o que o item **vale**, das vendas que de fato aconteceram;
  *   rival     o anúncio ativo mais barato, o que a concorrência **pede**.
@@ -18,9 +18,29 @@
  * entrega o controle a um estranho — basta alguém despejar estoque a 10% para
  * o launcher acompanhar a queda e liquidar o inventário por nada.
  *
- * Então: anuncia **um ouro abaixo do rival**, com um **piso** proporcional à
- * mediana. Se o rival está abaixo do piso, não anuncia nada e diz por quê. Um
- * item não vendido continua sendo seu; um item vendido a um décimo não volta.
+ * Daí os dois modos, e a escolha é do usuário porque o objetivo é dele:
+ *
+ *   `rival`    anuncia **um ouro abaixo do rival**, com um **piso**
+ *              proporcional à mediana. Se o rival está abaixo do piso, não
+ *              anuncia nada e diz por quê. É o padrão: é o que vende.
+ *   `average`  anuncia pela **média ponderada** das vendas do nível exato e
+ *              ignora a concorrência. Afirma um preço e espera.
+ *
+ * Um item não vendido continua sendo seu; um item vendido a um décimo não
+ * volta. É por isso que o modo `rival` tem piso e o `average` não precisa de
+ * um: a média já é o próprio piso.
+ *
+ * ## A moeda
+ *
+ * Ouro ou diamante, e em diamante o preço tem duas origens. Quando o item já
+ * foi vendido em diamante naquele nível, as vendas respondem direto. Quando
+ * não, o preço em ouro é convertido pela **cotação do câmbio** — a mediana de
+ * `cambio:diamante`, que o banco local acumula.
+ *
+ * A taxa de venda do jogo é 10% nas duas moedas e o teto de preço é o mesmo,
+ * então a conversão é proporcional e não compensa nada. O que ela não resolve
+ * é a granularidade: o diamante é grosso, e um lote que vale meio diamante não
+ * tem preço inteiro que o represente. Esses são recusados, não arredondados.
  *
  * ## O nível é parte da identidade do item
  *
@@ -105,6 +125,40 @@ const MAX_FLOOR_PCT = 200;
  */
 const DEFAULT_UNDERCUT = 1;
 
+/**
+ * Como o preço é decidido.
+ *
+ *   `rival`    um pouco abaixo do anúncio mais barato, com piso na mediana.
+ *              É o modo original e continua o padrão: é o que de fato vende,
+ *              porque quem compra olha a primeira página ordenada por preço.
+ *   `average`  pela média ponderada das vendas do nível exato, ignorando a
+ *              concorrência por completo.
+ *
+ * O modo `average` não é "o mesmo com outra conta": ele troca o objetivo.
+ * `rival` persegue a venda rápida e aceita o preço que o mercado está
+ * pedindo hoje; `average` afirma um preço e espera. Por isso `floorPct` e
+ * `undercut` não se aplicam nele — piso proporcional à própria referência é
+ * tautologia, e descontar do rival é exatamente o que o modo recusa fazer.
+ */
+const PRICE_MODES = ['rival', 'average'];
+
+/** Em que moeda o anúncio sai. */
+const CURRENCIES = ['gold', 'diamond'];
+
+/**
+ * Preço mínimo, em diamantes, para um anúncio em diamante valer a pena.
+ *
+ * O diamante é uma moeda grossa: com a cotação na casta dos 380 mil de ouro,
+ * um lote que vale 500 mil dá 1,3 diamante. Arredondar para 2 é pedir 53% a
+ * mais e não vender; para 1 é dar 24% de desconto, irreversível. Nenhum dos
+ * dois é o preço do item.
+ *
+ * Três é o menor valor em que o passo de um diamante custa menos de um terço
+ * do preço. Abaixo disso o anúncio é recusado com motivo próprio, e isso é a
+ * regra, não uma limitação: em diamante só vai o que é caro.
+ */
+const MIN_DIAMOND_PRICE = 3;
+
 /** Vendas mínimas do nível exato para o preço ser levado a sério. */
 const MIN_SAMPLES = listing.MIN_SAMPLES;
 
@@ -138,6 +192,14 @@ function defaultConfig() {
     enabled: false,
     intervalMs: DEFAULT_INTERVAL_MS,
     maxPerRound: DEFAULT_MAX_PER_ROUND,
+    /**
+     * Como precificar. `rival` é o padrão porque é o comportamento que já
+     * existia: uma configuração salva antes deste campo tem de continuar
+     * anunciando do mesmo jeito depois da atualização.
+     */
+    priceMode: 'rival',
+    /** Em que moeda anunciar. Ouro pelo mesmo motivo. */
+    currency: 'gold',
     floorPct: DEFAULT_FLOOR_PCT,
     undercut: DEFAULT_UNDERCUT,
     /** Abaixo disto o item não vale a vaga de anúncio. Zero aceita tudo. */
@@ -185,6 +247,12 @@ function normalizeConfig(raw) {
       int(source.intervalMs, padrao.intervalMs) || padrao.intervalMs)),
     maxPerRound: Math.min(MAX_PER_ROUND_CAP, Math.max(1,
       int(source.maxPerRound, padrao.maxPerRound) || padrao.maxPerRound)),
+    // Valor desconhecido cai no padrão, nunca passa adiante: um `prefs.json`
+    // editado à mão com `priceMode: 'medio'` não pode produzir um modo que
+    // nenhum `switch` trata — o resultado seria um preço indefinido num
+    // anúncio irreversível.
+    priceMode: PRICE_MODES.includes(str(source.priceMode)) ? str(source.priceMode) : padrao.priceMode,
+    currency: CURRENCIES.includes(str(source.currency)) ? str(source.currency) : padrao.currency,
     floorPct: Math.min(MAX_FLOOR_PCT, Math.max(MIN_FLOOR_PCT,
       int(source.floorPct, padrao.floorPct) || padrao.floorPct)),
     // Zero é um desconto válido: anunciar empatado com o rival. Negativo é
@@ -327,55 +395,130 @@ function skipReason(item, catalog, blocked) {
 }
 
 /**
- * O preço de anúncio **unitário**, dadas as duas referências.
+ * O preço de anúncio **unitário**, dadas as referências.
  *
  * Devolve a conta inteira, não só o número: uma automação que anuncia sozinha
  * precisa poder explicar cada preço depois, e "1,4 M" sem "mediana 2 M, rival
  * 1,4 M, piso 1,4 M" é um número que não dá para auditar.
  *
- * @param {{median:number, samples:number, rival:number, floorPct:number, undercut:number, npcPrice:number}} input
- * @returns {{price:number, floor:number, median:number, rival:number, reason:string}}
+ * ## A ordem das recusas, e por que ela é essa
+ *
+ * Tudo é decidido **em ouro** primeiro, e a conversão para diamante vem por
+ * último. Não é conveniência de implementação: `npcPrice` é o que o balcão
+ * paga, e o balcão paga em ouro. Comparar "4 diamantes" com "900 de ouro"
+ * aprovaria como ótimo um anúncio que vale um décimo do que o NPC dá.
+ *
+ * ## Diamante
+ *
+ * Duas fontes, e a primeira é sempre melhor:
+ *
+ *   direta      houve venda em diamante no nível exato, e `median` já está
+ *               nessa moeda. Nada a converter.
+ *   convertida  não houve, e o preço em ouro é dividido pela cotação do
+ *               câmbio. Depende de uma taxa que envelhece, então a taxa
+ *               usada volta no resultado para o relatório poder mostrá-la.
+ *
+ * A taxa de venda do jogo é de 10% nas duas moedas e o teto de preço é o
+ * mesmo, então a conversão é proporcional e não precisa compensar nada.
+ *
+ * @param {{median:number, average:number, samples:number, rival:number,
+ *   floorPct:number, undercut:number, npcPrice:number,
+ *   priceMode:string, currency:string, rate:number, directDiamond:boolean}} input
+ * @returns {{price:number, floor:number, median:number, average:number, rival:number,
+ *   goldPrice:number, currency:string, rate:number, mode:string, reason:string}}
  */
 function priceFor(input) {
   const inp = input || {};
   const median = int(inp.median);
+  const average = int(inp.average);
   const samples = int(inp.samples);
   const rival = int(inp.rival);
   const floorPct = Math.min(MAX_FLOOR_PCT, Math.max(MIN_FLOOR_PCT, int(inp.floorPct, DEFAULT_FLOOR_PCT)));
   const undercut = Math.max(0, int(inp.undercut, DEFAULT_UNDERCUT));
   const npc = int(inp.npcPrice);
+  const mode = PRICE_MODES.includes(str(inp.priceMode)) ? str(inp.priceMode) : 'rival';
+  const currency = CURRENCIES.includes(str(inp.currency)) ? str(inp.currency) : 'gold';
+  const rate = int(inp.rate);
+  // O preço veio de vendas em diamante de verdade? Então ele já está na moeda
+  // final e a cotação do câmbio não entra na conta.
+  const direta = currency === 'diamond' && !!inp.directDiamond;
 
-  const vazio = { price: 0, floor: 0, median, rival };
+  const base = { median, average, rival, currency, mode, rate: direta ? 0 : rate };
+  const vazio = { ...base, price: 0, floor: 0, goldPrice: 0 };
 
-  // Sem mediana do nível exato não há referência de valor, e a decisão é
-  // recusar em vez de estimar. Era o erro do citrino: `price_hint` responderia
-  // com a média de todos os níveis e o nv. 2 sairia pelo preço do nv. 1.
+  // Sem dado do nível exato não há referência de valor, e a decisão é recusar
+  // em vez de estimar. Era o erro do citrino: `price_hint` responderia com a
+  // média de todos os níveis e o nv. 2 sairia pelo preço do nv. 1.
   if (median <= 0 || samples < MIN_SAMPLES) {
     return { ...vazio, reason: 'price.noLevelData' };
   }
 
-  const floor = Math.max(1, Math.round(median * floorPct / 100));
-
-  // Ninguém anunciando: a mediana é a melhor referência que existe, e não há
-  // concorrência para descontar.
-  if (rival <= 0) {
-    return { price: Math.max(median, floor), floor, median, rival, reason: '' };
+  // O modo média exige a própria média: ela sai da mesma amostra da mediana,
+  // então faltar aqui significa que a amostra não tinha unidade nenhuma — e
+  // cair na mediana calada entregaria um preço de outro modo com o nome deste.
+  if (mode === 'average' && average <= 0) {
+    return { ...vazio, reason: 'price.noLevelData' };
   }
 
-  // Rival abaixo do piso é despejo, não preço. Seguir a queda é o caminho
-  // pelo qual uma automação liquida um inventário inteiro por nada.
-  if (rival < floor) {
-    return { ...vazio, floor, reason: 'price.marketDumped' };
+  // A partir daqui tudo é ouro, exceto na venda direta em diamante — onde
+  // "ouro" é só o nome da variável e a unidade é o diamante do começo ao fim.
+  let alvo;
+  let floor = 0;
+
+  if (mode === 'average') {
+    // A média é a referência e também a resposta. Sem piso proporcional e sem
+    // desconto: os dois existem para negociar com o rival, e este modo não
+    // negocia — é o que o usuário pediu ao escolhê-lo.
+    alvo = average;
+  } else {
+    floor = Math.max(1, Math.round(median * floorPct / 100));
+
+    // Ninguém anunciando: a mediana é a melhor referência que existe, e não há
+    // concorrência para descontar.
+    if (rival <= 0) {
+      alvo = Math.max(median, floor);
+    } else if (rival < floor) {
+      // Rival abaixo do piso é despejo, não preço. Seguir a queda é o caminho
+      // pelo qual uma automação liquida um inventário inteiro por nada.
+      return { ...vazio, floor, reason: 'price.marketDumped' };
+    } else {
+      alvo = Math.max(floor, rival - undercut);
+    }
   }
 
-  const alvo = Math.max(floor, rival - undercut);
-  // O NPC é o piso absoluto: anunciar abaixo do que ele paga é pagar taxa de
-  // mercado para receber menos do que o balcão dá de graça.
-  if (npc > 0 && alvo <= npc) {
+  // O NPC é o piso absoluto, e é o motivo de esta comparação vir antes de
+  // qualquer conversão: anunciar abaixo do que o balcão paga é pagar taxa de
+  // mercado para receber menos do que ele dá de graça. Só se aplica quando o
+  // alvo está em ouro — num preço já em diamante os dois números não são
+  // comparáveis sem a cotação, e usá-la aqui misturaria as duas fontes.
+  if (!direta && npc > 0 && alvo <= npc) {
     return { ...vazio, floor, reason: 'price.belowNpc' };
   }
 
-  return { price: alvo, floor, median, rival, reason: '' };
+  if (currency === 'gold' || direta) {
+    return { ...base, price: alvo, floor, goldPrice: direta ? 0 : alvo, reason: '' };
+  }
+
+  // Diamante por conversão. Sem cotação não há como converter, e inventar uma
+  // taxa aqui produziria um anúncio irreversível em cima de um palpite.
+  if (rate <= 0) {
+    return { ...vazio, floor, goldPrice: alvo, reason: 'price.noRate' };
+  }
+
+  // `ceil`: o arredondamento tem de ser a favor de quem vende, como em
+  // `normalizeDraft`. Para baixo, um lote sairia por menos do que o cálculo
+  // pediu — e um anúncio barato demais some no primeiro comprador que passa.
+  const diamantes = Math.ceil(alvo / rate);
+  if (diamantes < MIN_DIAMOND_PRICE) {
+    return { ...vazio, floor, goldPrice: alvo, reason: 'price.tooCheapForDiamond' };
+  }
+
+  return {
+    ...base, price: diamantes, floor,
+    /** O que o mesmo item valeria em ouro. É a única forma de julgar a conversão depois. */
+    goldPrice: alvo,
+    reason: ''
+  };
 }
 
 /**
@@ -385,18 +528,35 @@ function priceFor(input) {
  * Os próprios saem porque incluí-los cria uma espiral: o launcher anuncia a
  * 1 M, na rodada seguinte lê o próprio anúncio como rival, desconta um ouro, e
  * repete. Ninguém mais no mercado precisa estar envolvido.
+ *
+ * `currency` escolhe de quem é a concorrência. Anunciando em diamante, o rival
+ * é o anúncio em diamante — e o em ouro passa a ser o incomparável. Era por
+ * isso que a moeda tinha de virar parâmetro: a função descartava diamante
+ * sempre, o que estava certo enquanto ouro era a única opção e viraria "nenhum
+ * rival encontrado" em todo anúncio de diamante.
+ *
+ * @param {Array} listings
+ * @param {object} item
+ * @param {string} [currency] `'gold'` (padrão) ou `'diamond'`
  */
-function lowestRival(listings, item) {
+function lowestRival(listings, item, currency) {
   const alvo = int(item && item.level);
   const enchant = int(item && item.enchant);
+  const diamante = str(currency) === 'diamond';
   let menor = 0;
   for (const l of Array.isArray(listings) ? listings : []) {
     if (!l || l.mine) continue;
     const status = str(l.status);
     if (status && status !== 'MARKET_STATUS_ACTIVE' && status !== 'MARKET_STATUS_UNSPECIFIED') continue;
     // Moeda diferente não é comparável: um anúncio em diamante não concorre
-    // em preço com um em ouro.
-    if (str(l.currency).includes('DIAMOND') || str(l.currency).includes('TOKEN')) continue;
+    // em preço com um em ouro. `TOKEN` fica fora nas duas, sempre.
+    const moeda = str(l.currency);
+    if (moeda.includes('TOKEN')) continue;
+    // Ouro chega com o campo **ausente**: `MARKET_CURRENCY_GOLD` é o 1 e
+    // proto3 omite o zero, mas o enum nomeado só aparece quando o servidor o
+    // preenche. "Não é diamante" é o teste que de fato casa com as vendas
+    // reais, o mesmo que `SQL_OURO` faz no banco.
+    if (diamante !== moeda.includes('DIAMOND')) continue;
     // Nível e encanto exatos. Um nv. 1 barato não é concorrência de um nv. 2.
     if (int(l.level) !== alvo) continue;
     if (int(l.enchant) !== enchant) continue;
@@ -410,9 +570,12 @@ function lowestRival(listings, item) {
 /**
  * Escolhe e precifica o que anunciar nesta rodada.
  *
- * `prices` responde a chave de `priceKeyOf` com `{median, samples, rival}`:
- * quem consulta banco e mercado é o serviço, porque isso é entrada e saída.
- * Aqui só se decide.
+ * `prices` responde a chave de `priceKeyOf` com
+ * `{median, average, samples, rival, directDiamond}`: quem consulta banco e
+ * mercado é o serviço, porque isso é entrada e saída. Aqui só se decide.
+ *
+ * `rate` é a cotação do diamante em ouro, uma por rodada: ela não depende do
+ * item, e buscá-la por item seria a mesma resposta repetida.
  *
  * Tesouro primeiro, depois valor do lote. A preferência é do usuário, e é
  * também a ordem que rende mais: as vagas são poucas e o material de imbuição
@@ -426,6 +589,7 @@ function planRound(input) {
   const catalog = inp.catalog || null;
   const prices = inp.prices instanceof Map ? inp.prices : new Map();
   const itens = Array.isArray(inp.items) ? inp.items : [];
+  const rate = int(inp.rate);
 
   // As vagas que o servidor diz existir, nunca um número nosso: o teto de
   // anúncios é do jogo e muda com progressão da conta.
@@ -449,11 +613,16 @@ function planRound(input) {
     const ref = prices.get(priceKeyOf(it)) || {};
     const conta = priceFor({
       median: ref.median,
+      average: ref.average,
       samples: ref.samples,
       rival: ref.rival,
       floorPct: cfg.floorPct,
       undercut: cfg.undercut,
-      npcPrice: it.sellPrice
+      npcPrice: it.sellPrice,
+      priceMode: cfg.priceMode,
+      currency: cfg.currency,
+      directDiamond: ref.directDiamond,
+      rate
     });
 
     if (conta.reason) {
@@ -471,8 +640,20 @@ function planRound(input) {
 
     const qty = Math.max(1, int(it.qty, 1));
     const total = conta.price * qty;
-    if (cfg.minGold > 0 && total < cfg.minGold) {
-      skipped.push({ uid: listing.uid64(it.uid), defId: str(it.defId), reason: 'cheap', total });
+
+    // `minGold` é um corte em **ouro**, e o nome diz isso. Num anúncio em
+    // diamante o que se compara é o valor em ouro equivalente, senão um teto
+    // de 50.000 recusaria todo anúncio de diamante — nenhum deles chega perto
+    // desse número na própria moeda.
+    const valorOuro = cfg.currency === 'diamond'
+      ? (conta.goldPrice > 0 ? conta.goldPrice * qty : 0)
+      : total;
+    // Venda direta em diamante não tem equivalente em ouro conhecido, e
+    // estimá-lo pela cotação misturaria as duas fontes de preço. Sem o número,
+    // o corte não se aplica: recusar por um valor que não se sabe seria pior
+    // que deixar passar.
+    if (cfg.minGold > 0 && valorOuro > 0 && valorOuro < cfg.minGold) {
+      skipped.push({ uid: listing.uid64(it.uid), defId: str(it.defId), reason: 'cheap', total: valorOuro });
       continue;
     }
 
@@ -485,9 +666,34 @@ function planRound(input) {
       quantity: qty,
       unitPrice: conta.price,
       total,
+      /** A moeda acompanha o rascunho: é ela que `marketCreate` recebe. */
+      currency: conta.currency,
       treasure: isTreasure(it, catalog),
+      /**
+       * Em que unidade comparar dois candidatos pela vaga.
+       *
+       * Ouro, sempre que ele é conhecido. A ordenação por `total` daria certo
+       * enquanto todos os itens da rodada estivessem na mesma moeda, mas um
+       * lote de preço direto em diamante e um convertido convivem na mesma
+       * lista — e 4 diamantes contra 1,5 M de ouro ordenaria pelo menor.
+       */
+      sortValue: valorOuro || total,
       /** De onde o preço saiu. O relatório precisa poder explicar cada anúncio. */
-      from: { median: conta.median, rival: conta.rival, floor: conta.floor, samples: int(ref.samples) }
+      from: {
+        median: conta.median,
+        average: conta.average,
+        rival: conta.rival,
+        floor: conta.floor,
+        samples: int(ref.samples),
+        mode: conta.mode,
+        currency: conta.currency,
+        /** Zero quando o preço veio de venda em diamante de verdade. */
+        rate: conta.rate,
+        /** O equivalente em ouro, para a conversão poder ser auditada depois. */
+        goldPrice: conta.goldPrice,
+        /** O encanto exato tinha amostra, ou o preço é do nível com encanto misturado? */
+        enchantApprox: !!ref.enchantApprox
+      }
     });
   }
 
@@ -495,12 +701,12 @@ function planRound(input) {
     // Tesouro primeiro, mesmo valendo menos: foi o que o usuário pediu, e as
     // vagas são escassas o bastante para a ordem decidir o que de fato vende.
     if (a.treasure !== b.treasure) return a.treasure ? -1 : 1;
-    return b.total - a.total;
+    return b.sortValue - a.sortValue;
   });
 
   const ready = candidatos.slice(0, vagas);
   for (const sobra of candidatos.slice(vagas)) {
-    skipped.push({ uid: sobra.uid, defId: sobra.defId, reason: 'noSlot', total: sobra.total });
+    skipped.push({ uid: sobra.uid, defId: sobra.defId, reason: 'noSlot', total: sobra.sortValue });
   }
 
   return { ready, skipped, slots: vagas };
@@ -587,6 +793,9 @@ module.exports = {
   MAX_PER_ROUND_CAP,
   DEFAULT_FLOOR_PCT,
   DEFAULT_UNDERCUT,
+  PRICE_MODES,
+  CURRENCIES,
+  MIN_DIAMOND_PRICE,
   TREASURE_CATEGORIES,
   GEAR_CATEGORIES,
   MAIL_KINDS

@@ -87,8 +87,20 @@ test('cores de raridade saem como o jogo as escreve', () => {
     rarities: [{ id: 'lendario', name: 'Lendário', color: '#fbbf24', order: 4 }]
   });
   assert.deepStrictEqual(cat.rarities.lendario, {
-    name: 'Lendário', color: '#fbbf24', order: 4
+    // `statMult` zero é "o servidor não mandou o campo", não "sem bônus": a
+    // auto-forja distingue os dois e, na ausência, presume o degrau em vez de
+    // travar a conta.
+    name: 'Lendário', color: '#fbbf24', order: 4, statMult: 0
   });
+});
+
+test('stat_mult da raridade entra no recorte', () => {
+  // É o que permite à auto-forja estimar o ganho de um degrau antes de a peça
+  // existir: a peça que sai da fusão não tem `power` para ler.
+  const cat = readMarketCatalog({
+    rarities: [{ id: 'epico', name: 'Épico', order: 3, stat_mult: 2.5 }]
+  });
+  assert.equal(cat.rarities.epico.statMult, 2.5);
 });
 
 test('cor de rank de sombra vira hexadecimal CSS', () => {

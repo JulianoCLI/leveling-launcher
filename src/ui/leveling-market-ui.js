@@ -208,6 +208,16 @@
     cancelAsk: null,
     cancelBusy: null,
     /**
+     * Retirada em lote: a confirmação aberta e o progresso do lote.
+     *
+     * O lote é a exceção à regra de "um por vez" das linhas — aqui o usuário
+     * pediu explicitamente *todos*, então não há linha vizinha a errar. O
+     * progresso fica visível porque são N chamadas ao servidor, uma por
+     * anúncio, e uma tela parada pareceria travada.
+     */
+    cancelAllAsk: false,
+    cancelAllBusy: null,
+    /**
      * Preço por nível do item aberto. Vazio não significa "não varia por
      * nível": significa que o nível dessas vendas ainda não foi descoberto —
      * o enriquecedor pergunta anúncio por anúncio, em segundo plano.
@@ -1441,6 +1451,14 @@
             this.doCancel(botao.dataset.id, Number(botao.dataset.acc) || 0);
             return;
           }
+          if (role === 'cancel-all-ask') {
+            this.cancelAsk = null;
+            this.cancelAllAsk = true;
+            this.render();
+            return;
+          }
+          if (role === 'cancel-all-no') { this.cancelAllAsk = false; this.render(); return; }
+          if (role === 'cancel-all-ok') { this.doCancelAll(); return; }
         }
         const linha = alvo.closest('[data-item]');
         if (linha) this.show(linha.dataset.item);
@@ -1475,6 +1493,10 @@
         const contaMine = alvo.closest && alvo.closest('[data-role="mine-conta"]');
         if (contaMine) {
           this.mineConta = contaMine.value === 'todas' ? null : Number(contaMine.value);
+          // A confirmação cita um número de anúncios; trocar a conta muda esse
+          // número, e deixá-la aberta faria o "retirar todos" significar outra
+          // coisa do que foi lido.
+          this.cancelAllAsk = false;
           this.render();
           return;
         }
@@ -1905,6 +1927,7 @@
       }
 
       return `
+        ${this.cancelAllHtml(linhas)}
         <div class="mk-cards">
           ${this.cardHtml('Pedido em aberto', totalOuro, 'soma do que está à venda, em ouro')}
           <div class="mk-card">
@@ -1957,6 +1980,96 @@
         ${aviso}
         <p class="hint">Retirar devolve o item à mochila. Com a mochila cheia ele vai para o
           <b>correio</b> — e lá expira.</p>`;
+    },
+
+    /**
+     * A barra de "Retirar todos", acima da tabela.
+     *
+     * Obedece ao filtro de conta: o que o botão retira é exatamente o que a
+     * tabela abaixo mostra, e a confirmação diz o número para que "todos" não
+     * dependa do usuário lembrar qual conta está selecionada.
+     */
+    cancelAllHtml(linhas) {
+      if (!linhas.length || !this.api.marketCancel) return '';
+
+      if (this.cancelAllBusy) {
+        const { feitos, total } = this.cancelAllBusy;
+        return `<div class="mk-bolsa-filtros">
+          <span class="hint">Retirando ${feitos}/${total}…</span>
+        </div>`;
+      }
+
+      const alvo = this.mineConta !== null ? ' desta conta' : '';
+      if (this.cancelAllAsk) {
+        return `<div class="mk-bolsa-filtros">
+          <span class="hint">Retirar ${linhas.length} ${linhas.length === 1
+            ? 'anúncio' : 'anúncios'}${alvo} do mercado?</span>
+          <button type="button" class="mk-snipe" data-role="cancel-all-ok">retirar todos</button>
+          <button type="button" class="mk-snipe" data-role="cancel-all-no">não</button>
+        </div>`;
+      }
+
+      return `<div class="mk-bolsa-filtros">
+        <button type="button" class="mk-snipe" data-role="cancel-all-ask"
+          title="Retirar do mercado todos os anúncios listados aqui">Retirar todos (${linhas.length})</button>
+      </div>`;
+    },
+
+    /**
+     * Retira, um a um, todos os anúncios visíveis na aba.
+     *
+     * Em série, não em paralelo: cada retirada devolve um item à mochila, e N
+     * chamadas simultâneas na mesma conta disputariam as vagas livres — com
+     * mochila quase cheia a diferença entre "voltou" e "foi para o correio"
+     * deixaria de ser previsível. Um erro no meio não aborta o resto: os
+     * anúncios são independentes, e parar deixaria metade do pedido feito sem
+     * o usuário saber qual metade.
+     */
+    async doCancelAll() {
+      const m = this.mine;
+      if (!m) return;
+
+      const alvos = [];
+      for (const c of (m.contas || [])) {
+        if (this.mineConta !== null && c.index !== this.mineConta) continue;
+        for (const l of c.listings || []) {
+          if (l && l.id) alvos.push({ id: String(l.id), index: c.index });
+        }
+      }
+
+      this.cancelAllAsk = false;
+      if (!alvos.length) { this.render(); return; }
+
+      this.cancelAllBusy = { feitos: 0, total: alvos.length };
+      this.render();
+
+      let ok = 0;
+      let falhas = 0;
+      let correio = 0;
+      for (const a of alvos) {
+        const res = await this.api.marketCancel({ index: a.index, id: a.id })
+          .catch(e => ({ ok: false, error: e && e.message }));
+        if (res && res.ok) { ok++; if (res.toMail) correio++; }
+        else falhas++;
+        this.cancelAllBusy = { feitos: ok + falhas, total: alvos.length };
+        this.render();
+      }
+
+      this.cancelAllBusy = null;
+
+      if (falhas) {
+        this.say(`${ok} ${ok === 1 ? 'anúncio retirado' : 'anúncios retirados'}, ${
+          falhas} ${falhas === 1 ? 'falhou' : 'falharam'}.`, true);
+      } else if (correio) {
+        this.say(`${ok} ${ok === 1 ? 'anúncio retirado' : 'anúncios retirados'}. ${
+          correio} ${correio === 1 ? 'item foi' : 'itens foram'} para o correio — a mochila estava cheia, e lá expira.`, true);
+      } else {
+        this.say(`${ok} ${ok === 1 ? 'anúncio retirado' : 'anúncios retirados'}. ${
+          ok === 1 ? 'O item voltou' : 'Os itens voltaram'} para a mochila.`);
+      }
+
+      await this.load();
+      this.render();
     },
 
     /**

@@ -32,6 +32,8 @@ const levelingBoss = require('./src/domain/leveling-boss');
 const levelingListing = require('./src/domain/leveling-listing');
 const levelingAutosell = require('./src/domain/leveling-autosell');
 const levelingCambio = require('./src/domain/leveling-cambio');
+const levelingStats = require('./src/domain/leveling-stats');
+const levelingForge = require('./src/domain/leveling-forge');
 const { levelingCredentials } = require('./src/domain/leveling-credentials');
 
 /** Conta isolada do sniper: somente leitura do mercado. Segredos vêm do ambiente. */
@@ -52,14 +54,14 @@ const MAX_TABS = 16;
 /**
  * Arranjos da grade, por aba:
  *
- *   split — o de sempre: células iguais, uma por painel;
+ *   split — células iguais, uma por painel (legado);
  *   focus — um painel grande e os outros em faixa menor ao lado;
  *   solo  — um painel ocupando a aba inteira. Os outros continuam vivos,
  *           só não são pintados: é a diferença entre esconder e descarregar;
  *   cols  — todos lado a lado em colunas;
- *   rows  — todos empilhados em linhas.
+ *
  */
-const LAYOUTS = ['split', 'focus', 'solo', 'cols', 'rows'];
+const LAYOUTS = ['focus', 'solo', 'cols'];
 /**
  * A raiz do site é a página de divulgação, com um botão que navega até o jogo.
  * O launcher entra direto em `/jogar`: é lá que o cliente roda e que o token
@@ -74,10 +76,6 @@ app.name = 'leveling-launcher';
 try {
   app.setPath('userData', path.join(app.getPath('appData'), 'leveling-launcher'));
 } catch {}
-
-// Mantém a composição fora da GPU, como no launcher irmão: menos RAM de vídeo
-// e nenhuma diferença visível numa interface de painéis.
-app.commandLine.appendSwitch('disable-gpu-compositing');
 
 // `performance.memory` só é confiável com isso, e o custo não se justifica fora
 // da medição.
@@ -103,8 +101,22 @@ function logErro(origem, mensagem) {
   } catch {}
 }
 
+function logGraphicsEvent(origem, dados) {
+  try {
+    logErro(origem, JSON.stringify(dados));
+  } catch {
+    logErro(origem, String(dados));
+  }
+}
+
 process.on('uncaughtException', err => logErro('uncaught', err && err.stack || String(err)));
 process.on('unhandledRejection', err => logErro('rejection', err && err.stack || String(err)));
+
+// O jogo usa WebGL dentro de WebViews. Este evento separa uma falha do
+// compositor de uma falha isolada do renderer do jogo.
+app.on('gpu-process-crashed', (_event, killed) => {
+  logGraphicsEvent('gpu-process-crashed', { killed: !!killed });
+});
 
 // ------------------------------------------------------------------- preferências
 
@@ -115,7 +127,7 @@ const PREFS_FILE = () => path.join(app.getPath('userData'), 'prefs.json');
  * que é o item mais caro do processo.
  */
 const defaultPrefs = () => ({
-  panels: 4,
+   panels: 4,
   /** Abas de quatro contas. `tabs: 3` significa doze contas configuráveis. */
   tabs: 1,
   activeTab: 0,
@@ -192,6 +204,25 @@ const defaultPrefs = () => ({
    */
   cambio: levelingCambio.defaultConfig(),
   /**
+   * Auto-status: distribui os pontos de cada nível na build escolhida.
+   *
+   * É a única automação cuja configuração é **por conta** — `porConta` guarda a
+   * build de cada personagem — porque classe e build não têm valor global que
+   * sirva. A lista de contas excluídas continua sendo `disabled`, como nas
+   * outras.
+   *
+   * Fica em disco porque alocar ponto não tem volta sem pagar respec: nascer no
+   * padrão depois de um reinício gastaria os pontos do nível seguinte numa
+   * build que o usuário não escolheu.
+   */
+  stats: levelingStats.defaultConfig(),
+  /**
+   * Auto-forja. Em disco pelo motivo mais forte da série: desmontar **apaga a
+   * peça** e fundir consome cinco delas. Nascer num padrão depois de um
+   * reinício começaria a moer o inventário no primeiro drop.
+   */
+  forge: levelingForge.defaultConfig(),
+  /**
    * Quando o último hop fechou. Não é configuração, é o relógio do intervalo:
    * sem ele, reiniciar o launcher liberaria um hop na hora, por mais perto que
    * estivesse do anterior.
@@ -231,8 +262,8 @@ function normalizePrefs(raw) {
     const panels = Math.min(ACCOUNTS_PER_TAB, Math.max(1, +tab.panels || +raw.panels || ACCOUNTS_PER_TAB));
     return {
       panels,
-      /** Arranjo da grade. `split` é o de sempre; os outros vieram depois. */
-      layout: LAYOUTS.includes(tab.layout) ? tab.layout : 'split',
+      /** Colunas é o padrão: todos os painéis ficam visíveis lado a lado. */
+      layout: tab.layout === 'split' ? 'cols' : (LAYOUTS.includes(tab.layout) ? tab.layout : 'cols'),
       /** Painel grande em `focus` e único visível em `solo`. */
       focus: Math.min(panels - 1, Math.max(0, +tab.focus || 0))
     };
@@ -261,6 +292,15 @@ function normalizePrefs(raw) {
   // `intervaloMs: 1` passa por aqui antes de qualquer hop.
   raw.cambio = levelingCambio.normalizeConfig(raw.cambio);
   raw.cambioLastAtMs = Math.max(0, +raw.cambioLastAtMs || 0);
+  // **Gasta ponto de atributo**, e desfazer custa token de respec ou cristal:
+  // nenhuma outra automação daqui queima recurso do personagem de forma tão
+  // definitiva. Um `prefs.json` com uma build inexistente ou pesos negativos
+  // passa por aqui antes de qualquer alocação.
+  raw.stats = levelingStats.normalizeConfig(raw.stats);
+  // **Destrói equipamento**: um `prefs.json` com alvo inválido, lista de
+  // guardados corrompida ou teto de desmonte absurdo passa por aqui antes de
+  // qualquer fusão.
+  raw.forge = levelingForge.normalizeConfig(raw.forge);
   return raw;
 }
 
@@ -476,7 +516,11 @@ levelingHeadlessManager.marketDb = {
   // A mediana do auto-anunciar. Sem ela nenhum item tem preço, e a rodada
   // inteira sai como "sem vendas registradas deste nível" — que é exatamente o
   // que o relatório mostrava enquanto este método faltava aqui.
-  salesForPricing: (defId, opts) => market().salesForPricing(defId, opts)
+  salesForPricing: (defId, opts) => market().salesForPricing(defId, opts),
+  // A cotação do diamante, pela mesma razão: é ela que converte o preço em
+  // ouro quando o anúncio sai em diamante e o item não tem histórico nessa
+  // moeda. Faltando aqui, todo item cairia em `price.noRate`.
+  exchangeRate: opts => market().exchangeRate(opts)
 };
 
 function syncMarketPoll() {
@@ -487,6 +531,14 @@ function syncMarketPoll() {
 }
 
 levelingHeadlessManager.on('status', syncMarketPoll);
+function syncMailPoll() {
+  const ativa = [...levelingHeadlessManager.clients.values()]
+    .some(c => c && c.index >= 0 && c.status === 'connected');
+  if (ativa) levelingHeadlessManager.startMailPoll();
+  else levelingHeadlessManager.stopMailPoll();
+}
+
+levelingHeadlessManager.on('status', syncMailPoll);
 levelingHeadlessManager.on('market', data => broadcast('leveling:market', data));
 
 // ----------------------------------------------------------------- sniper
@@ -685,6 +737,109 @@ function syncCambioPoll() {
 levelingHeadlessManager.on('status', syncCambioPoll);
 levelingHeadlessManager.on('cambio', data => broadcast('leveling:cambio', data));
 
+// --------------------------------------------------------------- auto-status
+
+levelingHeadlessManager.statsSink = config => {
+  try {
+    writePrefs({ stats: config });
+  } catch (e) {
+    logErro('stats', e.message);
+  }
+};
+
+/**
+ * Relatório do auto-status em disco.
+ *
+ * Mesmo motivo do relatório do câmbio: o launcher gastou pontos que **não
+ * voltam** sem respec, e o jogo não guarda histórico de alocação. Cada linha
+ * traz o nível, a build e a divisão exata, para a conferência depois ser
+ * possível sem o servidor.
+ */
+const STATS_LOG_FILE = () => path.join(app.getPath('userData'), 'stats-log.json');
+
+function readStatsLogFile() {
+  try {
+    const lido = JSON.parse(fs.readFileSync(STATS_LOG_FILE(), 'utf-8'));
+    return Array.isArray(lido) ? lido : null;
+  } catch {
+    return null;
+  }
+}
+
+levelingHeadlessManager.statsLogSink = entries => {
+  try {
+    fs.writeFileSync(STATS_LOG_FILE(), JSON.stringify(entries));
+  } catch (e) {
+    logErro('stats', e.message);
+  }
+};
+
+/**
+ * Cópia das classes e builds em disco.
+ *
+ * Só para a janela abrir com o seletor cheio antes de qualquer login: a
+ * primeira conta a conectar relê o catálogo do servidor e substitui esta cópia,
+ * que pode estar velha em relação ao jogo.
+ */
+const CLASSES_FILE = () => path.join(app.getPath('userData'), 'classes.json');
+
+function readClassesFile() {
+  try {
+    return JSON.parse(fs.readFileSync(CLASSES_FILE(), 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+levelingHeadlessManager.on('classes', ({ catalog }) => {
+  try {
+    fs.writeFileSync(CLASSES_FILE(), JSON.stringify(catalog));
+  } catch (e) {
+    logErro('stats', e.message);
+  }
+});
+
+// A janela pode estar fechada, e quem a abrir depois lê tudo por `stats:get`.
+levelingHeadlessManager.on('stats', data => broadcast('leveling:stats', data));
+
+// ---------------------------------------------------------------- auto-forja
+
+levelingHeadlessManager.forgeSink = config => {
+  try {
+    writePrefs({ forge: config });
+  } catch (e) {
+    logErro('forge', e.message);
+  }
+};
+
+/**
+ * Relatório da forja em disco.
+ *
+ * A auditoria mais necessária das que o launcher guarda: as peças desmontadas
+ * não existem mais e o jogo não registra desmonte nenhum. Cada linha traz o que
+ * entrou, o que saiu e quanto custou.
+ */
+const FORGE_LOG_FILE = () => path.join(app.getPath('userData'), 'forge-log.json');
+
+function readForgeLogFile() {
+  try {
+    const lido = JSON.parse(fs.readFileSync(FORGE_LOG_FILE(), 'utf-8'));
+    return Array.isArray(lido) ? lido : null;
+  } catch {
+    return null;
+  }
+}
+
+levelingHeadlessManager.forgeLogSink = entries => {
+  try {
+    fs.writeFileSync(FORGE_LOG_FILE(), JSON.stringify(entries));
+  } catch (e) {
+    logErro('forge', e.message);
+  }
+};
+
+levelingHeadlessManager.on('forge', data => broadcast('leveling:forge', data));
+
 /**
  * Venda da própria conta. O feed público anonimiza vendedor e comprador, então
  * esta é a única via que traz quem comprou. `MarketSold` não tem id de venda
@@ -720,7 +875,7 @@ levelingHeadlessManager.on('market-sold', ({ index, sold }) => {
  */
 const LAUNCHER_PAGES = [
   'index.html', 'market.html', 'sniper.html', 'expedition.html', 'boss.html', 'autosell.html',
-  'cambio.html'
+  'cambio.html', 'stats.html', 'forge.html'
 ].map(
   f => require('url').pathToFileURL(path.join(__dirname, f)).href
 );
@@ -1674,11 +1829,17 @@ ipcMain.handle('leveling:sniper:log-clear', event => {
  * `catalogReady` existe porque é a causa mais provável de uma rodada vazia que
  * parece quebrada: sem catálogo nada é classificado, logo nada é anunciado, e
  * a tela precisa poder dizer "espere o primeiro login" em vez de nada.
+ *
+ * `rate` é a cotação do diamante, e vem sempre — não só no modo diamante. A
+ * tela a mostra para o usuário poder decidir **antes** de trocar a moeda: sem
+ * amostra de câmbio no banco, o modo diamante vende pouco, e descobrir isso
+ * depois de ligá-lo seria uma rodada vazia sem explicação.
  */
 function autosellState() {
   const creds = levelingCredentials.getPublicStatus();
   const catalogo = levelingHeadlessManager.getMarketCatalog();
   return {
+    rate: market().exchangeRate({ days: 7 }),
     config: levelingHeadlessManager.getAutosellConfig(),
     accounts: (creds.accounts || []).map((entry, index) => {
       const client = levelingHeadlessManager.getClient(index);
@@ -1880,6 +2041,174 @@ ipcMain.handle('leveling:cambio:log-clear', event => {
   return { ok: true };
 });
 
+// --------------------------------------------------------------- auto-status
+
+/**
+ * O que a tela do status precisa saber.
+ *
+ * `statsReport` já traz as contas, as classes e o relatório; o que falta é o
+ * nome de usuário das contas que **não** estão em monitor. Sem isso a tela não
+ * conseguiria nomear a linha de uma conta desconectada, e é exatamente nela que
+ * o usuário quer escolher a build antes de conectar.
+ */
+function statsState() {
+  const creds = levelingCredentials.getPublicStatus();
+  const report = levelingHeadlessManager.statsReport();
+  const porIndice = new Map(report.accounts.map(c => [c.index, c]));
+
+  return {
+    ...report,
+    accounts: (creds.accounts || []).map((entry, index) => {
+      const linha = porIndice.get(index);
+      const username = (entry && entry.username) || '';
+      if (linha) return { ...linha, username };
+      // Conta com credencial mas sem monitor nenhum: aparece com a escolha
+      // salva e `connected: false`, em vez de sumir da lista.
+      return {
+        index,
+        username,
+        name: '',
+        connected: false,
+        enabled: levelingStats.accountEnabled(levelingHeadlessManager.statsConfig, index),
+        stats: null,
+        ...levelingStats.summarize({
+          config: levelingHeadlessManager.statsConfig,
+          index,
+          catalog: levelingHeadlessManager.getClassCatalog()
+        })
+      };
+    }),
+    limits: { pointsPerLevel: report.pointsPerLevel }
+  };
+}
+
+ipcMain.handle('leveling:stats:get', event => {
+  launcherOnly(event);
+  return statsState();
+});
+
+/**
+ * Salva a configuração e aplica na hora.
+ *
+ * Aplica antes de gravar, e grava o que o serviço aceitou, como no câmbio: o
+ * que o serviço normaliza é o que vai rodar. Aqui isso pesa mais que em
+ * qualquer outra automação — uma build inexistente ou pesos todos em zero viram
+ * "sem configuração", e persistir a cópia crua da tela deixaria no disco uma
+ * escolha que nunca seria usada.
+ *
+ * Ligar isto já distribui: `setStatsConfig` zera o recuo e chama a distribuição
+ * nas contas conectadas que têm ponto parado. É deliberado — o usuário que
+ * acabou de escolher a build espera ver os pontos saírem, não esperar o nível
+ * seguinte.
+ */
+ipcMain.handle('leveling:stats:set', (event, config) => {
+  launcherOnly(event);
+  const aplicada = levelingHeadlessManager.setStatsConfig(config);
+  writePrefs({ stats: aplicada });
+  return { ok: true, ...statsState() };
+});
+
+/**
+ * Distribui agora em todas as contas que participam.
+ *
+ * Gasta ponto de verdade e não tem desfazer barato, mas é o único jeito de o
+ * usuário conferir a divisão antes de confiar no automático — e a prévia da
+ * janela mostra exatamente o que vai sair antes do clique.
+ */
+ipcMain.handle('leveling:stats:run', async event => {
+  launcherOnly(event);
+  return await levelingHeadlessManager.pollStats();
+});
+
+ipcMain.handle('leveling:stats:log', event => {
+  launcherOnly(event);
+  return { log: levelingHeadlessManager.getStatsLog() };
+});
+
+ipcMain.handle('leveling:stats:log-clear', event => {
+  launcherOnly(event);
+  levelingHeadlessManager.clearStatsLog();
+  return { ok: true };
+});
+
+// ---------------------------------------------------------------- auto-forja
+
+/**
+ * O que a tela da forja precisa saber.
+ *
+ * Mesma costura do status: `forgeReport` traz as contas em monitor, as
+ * raridades e as regras; o que falta é o nome de usuário das contas
+ * desconectadas, para a linha delas poder ser nomeada antes de conectar.
+ */
+async function forgeState(options = {}) {
+  const creds = levelingCredentials.getPublicStatus();
+  const report = await levelingHeadlessManager.forgeReport(options);
+  const porIndice = new Map(report.accounts.map(c => [c.index, c]));
+
+  return {
+    ...report,
+    accounts: (creds.accounts || []).map((entry, index) => {
+      const linha = porIndice.get(index);
+      const username = (entry && entry.username) || '';
+      if (linha) return { ...linha, username };
+      return {
+        index,
+        username,
+        name: '',
+        connected: false,
+        enabled: levelingForge.accountEnabled(levelingHeadlessManager.forgeConfig, index),
+        stats: null,
+        summary: null
+      };
+    })
+  };
+}
+
+ipcMain.handle('leveling:forge:get', async (event, options) => {
+  launcherOnly(event);
+  return await forgeState(options || {});
+});
+
+/**
+ * Salva a configuração e aplica na hora.
+ *
+ * Aplica antes de gravar e grava o que o serviço aceitou, como no status: o que
+ * o serviço normaliza é o que vai rodar.
+ *
+ * Ao contrário do status, salvar **não** forja: `setForgeConfig` só zera o
+ * recuo. Uma rodada apaga peças, e o gesto de salvar a tela não pode ser o que
+ * começa a destruir inventário — quem dispara é o próximo drop, ou o botão.
+ */
+ipcMain.handle('leveling:forge:set', async (event, config) => {
+  launcherOnly(event);
+  const aplicada = levelingHeadlessManager.setForgeConfig(config);
+  writePrefs({ forge: aplicada });
+  return { ok: true, ...(await forgeState()) };
+});
+
+/**
+ * Uma rodada agora em todas as contas que participam.
+ *
+ * Destrói equipamento de verdade: a janela mostra o déficit e o custo estimado
+ * antes do clique, e os tetos de fusão e desmonte por rodada valem aqui igual.
+ */
+ipcMain.handle('leveling:forge:run', async event => {
+  launcherOnly(event);
+  await levelingHeadlessManager.pollForge();
+  return await forgeState();
+});
+
+ipcMain.handle('leveling:forge:log', event => {
+  launcherOnly(event);
+  return { log: levelingHeadlessManager.getForgeLog() };
+});
+
+ipcMain.handle('leveling:forge:log-clear', event => {
+  launcherOnly(event);
+  levelingHeadlessManager.clearForgeLog();
+  return { ok: true };
+});
+
 ipcMain.handle('window:control', (event, action) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return null;
   if (action === 'minimize') mainWindow.minimize();
@@ -1918,6 +2247,32 @@ ipcMain.handle('errlog:write', (_event, origem, mensagem) => {
 // --------------------------------------------------------- janela do mercado
 
 /**
+ * As janelas auxiliares não são um navegador: zoom diferente de 100% faz
+ * controles e relatórios desaparecerem da viewport, além de poder ficar salvo
+ * para a próxima abertura. Mantém todas essas telas em escala fixa.
+ */
+function fixStandaloneWindowZoom(window) {
+  const reset = () => resetStandaloneWindowZoom(window);
+
+  reset();
+  window.webContents.on('did-finish-load', reset);
+  window.webContents.on('before-input-event', (event, input) => {
+    if (!(input.control || input.meta)) return;
+    if (!['+', '-', '=', '_', '0'].includes(input.key)) return;
+    event.preventDefault();
+    if (input.key === '0') reset();
+  });
+}
+
+function resetStandaloneWindowZoom(window) {
+  if (window.isDestroyed()) return;
+  window.webContents.setZoomFactor(1);
+  if (typeof window.webContents.setVisualZoomLevelLimits === 'function') {
+    window.webContents.setVisualZoomLevelLimits(0, 0).catch(() => {});
+  }
+}
+
+/**
  * O mercado numa janela própria.
  *
  * Era um modal sobre o launcher, e isso o inutilizava para a sua razão de
@@ -1937,6 +2292,7 @@ let marketWindow = null;
 
 function openMarketWindow() {
   if (marketWindow && !marketWindow.isDestroyed()) {
+    resetStandaloneWindowZoom(marketWindow);
     if (marketWindow.isMinimized()) marketWindow.restore();
     marketWindow.focus();
     return true;
@@ -1964,6 +2320,7 @@ function openMarketWindow() {
     }
   });
 
+  fixStandaloneWindowZoom(marketWindow);
   marketWindow.loadFile(path.join(__dirname, 'market.html'));
   marketWindow.once('ready-to-show', () => marketWindow.show());
 
@@ -2017,6 +2374,7 @@ let sniperWindow = null;
 
 function openSniperWindow() {
   if (sniperWindow && !sniperWindow.isDestroyed()) {
+    resetStandaloneWindowZoom(sniperWindow);
     if (sniperWindow.isMinimized()) sniperWindow.restore();
     sniperWindow.focus();
     return true;
@@ -2041,6 +2399,7 @@ function openSniperWindow() {
     }
   });
 
+  fixStandaloneWindowZoom(sniperWindow);
   sniperWindow.loadFile(path.join(__dirname, 'sniper.html'));
   sniperWindow.once('ready-to-show', () => sniperWindow.show());
 
@@ -2077,6 +2436,7 @@ let expeditionWindow = null;
 
 function openExpeditionWindow() {
   if (expeditionWindow && !expeditionWindow.isDestroyed()) {
+    resetStandaloneWindowZoom(expeditionWindow);
     if (expeditionWindow.isMinimized()) expeditionWindow.restore();
     expeditionWindow.focus();
     return true;
@@ -2101,6 +2461,7 @@ function openExpeditionWindow() {
     }
   });
 
+  fixStandaloneWindowZoom(expeditionWindow);
   expeditionWindow.loadFile(path.join(__dirname, 'expedition.html'));
   expeditionWindow.once('ready-to-show', () => expeditionWindow.show());
 
@@ -2136,6 +2497,7 @@ let bossWindow = null;
 
 function openBossWindow() {
   if (bossWindow && !bossWindow.isDestroyed()) {
+    resetStandaloneWindowZoom(bossWindow);
     if (bossWindow.isMinimized()) bossWindow.restore();
     bossWindow.focus();
     return true;
@@ -2160,6 +2522,7 @@ function openBossWindow() {
     }
   });
 
+  fixStandaloneWindowZoom(bossWindow);
   bossWindow.loadFile(path.join(__dirname, 'boss.html'));
   bossWindow.once('ready-to-show', () => bossWindow.show());
 
@@ -2192,6 +2555,7 @@ let autosellWindow = null;
 
 function openAutosellWindow() {
   if (autosellWindow && !autosellWindow.isDestroyed()) {
+    resetStandaloneWindowZoom(autosellWindow);
     if (autosellWindow.isMinimized()) autosellWindow.restore();
     autosellWindow.focus();
     return true;
@@ -2216,6 +2580,7 @@ function openAutosellWindow() {
     }
   });
 
+  fixStandaloneWindowZoom(autosellWindow);
   autosellWindow.loadFile(path.join(__dirname, 'autosell.html'));
   autosellWindow.once('ready-to-show', () => autosellWindow.show());
 
@@ -2249,6 +2614,7 @@ let cambioWindow = null;
 
 function openCambioWindow() {
   if (cambioWindow && !cambioWindow.isDestroyed()) {
+    resetStandaloneWindowZoom(cambioWindow);
     if (cambioWindow.isMinimized()) cambioWindow.restore();
     cambioWindow.focus();
     return true;
@@ -2273,6 +2639,7 @@ function openCambioWindow() {
     }
   });
 
+  fixStandaloneWindowZoom(cambioWindow);
   cambioWindow.loadFile(path.join(__dirname, 'cambio.html'));
   cambioWindow.once('ready-to-show', () => cambioWindow.show());
 
@@ -2294,6 +2661,114 @@ function openCambioWindow() {
 ipcMain.handle('leveling:cambio:window', event => {
   launcherOnly(event);
   return openCambioWindow();
+});
+
+/**
+ * Janela do status. Mesma decisão das outras: é uma tela de conferência, com
+ * uma linha por conta e a prévia da divisão de cada uma, e como modal cobriria
+ * o painel que mostra o nível e os pontos parados.
+ */
+let statsWindow = null;
+
+function openStatsWindow() {
+  if (statsWindow && !statsWindow.isDestroyed()) {
+    resetStandaloneWindowZoom(statsWindow);
+    if (statsWindow.isMinimized()) statsWindow.restore();
+    statsWindow.focus();
+    return true;
+  }
+
+  statsWindow = new BrowserWindow({
+    width: 1020,
+    height: 760,
+    minWidth: 720,
+    minHeight: 460,
+    title: 'Status · Leveling Idle 2D',
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#0b0f14',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      spellcheck: false
+    }
+  });
+
+  fixStandaloneWindowZoom(statsWindow);
+  statsWindow.loadFile(path.join(__dirname, 'stats.html'));
+  statsWindow.once('ready-to-show', () => statsWindow.show());
+
+  statsWindow.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith('file://')) {
+      e.preventDefault();
+      openOutside(url);
+    }
+  });
+  statsWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openOutside(url);
+    return { action: 'deny' };
+  });
+
+  statsWindow.on('closed', () => { statsWindow = null; });
+  return true;
+}
+
+ipcMain.handle('leveling:stats:window', event => {
+  launcherOnly(event);
+  return openStatsWindow();
+});
+
+/**
+ * Janela da forja. Mesma decisão das outras, e aqui com o motivo mais direto:
+ * a tela tem uma grade de onze slots por conta, e é a conferência que o usuário
+ * faz **antes** de autorizar a destruição de peças.
+ */
+let forgeWindow = null;
+
+function openForgeWindow() {
+  if (forgeWindow && !forgeWindow.isDestroyed()) {
+    resetStandaloneWindowZoom(forgeWindow);
+    if (forgeWindow.isMinimized()) forgeWindow.restore();
+    forgeWindow.focus();
+    return true;
+  }
+
+  forgeWindow = new BrowserWindow({
+    width: 1080,
+    height: 800,
+    minWidth: 760,
+    minHeight: 480,
+    title: 'Forja · Leveling Idle 2D',
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#0b0f14',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      spellcheck: false
+    }
+  });
+
+  fixStandaloneWindowZoom(forgeWindow);
+  forgeWindow.loadFile(path.join(__dirname, 'forge.html'));
+  forgeWindow.once('ready-to-show', () => forgeWindow.show());
+
+  forgeWindow.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith('file://')) {
+      e.preventDefault();
+      openOutside(url);
+    }
+  });
+  forgeWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openOutside(url);
+    return { action: 'deny' };
+  });
+
+  forgeWindow.on('closed', () => { forgeWindow = null; });
+  return true;
+}
+
+ipcMain.handle('leveling:forge:window', event => {
+  launcherOnly(event);
+  return openForgeWindow();
 });
 
 ipcMain.handle('leveling:market:window-close', event => {
@@ -2416,6 +2891,29 @@ function createWindow() {
   // segunda conta, via `syncCambioPoll`.
   syncCambioPoll();
 
+  // E o status, que é o único cujo erro cobra **recurso do personagem** para
+  // desfazer: ponto alocado só volta com token de respec ou cristal. A build
+  // salva é a que vale no boot, porque uma conta que subiu de nível com o
+  // launcher fechado tem pontos parados e eles são distribuídos no próprio
+  // login — no padrão da classe, se a escolha do usuário não for restaurada
+  // antes.
+  //
+  // O catálogo em disco entra primeiro: sem ele, o `character_state` do login
+  // chegaria antes das builds e a distribuição recuaria um minuto por
+  // `stats.noCatalog`.
+  levelingHeadlessManager.setClassCatalog(readClassesFile());
+  levelingHeadlessManager.setStatsConfig(prefs.stats);
+  levelingHeadlessManager.setStatsLog(readStatsLogFile() || []);
+
+  // E a forja, pelo mesmo motivo levado ao extremo: peça desmontada não volta
+  // de jeito nenhum, nem pagando. O alvo salvo é o que vale no boot; sem
+  // restaurá-lo a automação nasceria desligada e sem alvo, que é o padrão —
+  // seguro, mas não é o que o usuário escolheu.
+  levelingHeadlessManager.setForgeConfig(prefs.forge);
+  levelingHeadlessManager.setForgeLog(readForgeLogFile() || []);
+  // Não há laço a ligar: a distribuição é disparada pelo `character_patch` de
+  // cada conta, que é o pacote que anuncia os pontos novos.
+
   mainWindow = new BrowserWindow({
     width: 1600,
     height: 900,
@@ -2492,7 +2990,52 @@ function createWindow() {
 // As WebViews do jogo abrem popups (pagamento, login social) que devem ir para
 // o navegador, não virar janelas sem moldura dentro do launcher.
 app.on('web-contents-created', (_event, contents) => {
-  if (contents.getType() !== 'webview') return;
+  const type = contents.getType();
+  contents.on('render-process-gone', (_goneEvent, details) => {
+    logGraphicsEvent('render-process-gone', {
+      type,
+      webContentsId: contents.id,
+      reason: details && details.reason,
+      exitCode: details && details.exitCode,
+      url: contents.getURL() || ''
+    });
+  });
+  contents.on('unresponsive', () => {
+    logGraphicsEvent('renderer-unresponsive', {
+      type,
+      webContentsId: contents.id,
+      url: contents.getURL() || ''
+    });
+  });
+  contents.on('responsive', () => {
+    logGraphicsEvent('renderer-responsive', {
+      type,
+      webContentsId: contents.id
+    });
+  });
+
+  if (type !== 'webview') return;
+
+  contents.on('console-message', (_consoleEvent, level, message, line, sourceId) => {
+    if (!/(webgl|gpu|context|renderer)/i.test(String(message))) return;
+    logGraphicsEvent('webview-console', {
+      webContentsId: contents.id,
+      level,
+      message: String(message).slice(0, 1000),
+      line,
+      sourceId
+    });
+  });
+  contents.on('did-fail-load', (_loadEvent, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return;
+    logGraphicsEvent('webview-did-fail-load', {
+      webContentsId: contents.id,
+      errorCode,
+      errorDescription,
+      url: validatedURL || ''
+    });
+  });
+
   contents.setWindowOpenHandler(({ url }) => {
     openOutside(url);
     return { action: 'deny' };
@@ -2522,6 +3065,17 @@ app.on('web-contents-created', (_event, contents) => {
   });
 });
 
+ipcMain.on('graphics:webgl', (event, kind) => {
+  if (event.sender.getType() !== 'webview') return;
+  const allowed = new Set(['contextlost', 'contextrestored']);
+  if (!allowed.has(kind)) return;
+  logGraphicsEvent('webgl-' + kind, {
+    webContentsId: event.sender.id,
+    account: accountIndexOf(event.sender.session) + 1,
+    url: event.sender.getURL() || ''
+  });
+});
+
 /**
  * O token da sessão web, pedido pelo preload da conta antes de a página rodar.
  * Síncrono porque o preload precisa gravá-lo antes do bundle do jogo; é uma
@@ -2540,6 +3094,14 @@ ipcMain.on('leveling:token:set', (event, token) => {
 });
 
 app.whenReady().then(() => {
+  try {
+    logGraphicsEvent('gpu-feature-status', app.getGPUFeatureStatus());
+    app.getGPUInfo('basic')
+      .then(info => logGraphicsEvent('gpu-info', info))
+      .catch(error => logErro('gpu-info', error && error.message || String(error)));
+  } catch (error) {
+    logErro('gpu-status', error && error.message || String(error));
+  }
   createWindow();
   buildTray();
   startDedicatedSniperMarketAccount();

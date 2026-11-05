@@ -795,16 +795,28 @@ class MarketDatabase {
    * (`level IS NULL`) ficam de fora quando há nível pedido: incluí-las seria
    * supor que são do nível certo.
    *
-   * Só ouro. Anunciar em diamante por um preço calculado sobre vendas em
-   * ouro erraria por três ordens de grandeza.
+   * O encanto casa exatamente quando pedido, pelo mesmo motivo do nível: uma
+   * peça +3 não vale o que vale a +0 do mesmo nível. Pedir `enchant: 0` é
+   * pedir as não encantadas, não "qualquer encanto" — `undefined` é o que
+   * significa "não filtra". Confundir os dois era o que fazia a mediana de
+   * uma peça encantada sair pelo preço da comum, mesmo com a chave de cache
+   * prometendo o encanto exato.
+   *
+   * Uma moeda por consulta, nunca as duas. `currency: 'diamond'` troca o
+   * filtro em vez de misturar: anunciar em diamante por um preço calculado
+   * sobre vendas em ouro erraria por três ordens de grandeza, e a média das
+   * duas moedas juntas não descreve nenhuma venda que aconteceu.
    */
   salesForPricing(defId, opts = {}) {
     if (!this.open() || !defId) return [];
     const limit = Math.min(Math.max(num(opts.limit) || 10, 1), 100);
-    const where = [`def_id = ?`, SQL_OURO];
+    const moeda = String(opts.currency || '') === 'diamond' ? SQL_DIAMANTE : SQL_OURO;
+    const where = [`def_id = ?`, moeda];
     const params = [String(defId)];
     const nivel = num(opts.level);
     if (nivel > 0) { where.push('level = ?'); params.push(nivel); }
+    // `!= null` e não `> 0`: zero é um encanto válido e é o mais comum.
+    if (opts.enchant != null) { where.push('enchant = ?'); params.push(num(opts.enchant)); }
     const since = sinceOf(opts.days);
     if (since) { where.push('sold_at_ms >= ?'); params.push(since); }
     try {
@@ -818,6 +830,59 @@ class MarketDatabase {
     } catch (err) {
       this.error = err && err.message || String(err);
       return [];
+    }
+  }
+
+  /**
+   * A cotação do diamante em ouro, segundo o câmbio do próprio mercado.
+   *
+   * É a ponte que permite anunciar em diamante um item que nunca foi vendido
+   * em diamante: sem ela, o preço em diamante só existiria para o punhado de
+   * itens com histórico naquela moeda.
+   *
+   * A fonte é `cambio:diamante` com `kind = MARKET_KIND_EXCHANGE`, onde
+   * `unit_price` é ouro por diamante. Ele é confiável hoje por dois motivos
+   * que já estão neste arquivo: `unitPriceOf` corrige a entrada (o servidor
+   * manda o preço do **lote** na coluna do unitário) e `migrate` já reparou o
+   * histórico gravado antes dessa correção existir.
+   *
+   * Mediana, não média: o câmbio tem anúncio de despejo e de otimista nas duas
+   * pontas, e a média entre 150 k e 900 k não é uma taxa pela qual alguém
+   * trocou algo.
+   *
+   * Janela curta — 7 dias por padrão. A cotação é volátil de verdade, e uma
+   * taxa de 90 dias descreveria um mercado que não existe mais.
+   *
+   * Devolve a conta inteira, nunca o número solto: quem converte um preço por
+   * esta taxa tem de poder registrar de quantas vendas ela saiu. Uma cotação
+   * sem amostra é um palpite com cara de cotação, e o anúncio que sai dela é
+   * irreversível.
+   */
+  exchangeRate(opts = {}) {
+    const vazio = { rate: 0, samples: 0, days: 0 };
+    if (!this.open()) return vazio;
+    const dias = num(opts.days) > 0 ? num(opts.days) : 7;
+    const since = sinceOf(dias);
+    try {
+      const r = this.db.prepare(`
+        WITH r AS (
+          SELECT unit_price,
+                 ROW_NUMBER() OVER (ORDER BY unit_price) AS rn,
+                 COUNT(*)     OVER ()                    AS c
+          FROM sales
+          WHERE def_id = '${CAMBIO_PREFIX}diamante'
+            AND kind = '${KIND_EXCHANGE}'
+            AND sold_at_ms >= ?
+            AND unit_price > 0
+        )
+        SELECT AVG(unit_price) AS mediana, MAX(c) AS n
+        FROM r WHERE rn IN ((c + 1) / 2, (c + 2) / 2)
+      `).get(since);
+      const rate = Math.round((r && r.mediana) || 0);
+      return { rate: rate > 0 ? rate : 0, samples: (r && r.n) || 0, days: dias };
+    } catch (err) {
+      this.error = err && err.message || String(err);
+      return vazio;
     }
   }
 

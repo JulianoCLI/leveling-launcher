@@ -2366,9 +2366,33 @@ body.lv-auto-standalone {
   font-variant-numeric: tabular-nums;
 }
 
-.lv-auto .xp-interval input:focus {
+.lv-auto .xp-interval input:focus,
+.lv-auto .xp-interval select:focus {
   outline: 2px solid var(--color-accent);
   outline-offset: 1px;
+}
+
+/* Os seletores de modo de preço e de moeda. Largura automática porque o texto
+   é a informação — "pela média do item" cortado em 72px não diz nada. */
+.lv-auto .xp-interval select {
+  background: var(--color-bg-input, rgba(0, 0, 0, .25));
+  border: 1px solid var(--border-strong);
+  color: var(--color-text-primary);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+/* Campo que não se aplica ao modo escolhido.
+   Apagado mas legível, e nunca escondido: o valor continua ali e volta a
+   valer ao trocar de modo. Sumir com a linha faria o usuário concluir que o
+   piso que ele ajustou foi perdido. */
+.lv-auto .xp-interval.is-off {
+  opacity: .45;
+}
+
+.lv-auto .xp-interval.is-off input {
+  cursor: not-allowed;
 }
 
 /* ------------------------------------------------------ tabela de contas */
@@ -2491,9 +2515,204 @@ body.lv-auto-standalone {
   font-style: italic;
 }
 
+/* Linha de continuação da anterior: os pesos do modo personalizado do status.
+   Recuada e sem borda de topo para ler como parte da conta acima, não como uma
+   conta nova — a tabela tem uma linha por conta e duas linhas para a mesma
+   conta precisam parecer uma. */
+.lv-auto .xp-sub>td {
+  border-top: none;
+  padding-top: 0;
+}
+
+/* Os cinco atributos do modo personalizado, lado a lado. Cada coluna é o
+   campo, o atalho e a % que ele representa — empilhados para que a % fique
+   debaixo do número que a produz. */
+.lv-auto .xp-pesos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.lv-auto .xp-peso {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.lv-auto .xp-peso>label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lv-auto .xp-peso input[type="number"] {
+  width: 58px;
+}
+
+.lv-auto .xp-peso>button {
+  font-size: 10px;
+  padding: 1px 5px;
+  line-height: 1.4;
+}
+
+/* A % é leitura, não campo: tem de ler como resultado do número acima. */
+.lv-auto .xp-peso-pct {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-auto .xp-peso-pct.is-zero {
+  color: var(--color-text-secondary);
+  font-weight: 400;
+}
+
+.lv-auto .xp-peso-warn {
+  color: var(--color-warning, #e0a030);
+}
+
 .lv-auto .xp-err {
   text-align: left !important;
   color: var(--color-warn, #e8b339);
+}
+
+/* ------------------------------------------------------------- auto-forja */
+
+/* Os controles do alvo em linha, quebrando quando a janela estreita: são
+   quatro campos curtos que pertencem à mesma frase ("alvo: nível X e
+   raridade Y, desmontar até Z"). */
+.lv-auto .xp-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 6px 0;
+}
+
+.lv-auto .xp-row>label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.lv-auto .xp-row input[type="number"] {
+  width: 66px;
+}
+
+.lv-auto .xp-keep {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.lv-auto .xp-keep input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.lv-auto .xp-forge-acc {
+  border-top: 1px solid var(--color-border, #223042);
+  padding: 6px 0;
+}
+
+.lv-auto .xp-forge-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.lv-auto .xp-forge-head>label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* A grade de slots. Cada célula carrega agora três coisas — o que está no
+   corpo, o que a fusão faria e com quais níveis — então ela é bem mais larga
+   que na primeira versão, e `auto-fill` continua sendo o que impede o
+   transbordo numa janela estreita. */
+.lv-auto .xp-forge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.lv-auto .xp-forge-slot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 5px;
+  border: 1px solid var(--color-border, #223042);
+  border-radius: 4px;
+  font-size: 11.5px;
+}
+
+/* Verde é "nada a fazer": nenhuma fusão sairia melhor do que o que está no
+   corpo, e não há peça melhor parada na bolsa. É a leitura que mostra que a
+   automação para por si em vez de continuar moendo. */
+.lv-auto .xp-forge-slot.is-ok {
+  border-color: var(--color-success, #3fa45b);
+}
+
+/* Azul é "equipar antes de forjar": a bolsa já tem peça mais forte, e vesti-la
+   é de graça. Distinguir do âmbar importa, porque aqui nada será destruído. */
+.lv-auto .xp-forge-slot.is-equip {
+  border-color: var(--color-info, #4a90d9);
+}
+
+.lv-auto .xp-forge-slot.is-off {
+  border-color: var(--color-warn, #c9a227);
+}
+
+.lv-auto .xp-forge-slot-name {
+  font-weight: 600;
+}
+
+.lv-auto .xp-forge-slot-val {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+
+.lv-auto .xp-forge-slot-act {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-auto .xp-forge-slot-none {
+  color: var(--color-text-secondary);
+  opacity: .7;
+}
+
+.lv-auto .xp-forge-slot-eq {
+  color: var(--color-info, #4a90d9);
+}
+
+.lv-auto .xp-forge-slot-next {
+  font-weight: 600;
+}
+
+/* Os níveis de entrada, em miúdo. Eles existem na tela porque o nível de saída
+   da fusão é o **menor** deles: sem ver "55 55 55 55 52" o usuário não teria
+   como saber que uma peça atrasada puxou a fusão inteira para baixo. */
+.lv-auto .xp-forge-slot-in {
+  font-size: 10.5px;
+  opacity: .65;
+  letter-spacing: .3px;
+}
+
+.lv-auto .xp-forge-est {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ----------------------------------------------------------------- o log */
@@ -2638,6 +2857,113 @@ body.lv-auto-standalone {
 
 .lv-auto .modal-actions {
   flex: 0 0 auto;
+}
+
+/* ------------------------------------------------------------- janela câmbio
+   Esta tela tem três listas independentes. Sem limites próprios, a soma delas
+   empurra as ações para fora da viewport; sem rolagem geral, o botão fica
+   impossível de alcançar. O cabeçalho e as ações continuam disponíveis, e
+   cada lista conserva sua própria leitura. */
+
+body.lv-cambio-standalone {
+  overflow: hidden;
+}
+
+.lv-cambio-standalone .lv-auto {
+  height: 100vh;
+  min-height: 0;
+  padding: 14px 18px 10px;
+  overflow: hidden;
+}
+
+.lv-cambio-standalone .lv-auto .hint {
+  max-width: 1100px;
+}
+
+.lv-cambio-standalone .lv-auto>.hint,
+.lv-cambio-standalone .lv-auto>.lv-warn {
+  flex: 0 0 auto;
+}
+
+.lv-cambio-standalone .lv-auto-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  gap: 8px 18px;
+}
+
+.lv-cambio-standalone .lv-auto-controls .xp-master {
+  grid-column: 1 / -1;
+}
+
+.lv-cambio-standalone .lv-auto-controls .xp-interval {
+  min-width: 0;
+  margin-left: 0;
+}
+
+.lv-cambio-standalone .lv-auto-controls .xp-interval span {
+  min-width: 0;
+}
+
+.lv-cambio-standalone .lv-auto-controls input,
+.lv-cambio-standalone .lv-auto-controls select {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.lv-cambio-standalone .lv-auto-accounts {
+  flex: 1 1 0;
+  max-height: none;
+  min-height: 0;
+}
+
+.lv-cambio-standalone .lv-auto-log {
+  flex: 1 1 0;
+  max-height: none;
+}
+
+.lv-cambio-standalone .xp-line {
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.lv-cambio-standalone .xp-line-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lv-cambio-standalone .modal-actions {
+  position: relative;
+  z-index: 2;
+  flex-wrap: wrap;
+  padding: 10px 0 2px;
+  margin-top: 8px;
+  background: linear-gradient(to bottom, transparent, var(--color-bg-elevated) 12px);
+}
+
+.lv-cambio-standalone .modal-actions button {
+  min-height: 34px;
+}
+
+@media (max-width: 700px) {
+  .lv-cambio-standalone .lv-auto-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .lv-cambio-standalone .lv-auto-controls .xp-master {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .lv-cambio-standalone .lv-auto {
+    padding-inline: 12px;
+  }
+
+  .lv-cambio-standalone .modal-actions button {
+    flex: 1 1 180px;
+  }
 }
 
 @media (max-width: 760px) {

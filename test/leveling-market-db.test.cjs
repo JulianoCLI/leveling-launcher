@@ -154,6 +154,94 @@ test('venda em diamante fica fora do preço de anúncio em ouro', () => {
   db.close();
 });
 
+test('o encanto filtra exatamente, e zero é um encanto, não "qualquer um"', () => {
+  // A chave de cache do auto-anunciar promete `defId@level+enchant`, mas a
+  // consulta filtrava só o nível: a mediana de uma peça +3 saía pelo preço da
+  // +0. `enchant: 0` pede as não encantadas; `undefined` é o que não filtra.
+  const db = abrir();
+  db.insertSales([
+    venda(20, 'espada', 100000, 1, Date.now(), { enchant: 0 }),
+    venda(21, 'espada', 900000, 1, Date.now(), { enchant: 3 })
+  ]);
+  db.setLevels([{ listing_id: 140, level: 1 }, { listing_id: 147, level: 1 }]);
+
+  assert.deepEqual(
+    db.salesForPricing('espada', { level: 1, enchant: 3 }).map(s => s.unit_price),
+    [900000]
+  );
+  assert.deepEqual(
+    db.salesForPricing('espada', { level: 1, enchant: 0 }).map(s => s.unit_price),
+    [100000]
+  );
+  assert.equal(db.salesForPricing('espada', { level: 1 }).length, 2, 'sem encanto pedido, os dois');
+  db.close();
+});
+
+test('a moeda troca o filtro, nunca mistura as duas', () => {
+  // A média das duas moedas juntas não descreve nenhuma venda que aconteceu.
+  const db = abrir();
+  db.insertSales([
+    venda(22, 'topazio', 90, 1, Date.now(), { currency: 'MARKET_CURRENCY_DIAMOND' }),
+    venda(23, 'topazio', 900000, 1, Date.now())
+  ]);
+  assert.deepEqual(
+    db.salesForPricing('topazio', { currency: 'diamond' }).map(s => s.unit_price),
+    [90]
+  );
+  assert.deepEqual(
+    db.salesForPricing('topazio', { currency: 'gold' }).map(s => s.unit_price),
+    [900000]
+  );
+  db.close();
+});
+
+// ------------------------------------------------------- cotação do câmbio
+
+test('a cotação é a mediana do câmbio, não a média', () => {
+  // O câmbio tem anúncio de despejo e de otimista nas duas pontas, e a média
+  // entre 150 k e 900 k não é uma taxa pela qual alguém trocou algo.
+  const db = abrir();
+  db.insertSales([
+    cambio(30, 1, 150000),
+    cambio(31, 1, 380000),
+    cambio(32, 1, 900000)
+  ]);
+  const r = db.exchangeRate();
+  assert.equal(r.rate, 380000);
+  assert.equal(r.samples, 3);
+  assert.equal(r.days, 7);
+  db.close();
+});
+
+test('cotação em lote usa o unitário corrigido, não o preço do pacote', () => {
+  const db = abrir();
+  db.insertSales([cambio(33, 10, 3780000), cambio(34, 10, 3780000)]);
+  assert.equal(db.exchangeRate().rate, 378000);
+  db.close();
+});
+
+test('sem amostra de câmbio a cotação é zero, não um palpite', () => {
+  // Zero é o que faz o auto-anunciar recusar com `price.noRate` em vez de
+  // converter um preço por uma taxa inventada.
+  const db = abrir();
+  assert.deepEqual(db.exchangeRate(), { rate: 0, samples: 0, days: 7 });
+  // Venda de item comum não é câmbio, mesmo em ouro.
+  db.insertSales([venda(35, 'topazio', 900000, 1, Date.now())]);
+  assert.equal(db.exchangeRate().rate, 0);
+  db.close();
+});
+
+test('a cotação só olha a janela pedida: o câmbio é volátil', () => {
+  // Uma taxa de 90 dias descreveria um mercado que não existe mais.
+  const db = abrir();
+  const antigo = cambio(36, 1, 100000);
+  antigo.sold_at_ms = String(Date.now() - 30 * DIA);
+  db.insertSales([antigo, cambio(37, 1, 400000), cambio(38, 1, 400000)]);
+  assert.equal(db.exchangeRate({ days: 7 }).rate, 400000);
+  assert.equal(db.exchangeRate({ days: 90 }).samples, 3);
+  db.close();
+});
+
 test('as vendas vêm da mais recente para a mais antiga', () => {
   // O automático corta nas dez primeiras: se a ordem fosse outra, ele
   // calcularia sobre as mais velhas.

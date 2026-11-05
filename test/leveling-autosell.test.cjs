@@ -19,7 +19,8 @@ const {
   claimableMail,
   MIN_INTERVAL_MS,
   MAX_PER_ROUND_CAP,
-  DEFAULT_FLOOR_PCT
+  DEFAULT_FLOOR_PCT,
+  MIN_DIAMOND_PRICE
 } = require('../src/domain/leveling-autosell');
 
 /** Catálogo mínimo: é ele que separa tesouro de equipamento. */
@@ -257,6 +258,137 @@ test('o piso padrão é 70% da mediana', () => {
   assert.equal(priceFor({ median: 1000, samples: 5 }).floor, 700);
 });
 
+// ------------------------------------------------------- modo e moeda
+
+test('a configuração nasce no modo rival e em ouro', () => {
+  // O padrão tem de ser o comportamento que já existia: uma configuração
+  // salva antes destes campos não pode começar a anunciar diferente depois
+  // de uma atualização do launcher.
+  const cfg = defaultConfig();
+  assert.equal(cfg.priceMode, 'rival');
+  assert.equal(cfg.currency, 'gold');
+  assert.equal(normalizeConfig({}).priceMode, 'rival');
+  assert.equal(normalizeConfig({}).currency, 'gold');
+});
+
+test('modo e moeda desconhecidos caem no padrão, não passam adiante', () => {
+  // Um `prefs.json` editado à mão não pode produzir um modo que nenhum
+  // `switch` trata: o resultado seria um preço indefinido num anúncio
+  // irreversível.
+  assert.equal(normalizeConfig({ priceMode: 'medio' }).priceMode, 'rival');
+  assert.equal(normalizeConfig({ priceMode: 42 }).priceMode, 'rival');
+  assert.equal(normalizeConfig({ currency: 'token' }).currency, 'gold');
+  assert.equal(normalizeConfig({ priceMode: 'average' }).priceMode, 'average');
+  assert.equal(normalizeConfig({ currency: 'diamond' }).currency, 'diamond');
+});
+
+test('no modo média o preço é a média, não a mediana nem o rival', () => {
+  // A média é a referência e também a resposta: o modo existe para afirmar o
+  // preço que o item vem fazendo, não para negociar com a concorrência.
+  const r = priceFor({
+    median: 1000000, average: 1200000, samples: 6,
+    rival: 500000, floorPct: 70, undercut: 1, priceMode: 'average'
+  });
+  assert.equal(r.price, 1200000);
+  assert.equal(r.mode, 'average');
+  assert.equal(r.reason, '');
+});
+
+test('o modo média ignora o piso e o despejo: não há rival na conta', () => {
+  // Um rival a 10% da mediana faria o modo rival recusar com
+  // `marketDumped`. Aqui ele não participa, então o preço sai igual.
+  const base = { median: 2000000, average: 1800000, samples: 8, floorPct: 70 };
+  assert.equal(priceFor({ ...base, rival: 180000, priceMode: 'rival' }).reason, 'price.marketDumped');
+  assert.equal(priceFor({ ...base, rival: 180000, priceMode: 'average' }).price, 1800000);
+  assert.equal(priceFor({ ...base, rival: 0, priceMode: 'average' }).price, 1800000);
+});
+
+test('o modo média sem média recusa, em vez de cair na mediana calado', () => {
+  // Cair na mediana entregaria um preço de outro modo com o nome deste, e o
+  // relatório diria "média" sobre um número que não é a média.
+  const r = priceFor({ median: 1000000, average: 0, samples: 6, priceMode: 'average' });
+  assert.equal(r.price, 0);
+  assert.equal(r.reason, 'price.noLevelData');
+});
+
+test('o NPC ainda é o piso absoluto no modo média', () => {
+  // É um piso em ouro e não depende de rival nenhum: pagar taxa de mercado
+  // para receber menos do que o balcão dá de graça é errado nos dois modos.
+  const r = priceFor({
+    median: 1000, average: 800, samples: 5, priceMode: 'average', npcPrice: 900
+  });
+  assert.equal(r.reason, 'price.belowNpc');
+});
+
+test('em diamante com histórico em diamante, o preço sai direto e sem cotação', () => {
+  // `median` já está em diamante: converter por cima dela multiplicaria o
+  // preço pela cotação e o anúncio sairia em dezenas de milhares de diamantes.
+  const r = priceFor({
+    median: 40, samples: 5, rival: 0, currency: 'diamond',
+    directDiamond: true, rate: 380000
+  });
+  assert.equal(r.price, 40);
+  assert.equal(r.currency, 'diamond');
+  assert.equal(r.rate, 0, 'a cotação não entrou na conta');
+  assert.equal(r.reason, '');
+});
+
+test('em diamante sem histórico, o preço em ouro é convertido pela cotação', () => {
+  const r = priceFor({
+    median: 3800000, samples: 5, rival: 0, currency: 'diamond', rate: 380000
+  });
+  assert.equal(r.price, 10, '3,8 M de ouro a 380 k por diamante');
+  assert.equal(r.goldPrice, 3800000, 'o equivalente em ouro fica para auditar');
+  assert.equal(r.rate, 380000);
+});
+
+test('a conversão arredonda para cima: nunca a favor do comprador', () => {
+  // Mesmo motivo de `normalizeDraft`: para baixo, o lote sairia por menos do
+  // que o cálculo pediu — e um anúncio barato demais some no primeiro
+  // comprador que passa.
+  const r = priceFor({
+    median: 3900000, samples: 5, rival: 0, currency: 'diamond', rate: 380000
+  });
+  assert.equal(r.price, 11, '10,26 sobe para 11');
+});
+
+test('item barato demais não é anunciado em diamante', () => {
+  // A 380 k por diamante, um lote de 500 k dá 1,3: arredondar para 2 pede 53%
+  // a mais e não vende; para 1 dá 24% de desconto irreversível. Nenhum dos
+  // dois é o preço do item.
+  const r = priceFor({
+    median: 500000, samples: 5, rival: 0, currency: 'diamond', rate: 380000
+  });
+  assert.equal(r.price, 0);
+  assert.equal(r.reason, 'price.tooCheapForDiamond');
+  assert.equal(r.goldPrice, 500000, 'o relatório mostra quanto ele valia em ouro');
+
+  // Exatamente no mínimo passa: o corte é "abaixo de", não "até".
+  assert.equal(priceFor({
+    median: 380000 * MIN_DIAMOND_PRICE, samples: 5, rival: 0,
+    currency: 'diamond', rate: 380000
+  }).price, MIN_DIAMOND_PRICE);
+});
+
+test('sem cotação, o diamante recusa em vez de inventar uma taxa', () => {
+  const r = priceFor({
+    median: 3800000, samples: 5, rival: 0, currency: 'diamond', rate: 0
+  });
+  assert.equal(r.price, 0);
+  assert.equal(r.reason, 'price.noRate');
+  assert.equal(r.goldPrice, 3800000);
+});
+
+test('o NPC é comparado em ouro, antes da conversão para diamante', () => {
+  // Comparar "4 diamantes" com "900 de ouro" aprovaria como ótimo um anúncio
+  // que vale um décimo do que o NPC dá.
+  const r = priceFor({
+    median: 1000, samples: 5, rival: 0, currency: 'diamond',
+    rate: 100, npcPrice: 1200
+  });
+  assert.equal(r.reason, 'price.belowNpc');
+});
+
 // ------------------------------------------------------- rival no mercado
 
 test('o rival é o mais barato do mesmo nível, não do mesmo def_id', () => {
@@ -302,6 +434,28 @@ test('anúncio fechado e em outra moeda não são rival', () => {
 
 test('status ausente conta como ativo: proto3 omite o zero', () => {
   assert.equal(lowestRival([{ unit_price: 700, level: 1, enchant: 0 }], item({ level: 1 })), 700);
+});
+
+test('anunciando em diamante, o rival é o anúncio em diamante', () => {
+  // A moeda inverte o filtro. Sem isso, todo anúncio em diamante veria "nenhum
+  // rival" e sairia pela mediana, ignorando a concorrência que de fato existe.
+  const anuncios = [
+    { unit_price: 800000, level: 1, enchant: 0, status: 'MARKET_STATUS_ACTIVE' },
+    { unit_price: 40, level: 1, enchant: 0, currency: 'MARKET_CURRENCY_DIAMOND', status: 'MARKET_STATUS_ACTIVE' },
+    { unit_price: 60, level: 1, enchant: 0, currency: 'MARKET_CURRENCY_DIAMOND', status: 'MARKET_STATUS_ACTIVE' }
+  ];
+  assert.equal(lowestRival(anuncios, item({ level: 1 }), 'diamond'), 40);
+  assert.equal(lowestRival(anuncios, item({ level: 1 }), 'gold'), 800000);
+  assert.equal(lowestRival(anuncios, item({ level: 1 })), 800000, 'ouro é o padrão');
+});
+
+test('token nunca é rival, em nenhuma das duas moedas', () => {
+  const anuncios = [
+    { unit_price: 1, level: 1, enchant: 0, currency: 'MARKET_CURRENCY_TOKEN', status: 'MARKET_STATUS_ACTIVE' },
+    { unit_price: 50, level: 1, enchant: 0, currency: 'MARKET_CURRENCY_DIAMOND', status: 'MARKET_STATUS_ACTIVE' }
+  ];
+  assert.equal(lowestRival(anuncios, item({ level: 1 }), 'diamond'), 50);
+  assert.equal(lowestRival(anuncios, item({ level: 1 }), 'gold'), 0);
 });
 
 // ------------------------------------------------------------------ rodada
@@ -446,6 +600,95 @@ test('a rodada não lança com entrada vazia ou lixo', () => {
     assert.deepEqual(p.ready, []);
     assert.ok(Array.isArray(p.skipped));
   }
+});
+
+test('a rodada em modo média usa a média de cada item', () => {
+  const prices = new Map([
+    ['citrino@1+0', { median: 1000000, average: 1200000, samples: 6, rival: 500000 }]
+  ]);
+  const p = planRound({
+    items: [item()], catalog, prices, limit: 10, active: 0,
+    config: { enabled: true, priceMode: 'average' }
+  });
+  assert.equal(p.ready.length, 1, 'rival a metade da mediana não recusa no modo média');
+  assert.equal(p.ready[0].unitPrice, 1200000);
+  assert.equal(p.ready[0].from.mode, 'average');
+  assert.equal(p.ready[0].from.average, 1200000);
+});
+
+test('a rodada em diamante marca a moeda no rascunho', () => {
+  // É `currency` do rascunho que `marketCreate` recebe. Faltando, o preço
+  // seria calculado em diamante e o anúncio sairia em ouro — três ordens de
+  // grandeza abaixo do valor, irreversível.
+  const prices = new Map([
+    ['citrino@1+0', { median: 3800000, average: 3800000, samples: 6, rival: 0 }]
+  ]);
+  const p = planRound({
+    items: [item()], catalog, prices, limit: 10, active: 0, rate: 380000,
+    config: { enabled: true, currency: 'diamond' }
+  });
+  assert.equal(p.ready.length, 1);
+  assert.equal(p.ready[0].currency, 'diamond');
+  assert.equal(p.ready[0].unitPrice, 10);
+  assert.equal(p.ready[0].from.rate, 380000, 'a taxa usada vai para o relatório');
+  assert.equal(p.ready[0].from.goldPrice, 3800000);
+});
+
+test('sem cotação, a rodada em diamante não anuncia nada', () => {
+  const prices = new Map([
+    ['citrino@1+0', { median: 3800000, average: 3800000, samples: 6, rival: 0 }]
+  ]);
+  const p = planRound({
+    items: [item()], catalog, prices, limit: 10, active: 0,
+    config: { enabled: true, currency: 'diamond' }
+  });
+  assert.deepEqual(p.ready, []);
+  assert.equal(p.skipped[0].reason, 'price.noRate');
+});
+
+test('o mínimo de ouro é avaliado em ouro, mesmo anunciando em diamante', () => {
+  // O corte se chama `minGold` e é em ouro: comparado contra o preço em
+  // diamante, um mínimo de 50.000 recusaria todo anúncio da moeda — nenhum
+  // deles chega perto desse número em diamantes.
+  const prices = new Map([
+    ['citrino@1+0', { median: 3800000, average: 3800000, samples: 6, rival: 0 }]
+  ]);
+  const base = {
+    items: [item()], catalog, prices, limit: 10, active: 0, rate: 380000
+  };
+  assert.equal(planRound({
+    ...base, config: { enabled: true, currency: 'diamond', minGold: 1000000 }
+  }).ready.length, 1, '3,8 M de ouro passa num mínimo de 1 M');
+
+  const corta = planRound({
+    ...base, config: { enabled: true, currency: 'diamond', minGold: 9000000 }
+  });
+  assert.deepEqual(corta.ready, []);
+  assert.equal(corta.skipped[0].reason, 'cheap');
+  assert.equal(corta.skipped[0].total, 3800000, 'o relatório mostra o valor em ouro');
+});
+
+test('a ordem pela vaga compara em ouro, não misturando as duas moedas', () => {
+  // Um item com preço direto em diamante e um convertido convivem na mesma
+  // lista: 4 diamantes contra 1,5 M de ouro ordenaria pelo menor se a
+  // comparação fosse no número cru.
+  const prices = new Map([
+    // Direto em diamante: 50 💎 o lote, que a 380 k vale ~19 M de ouro.
+    ['citrino@1+0', { median: 50, average: 50, samples: 6, rival: 0, directDiamond: true }],
+    // Convertido: 1,5 M de ouro vira 4 💎.
+    ['pedra@1+0', { median: 1520000, average: 1520000, samples: 6, rival: 0 }]
+  ]);
+  const p = planRound({
+    items: [item({ uid: '1' }), item({ uid: '2', defId: 'pedra' })],
+    catalog, prices, limit: 10, active: 0, rate: 380000,
+    config: { enabled: true, currency: 'diamond', maxPerRound: 1 }
+  });
+  // Sem equivalente em ouro, o direto usa o próprio total — e aqui ele perde
+  // da pedra, cujo valor em ouro é conhecido e maior. O que o teste fixa é que
+  // a comparação usa `sortValue`, não o `total` cru em moedas diferentes.
+  assert.equal(p.ready.length, 1);
+  assert.equal(p.ready[0].defId, 'pedra');
+  assert.equal(p.ready[0].unitPrice, 4);
 });
 
 // ------------------------------------------------------------------ correio

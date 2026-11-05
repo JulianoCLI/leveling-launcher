@@ -95,6 +95,45 @@ test('preço zero ou negativo é descartado antes da conta', () => {
   assert.equal(r.price, 1200);
 });
 
+// -------------------------------------------------- modo média ponderada
+
+test('o modo média devolve a média ponderada pela quantidade', () => {
+  // Uma venda de 100 unidades a 1 M diz muito mais sobre o preço corrente que
+  // uma de 1 unidade a 2 M. A média aritmética daria 1,5 M às duas.
+  const r = suggestPrice([
+    { unit_price: 1000000, quantity: 100 },
+    { unit_price: 2000000, quantity: 1 }
+  ], { mode: 'average' });
+  assert.equal(r.price, 1009901, '(100 M + 2 M) / 101');
+  assert.equal(r.mode, 'average');
+});
+
+test('o modo padrão continua sendo o topo, e a média acompanha', () => {
+  // A média volta mesmo no modo `top`: o relatório compara as duas, e quem
+  // chama sem opções não pode ver o comportamento mudar.
+  const r = suggestPrice(vendas(1000, 1200, 1400));
+  assert.equal(r.price, 1400);
+  assert.equal(r.mode, 'top');
+  assert.equal(r.average, 1200);
+  assert.equal(suggestPrice(vendas(1000, 1200, 1400), { mode: 'medio' }).price, 1400,
+    'modo desconhecido cai no topo');
+});
+
+test('a venda anormal é descartada antes da média, não depois', () => {
+  // Com 1 M, 1 M e 10 M a média crua é 4 M, um preço pelo qual o item nunca
+  // vai sair. Na média o zero digitado a mais contamina o resultado inteiro.
+  const r = suggestPrice(vendas(1000000, 1000000, 10000000), { mode: 'average' });
+  assert.equal(r.price, 1000000);
+  assert.equal(r.dropped, 1);
+});
+
+test('quantidade ausente vale uma unidade, não zero', () => {
+  // Zero removeria a venda do peso da média, e o lote de uma unidade é o caso
+  // mais comum do banco — a média sairia de uma amostra vazia.
+  const r = suggestPrice(vendas(1000, 2000, 3000), { mode: 'average' });
+  assert.equal(r.price, 2000);
+});
+
 // ------------------------------------------------------------- lote
 
 test('a sugestão de um lote é o unitário vezes a quantidade', () => {

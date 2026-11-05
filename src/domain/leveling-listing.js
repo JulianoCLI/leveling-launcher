@@ -95,39 +95,81 @@ function medianOf(ordenados) {
  * mostra de onde o preço saiu, e "1,2 M" sem dizer "de 8 vendas, 2
  * descartadas" é um número que o usuário não tem como julgar.
  *
- * @param {Array<{unit_price:number|string, sold_at_ms?:number}>} sales
- * @returns {{price:number, samples:number, dropped:number, median:number, reason:string}}
+ * ## Os dois modos
+ *
+ *   `top`      o maior dos preços saudáveis. É o padrão e é o que a aba
+ *              Anunciar usa: o objetivo ali é vender caro, e o usuário
+ *              confere item por item antes de confirmar.
+ *   `average`  a média **ponderada por quantidade**. Serve a quem quer o
+ *              preço que o item de fato vem fazendo, não o melhor que já fez.
+ *
+ * A ponderação não é detalhe: uma venda de 3.000 unidades diz muito mais sobre
+ * o preço corrente que uma de 1, e a média aritmética daria peso igual às
+ * duas. É também a conta que o resto do banco já faz
+ * (`SUM(unit_price * quantity) / SUM(quantity)` em `leveling-market-db.js`),
+ * e duas definições de "média" no mesmo launcher seriam duas respostas
+ * diferentes para a mesma pergunta.
+ *
+ * O descarte de anormais vale nos **dois** modos, e importa mais no `average`:
+ * no `top` a venda anormal é cortada e o que sobra é um preço real, mas na
+ * média um zero digitado a mais contamina o resultado inteiro — com 1 M, 1 M e
+ * 10 M a média crua é 4 M, um preço pelo qual o item nunca vai sair.
+ *
+ * @param {Array<{unit_price:number|string, quantity?:number, sold_at_ms?:number}>} sales
+ * @param {{mode?:'top'|'average'}} [opts]
+ * @returns {{price:number, samples:number, dropped:number, median:number, average:number, mode:string, reason:string}}
  */
-function suggestPrice(sales) {
-  const precos = (Array.isArray(sales) ? sales : [])
-    .map(s => int(s && s.unit_price))
-    .filter(n => n > 0)
+function suggestPrice(sales, opts) {
+  const mode = (opts && opts.mode) === 'average' ? 'average' : 'top';
+
+  const vendas = (Array.isArray(sales) ? sales : [])
+    .map(s => ({
+      // Quantidade ausente vale 1, não zero: zero removeria a venda do peso da
+      // média e o lote de uma unidade é o caso mais comum do banco.
+      price: int(s && s.unit_price),
+      qty: Math.max(1, int(s && s.quantity, 1))
+    }))
+    .filter(v => v.price > 0)
     // Mais recente primeiro é a ordem em que o banco entrega; o corte das dez
     // tem de acontecer antes da ordenação por preço, senão a amostra seria
     // "as dez mais baratas de sempre" em vez de "as dez últimas".
     .slice(0, SAMPLE_SIZE);
 
-  if (precos.length < MIN_SAMPLES) {
-    return { price: 0, samples: precos.length, dropped: 0, median: 0, reason: 'price.fewSales' };
+  const vazio = { price: 0, samples: vendas.length, dropped: 0, median: 0, average: 0, mode };
+
+  if (vendas.length < MIN_SAMPLES) {
+    return { ...vazio, reason: 'price.fewSales' };
   }
 
-  const ordenados = [...precos].sort((a, b) => a - b);
-  const mediana = medianOf(ordenados);
+  const ordenados = [...vendas].sort((a, b) => a.price - b.price);
+  const mediana = medianOf(ordenados.map(v => v.price));
   const teto = mediana * OUTLIER_FACTOR;
 
-  const sadios = ordenados.filter(p => p <= teto);
+  const sadios = ordenados.filter(v => v.price <= teto);
   // Tudo descartado só aconteceria com uma mediana de zero, que a filtragem
   // acima já impede. A guarda fica porque devolver preço zero seria anunciar
   // de graça, e isso não pode depender de nenhuma invariante.
   if (!sadios.length) {
-    return { price: 0, samples: precos.length, dropped: precos.length, median: mediana, reason: 'price.allOutliers' };
+    return {
+      ...vazio, dropped: vendas.length,
+      median: Math.round(mediana), reason: 'price.allOutliers'
+    };
   }
 
+  const unidades = sadios.reduce((s, v) => s + v.qty, 0);
+  const media = unidades > 0
+    ? sadios.reduce((s, v) => s + v.price * v.qty, 0) / unidades
+    : 0;
+  const topo = sadios[sadios.length - 1].price;
+
   return {
-    price: Math.round(sadios[sadios.length - 1]),
-    samples: precos.length,
-    dropped: precos.length - sadios.length,
+    price: Math.round(mode === 'average' ? media : topo),
+    samples: vendas.length,
+    dropped: vendas.length - sadios.length,
     median: Math.round(mediana),
+    /** A média sempre acompanha, mesmo no modo `top`: o relatório compara as duas. */
+    average: Math.round(media),
+    mode,
     reason: ''
   };
 }

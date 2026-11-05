@@ -6,7 +6,8 @@ const {
   LevelingHeadlessManager,
   IGNORED_CASES,
   IGNORED_PUSHES,
-  RATELIMIT_RETRY_MS
+  RATELIMIT_RETRY_MS,
+  MAIL_POLL_MS
 } = require('../src/domain/leveling-headless-service');
 
 const codec = getCodec();
@@ -61,6 +62,27 @@ class MockWebSocket {
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+test('auto-correio roda independente do câmbio e inclui qualquer mensagem', async () => {
+  const manager = new LevelingHeadlessManager({ mailIntervalMs: 1000000 });
+  const chamadas = [];
+  manager.clients.set(0, {
+    index: 0,
+    status: 'connected',
+    mailClaimAll: async () => {
+      chamadas.push(0);
+      return { claimed: ['1'], gold: 10, items: 1 };
+    }
+  });
+
+  const resultado = await manager.pollMail();
+  assert.deepEqual(chamadas, [0]);
+  assert.equal(resultado.claimed, 1);
+  assert.equal(resultado.items, 1);
+  assert.equal(manager.cambioTimer, null, 'não depende do timer do câmbio');
+  assert.equal(MAIL_POLL_MS, 600000);
+  manager.stopMailPoll();
+});
 
 function makeClient(options = {}) {
   return new LevelingHeadlessClient(0, {

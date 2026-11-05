@@ -171,6 +171,34 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   // Cada hop empurra uma linha: a janela aberta acompanha sem perguntar.
   onCambio: (cb) => ipcRenderer.on('leveling:cambio', (_e, data) => cb(data)),
 
+  // Status: gasta os pontos de cada nível na build escolhida para a conta. A
+  // configuração inteira vai e volta junta, como nas outras, e aqui ela carrega
+  // a escolha de **cada** conta dentro de `porConta` — classe e build não têm
+  // valor global que sirva, e salvar uma conta por vez abriria a janela em que
+  // metade das contas roda com a build antiga.
+  statsGet: () => ipcRenderer.invoke('leveling:stats:get'),
+  statsSet: (config) => ipcRenderer.invoke('leveling:stats:set', config),
+  // Distribui agora, sem esperar a próxima subida de nível. Gasta ponto de
+  // verdade: desfazer custa token de respec ou cristal.
+  statsRun: () => ipcRenderer.invoke('leveling:stats:run'),
+  statsLog: () => ipcRenderer.invoke('leveling:stats:log'),
+  statsLogClear: () => ipcRenderer.invoke('leveling:stats:log-clear'),
+  statsWindow: () => ipcRenderer.invoke('leveling:stats:window'),
+  // Cada distribuição avisa: a janela aberta acompanha sem perguntar.
+  onStats: (cb) => ipcRenderer.on('leveling:stats', (_e, data) => cb(data)),
+
+  // Auto-forja. `force` relê a bolsa de cada conta: sem ele a resposta usa o
+  // resumo que a última rodada já apurou, em vez de doze páginas por conta.
+  forgeGet: (options) => ipcRenderer.invoke('leveling:forge:get', options),
+  forgeSet: (config) => ipcRenderer.invoke('leveling:forge:set', config),
+  // Forja agora, sem esperar o próximo drop. **Apaga peças**: o desmonte não
+  // tem desfazer nenhum, nem pagando.
+  forgeRun: () => ipcRenderer.invoke('leveling:forge:run'),
+  forgeLog: () => ipcRenderer.invoke('leveling:forge:log'),
+  forgeLogClear: () => ipcRenderer.invoke('leveling:forge:log-clear'),
+  forgeWindow: () => ipcRenderer.invoke('leveling:forge:window'),
+  onForge: (cb) => ipcRenderer.on('leveling:forge', (_e, data) => cb(data)),
+
   // O principal envia um lote por janela de tempo; aceitar também o formato
   // avulso mantém `leveling-panel.js` compartilhado com o launcher irmão.
   onLevelingUpdate: (cb) => ipcRenderer.on('leveling:update', (_e, data) => {

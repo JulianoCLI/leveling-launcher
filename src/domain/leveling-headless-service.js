@@ -30,6 +30,8 @@
  *                        auto-boss: lê quais bosses diários a conta ainda não
  *                        fez hoje e entra em cada um, do mais fraco ao mais
  *                        forte, uma vez por dia
+ *   `allocate_stats`     auto-status: gasta os pontos livres de cada nível na
+ *                        build escolhida para a conta
  *
  * Os quatro últimos existem porque o servidor não vende à distância: medido
  * contra ele, `buy_consumable` numa cena de caçada responde `shop.npcRequired`,
@@ -55,8 +57,15 @@
  * último — devolver a conta à caçada entre dois bosses pagaria duas trocas de
  * cena por nada.
  *
- * Continua proibido: `leave_hunt`, `set_automation`, `use_consumable` e
- * `revive`.
+ * O auto-status é o único que não sai de nenhum relógio: ele dispara quando
+ * `points.stat_points` aparece maior que zero no `character_patch`. O gatilho é
+ * esse, e não "subiu de nível", porque não existe pacote de level-up e porque
+ * pontos parados também chegam de um boot com níveis acumulados. Ele não tira a
+ * conta da caçada: `allocate_stats` é uma requisição e pronto.
+ *
+ * Continua proibido: `leave_hunt`, `set_automation`, `use_consumable`,
+ * `revive` e `reset_stats` — o último porque devolver ponto custa token ou
+ * cristal, e o auto-status só gasta o que está livre, nunca realoca.
  *
  * O servidor aceita uma sessão por conta e substitui a anterior, então ativar
  * o headless derruba a aba do jogo e vice-versa — é o mecanismo de troca de
@@ -77,6 +86,12 @@ const marketCatalog = require('./leveling-market-catalog');
 const sniper = require('./leveling-sniper');
 const expedition = require('./leveling-expedition');
 const boss = require('./leveling-boss');
+// `autoStats` e não `stats`: vários métodos já usam `const stats = this.xStats`
+// como contador local, e o nome curto seria sombreado dentro deles.
+const autoStats = require('./leveling-stats');
+// `autoForge` pelo mesmo motivo de `autoStats`: `forge` é nome curto demais
+// para um módulo que convive com variáveis locais do mesmo assunto.
+const autoForge = require('./leveling-forge');
 // `listingRules` e não `listing`: `pollSniper` tem laços com uma variável
 // `listing` por anúncio, e um módulo sombreado ali seria um erro silencioso.
 const listingRules = require('./leveling-listing');
@@ -357,6 +372,9 @@ const MAIL_PAGE_SIZE = 20;
  */
 const CAMBIO_MAIL_MS = 120000;
 
+/** Varredura automática completa do correio, independente do câmbio. */
+const MAIL_POLL_MS = 10 * 60 * 1000;
+
 /**
  * Pushes que o painel não mostra. `shadow_delta` e `content_catalog` entram
  * aqui por volume: o catálogo passa de 1 MB e a lista de sombras é grande,
@@ -464,6 +482,18 @@ function sleep(ms) {
   });
 }
 
+/**
+ * Pausa entre duas fusões do mesmo lote, em milissegundos.
+ *
+ * Cinco `fuse` em rajada é a única sequência de escritas seguidas que o serviço
+ * produz; espaçá-las evita descobrir o limite de taxa do servidor com o
+ * inventário do usuário no meio.
+ */
+const FUSE_GAP_MS = 250;
+
+/** Máximo de lotes encadeados na mesma rodada. */
+const FORGE_MAX_PASSES = 2;
+
 function proxyDispatcher(proxyUrl) {
   if (!proxyUrl) return null;
   if (dispatchers.has(proxyUrl)) return dispatchers.get(proxyUrl);
@@ -532,6 +562,12 @@ class LevelingHeadlessClient extends EventEmitter {
      * leitura por execução do launcher, compartilhada entre as contas.
      */
     this.marketCatalogStore = options.marketCatalogStore || { value: null, fresh: false };
+    /**
+     * Classes e suas builds, para o auto-status. Mesma origem e mesma regra de
+     * `huntStore`: conteúdo do jogo, uma leitura por execução do launcher,
+     * compartilhada entre as contas.
+     */
+    this.classStore = options.classStore || { value: null, fresh: false };
     /** O catálogo já foi desserializado nesta sessão? Ele chega uma vez só. */
     this.catalogRead = false;
     /** `InventorySummary.materials` cru, até o id da essência ser conhecido. */
@@ -592,6 +628,48 @@ class LevelingHeadlessClient extends EventEmitter {
     /** Despertador da virada local; só manda reler, não decide o dia. */
     this.bossResetTimer = null;
     this.bossStats = { runs: 0, polls: 0, done: 0, failed: 0, lastAtMs: 0, lastError: '' };
+
+    /**
+     * Auto-status. Desligado por padrão, e pelo motivo mais forte de todos:
+     * alocar ponto **não tem volta** sem pagar respec em token ou cristal. Uma
+     * conta que guardava pontos de propósito os perderia na primeira subida de
+     * nível depois de o launcher abrir.
+     */
+    this.statsConfig = autoStats.normalizeConfig(options.statsConfig);
+    this.statsBackoffMs = options.statsBackoffMs || autoStats.BACKOFF_MS;
+    this.statsBusy = false;
+    /** Recuo depois de uma recusa do servidor; absoluto, em ms. */
+    this.statsAt = 0;
+    /**
+     * O investido por atributo, de `StatsState.allocated`.
+     *
+     * É a base da divisão da build, e não `total` de propósito: o que a classe
+     * dá de graça e o que vem de equipamento ficam fora da conta. `null` até o
+     * primeiro `character_state`.
+     */
+    this.statsAllocated = null;
+    this.statsLog = [];
+    this.statsStats = { runs: 0, spent: 0, failed: 0, lastAtMs: 0, lastError: '' };
+
+    /**
+     * Auto-forja. Desligada por padrão, e ela é a que destrói mais coisa por
+     * rodada de todas: desmontar apaga a peça para sempre e fundir consome
+     * cinco delas. Sem alvo escolhido à mão ela nem liga — `isConfigured` exige
+     * nível e raridade.
+     */
+    this.forgeConfig = autoForge.normalizeConfig(options.forgeConfig);
+    this.forgeBackoffMs = options.forgeBackoffMs || autoForge.BACKOFF_MS;
+    this.forgeGapMs = options.forgeGapMs === undefined ? autoForge.MIN_GAP_MS : options.forgeGapMs;
+    this.forgeBusy = false;
+    /** Recuo depois de uma recusa, e espera entre rodadas; absoluto, em ms. */
+    this.forgeAt = 0;
+    this.forgeLog = [];
+    /** Último resumo calculado, para a janela não forçar uma varredura. */
+    this.forgeSummary = null;
+    this.forgeStats = {
+      runs: 0, fused: 0, dismantled: 0, dust: 0, equipped: 0,
+      failed: 0, lastAtMs: 0, lastError: ''
+    };
 
     this.ws = null;
     this.status = 'disconnected';
@@ -707,7 +785,13 @@ class LevelingHeadlessClient extends EventEmitter {
         // Consumíveis de sombra não têm tier no protocolo: são contadores.
         shadowPotions: 0,
         shadowRevives: 0,
-        essence: 0
+        essence: 0,
+        /**
+         * Pó arcano, a moeda da forja. Como a essência, não tem campo próprio
+         * no protocolo: vem de `InventorySummary.materials` pelo `dust_item_id`
+         * das regras de fusão do catálogo.
+         */
+        dust: 0
       },
       /** Último refill executado, para o HUD mostrar o que foi comprado. */
       refill: null,
@@ -1301,6 +1385,17 @@ class LevelingHeadlessClient extends EventEmitter {
       if (h.tier_min != null) { s.hunt.tierMin = Number(h.tier_min) || 0; changed = true; }
       if (h.difficulty) { s.hunt.difficulty = h.difficulty; changed = true; }
     }
+    if (value.stats) {
+      // `allocated` é o que o auto-status usa como base. Guardado fora de
+      // `this.state` porque é insumo de decisão, não painel: o HUD não mostra a
+      // divisão por atributo, e enfiá-lo no estado o mandaria por IPC a cada
+      // patch.
+      const antes = this.statsAllocated;
+      const lido = autoStats.lerStatAmounts(value.stats.allocated);
+      if (!antes || autoStats.STAT_ORDER.some(s => antes[s] !== lido[s])) {
+        this.statsAllocated = lido;
+      }
+    }
     if (value.points || full) {
       const p = value.points || {};
       const points = {
@@ -1325,6 +1420,10 @@ class LevelingHeadlessClient extends EventEmitter {
 
     // O estoque ou o ouro podem ter mudado; é o único gatilho do refill.
     if (changed) this.maybeRefill();
+    // E os pontos livres podem ter aparecido; é o único gatilho do auto-status.
+    // Fora do `if`: o primeiro `character_state` de uma reconexão pode repetir
+    // o estado anterior e não mudar nada, e os pontos continuariam parados.
+    this.maybeStats();
 
     return changed;
   }
@@ -1392,13 +1491,38 @@ class LevelingHeadlessClient extends EventEmitter {
     // quando o id finalmente for conhecido, sem esperar outro snapshot.
     if (materials.length) this.materials = materials;
 
-    const defId = this.catalog && this.catalog.essence && this.catalog.essence.defId;
-    if (!defId) return false;
-    const found = this.materials && this.materials.find(m => m && m.def_id === defId);
-    const next = found ? Number(found.qty) || 0 : 0;
-    if (this.state.stock.essence === next) return false;
-    this.state.stock.essence = next;
-    return true;
+    const saldo = defId => {
+      const found = this.materials && this.materials.find(m => m && m.def_id === defId);
+      return found ? Number(found.qty) || 0 : 0;
+    };
+
+    let changed = false;
+
+    const essencia = this.catalog && this.catalog.essence && this.catalog.essence.defId;
+    if (essencia) {
+      const next = saldo(essencia);
+      if (this.state.stock.essence !== next) {
+        this.state.stock.essence = next;
+        changed = true;
+      }
+    }
+
+    // Pó arcano. Mesma forma da essência e pelo mesmo motivo: ele não tem campo
+    // próprio no protocolo, é um material comum em `InventorySummary.materials`,
+    // e o que o identifica é o `dust_item_id` que as regras de fusão informam.
+    // Sem catálogo o saldo fica em zero, e a auto-forja recusa a fusão em vez
+    // de tentar gastar um pó que ela não sabe contar.
+    const catalogo = this.marketCatalogStore.value;
+    const poId = catalogo && catalogo.fusion && catalogo.fusion.dustItemId;
+    if (poId) {
+      const next = saldo(poId);
+      if (this.state.stock.dust !== next) {
+        this.state.stock.dust = next;
+        changed = true;
+      }
+    }
+
+    return changed;
   }
 
   /** Saldo de pontos vindo de um resultado de alocação. */
@@ -1564,7 +1688,15 @@ class LevelingHeadlessClient extends EventEmitter {
     return true;
   }
 
-  /** Só a ocupação da mochila interessa: itens em si ficam na WebView. */
+  /**
+   * Só a ocupação da mochila interessa: itens em si ficam na WebView.
+   *
+   * É também o gatilho da auto-forja, pela mesma razão que o `character_patch`
+   * é o do auto-status: este é o pacote que anuncia material novo, e um
+   * temporizador só perguntaria de novo o que o push já contou. A espera entre
+   * rodadas mora em `maybeForge`, não aqui — um drop por segundo numa caçada
+   * ativa não pode virar uma varredura de inventário por segundo.
+   */
   applyInventoryDelta(value) {
     const inv = this.state.inventory;
     const used = Number(value.used_slots);
@@ -1575,6 +1707,7 @@ class LevelingHeadlessClient extends EventEmitter {
       inv.capacity = capacity;
       changed = true;
     }
+    this.maybeForge();
     return changed;
   }
 
@@ -1636,6 +1769,10 @@ class LevelingHeadlessClient extends EventEmitter {
     // também só existe aqui dentro. Como as duas outras leituras, é uma por
     // execução do launcher e compartilhada entre as contas.
     if (!this.marketCatalogStore.fresh) return true;
+    // As builds de cada classe também só existem aqui dentro, e o auto-status
+    // não pode distribuir sem elas. Mesma regra das outras: uma leitura por
+    // execução, compartilhada entre as contas.
+    if (!this.classStore.fresh) return true;
     return !this.huntStore.fresh;
   }
 
@@ -1670,14 +1807,42 @@ class LevelingHeadlessClient extends EventEmitter {
       const mkt = marketCatalog.readMarketCatalog(value);
       if (marketCatalog.hasCatalog(mkt)) {
         this.marketCatalogStore.value = mkt;
+        // O recuo pode ter sido armado por `forge.noRules`, que é exatamente o
+        // que acabou de deixar de ser verdade. Mantê-lo faria a auto-forja
+        // esperar cinco minutos por uma condição já resolvida.
+        this.forgeAt = 0;
         this.emit('market-catalog', { index: this.index, catalog: mkt });
+      }
+    }
+
+    if (!this.classStore.fresh) {
+      // Como no mercado, `fresh` marca "já olhei", não "achei algo": senão um
+      // catálogo sem classes faria toda conta seguinte desserializar 1 MB para
+      // chegar à mesma resposta vazia.
+      this.classStore.fresh = true;
+      const cls = autoStats.readClassCatalog(value);
+      if (autoStats.hasClasses(cls)) {
+        this.classStore.value = cls;
+        // O recuo foi armado por `stats.noCatalog`, que é exatamente o que
+        // acabou de deixar de ser verdade. Mantê-lo faria os pontos esperarem
+        // um minuto por uma condição já resolvida.
+        this.statsAt = 0;
+        this.emit('classes', { index: this.index, catalog: cls });
       }
     }
 
     // O saldo de essência só pode ser resolvido agora que o id dela é conhecido.
     const changed = this.applyMaterials({});
     this.maybeRefill();
+    // As builds acabaram de chegar: uma conta que logou com pontos parados e
+    // sem catálogo recusou a distribuição com `stats.noCatalog`. Agora dá.
+    this.maybeStats();
     return changed;
+  }
+
+  /** Classes e builds conhecidas, ou `null` antes do primeiro login. */
+  getClassCatalog() {
+    return this.classStore.value;
   }
 
   /** O catálogo de caçadas conhecido, ou `null` antes do primeiro login. */
@@ -2592,6 +2757,631 @@ class LevelingHeadlessClient extends EventEmitter {
     };
   }
 
+  // ------------------------------------------------------------- auto-status
+
+  /** Troca a configuração em execução, sem derrubar a sessão. */
+  setStatsConfig(config) {
+    this.statsConfig = autoStats.normalizeConfig(config);
+    // Mudar a configuração é pedido explícito: não esperar o recuo.
+    this.statsAt = 0;
+    if (this.status === 'connected') this.maybeStats();
+  }
+
+  /**
+   * Guardas de execução. O que distribuir é decisão de `leveling-stats`; aqui
+   * só mora "uma alocação por vez, e não logo depois de uma recusa".
+   *
+   * Não há relógio: isto é chamado a cada `character_patch`, que é exatamente
+   * quando `stat_points` pode ter mudado. Um temporizador só perguntaria de
+   * novo o que o push já contou.
+   */
+  maybeStats() {
+    if (this.statsBusy || !this.isOpen() || this.status !== 'connected') return;
+    if (!autoStats.accountEnabled(this.statsConfig, this.index)) return;
+    if (!this.state.points.stat) return;
+    if (Date.now() < this.statsAt) return;
+
+    this.statsBusy = true;
+    this.runStats().finally(() => { this.statsBusy = false; });
+  }
+
+  /**
+   * Gasta os pontos livres de uma vez.
+   *
+   * Diferente do boss e do refill, isto não tira a conta da caçada: nenhuma
+   * viagem, nenhum bilhete de volta, nenhuma disputa com os outros automáticos.
+   * É uma requisição e a confirmação dela.
+   *
+   * Nunca lança. Roda em segundo plano e uma falha de rede não pode derrubar
+   * nada — vira linha do relatório e recuo.
+   */
+  async runStats() {
+    const plano = autoStats.plan({
+      config: this.statsConfig,
+      index: this.index,
+      classId: this.state.classId,
+      catalog: this.classStore.value,
+      allocated: this.statsAllocated,
+      livres: this.state.points.stat,
+      level: this.state.level
+    });
+
+    if (!plano.ok) {
+      // Motivos que só o usuário resolve — build apagada, classe sem build —
+      // se repetiriam em cada patch. O recuo os transforma numa linha por
+      // minuto em vez de uma por pacote.
+      if (plano.reason && plano.reason !== 'stats.noPoints') {
+        this.statsAt = Date.now() + this.statsBackoffMs;
+        this.pushStatsLog({ atMs: Date.now(), index: this.index, ok: false, reason: plano.reason });
+      }
+      return;
+    }
+
+    const contador = this.statsStats;
+    contador.lastAtMs = Date.now();
+
+    try {
+      const res = await this.request('allocate_stats', { points: plano.points });
+
+      if (res.caseName === 'error') {
+        const code = (res.value && res.value.code) || 'stats.failed';
+        contador.failed++;
+        contador.lastError = code;
+        this.statsAt = Date.now() + this.statsBackoffMs;
+        this.pushStatsLog({
+          atMs: Date.now(), index: this.index, ok: false, reason: code,
+          level: plano.level, livres: plano.livres, plano: plano.plano
+        });
+        this.emit('stats', { index: this.index, ok: false, error: code, stats: this.getStatsStats() });
+        return;
+      }
+
+      const gasto = plano.plano.reduce((a, e) => a + e.points, 0);
+      const resto = Number((res.value && res.value.remaining_points) || 0);
+
+      contador.runs++;
+      contador.spent += gasto;
+      contador.lastError = '';
+
+      // O saldo autoritativo é o da resposta. `setPoints` é o mesmo caminho do
+      // push `allocate_stats_result`, que também chega — aplicar aqui evita a
+      // janela em que o estado ainda diz que há pontos e `maybeStats` dispara
+      // uma segunda alocação com a mesma base.
+      this.setPoints('stat', resto);
+
+      // O que o servidor de fato aplicou, que pode diferir do pedido se outra
+      // sessão gastou no meio. A base da próxima divisão sai daqui em vez de
+      // esperar o `character_patch`, pelo mesmo motivo.
+      if (this.statsAllocated && Array.isArray(res.value && res.value.allocated)) {
+        for (const item of res.value.allocated) {
+          const sigla = autoStats.statSigla(item && item.stat);
+          if (sigla) this.statsAllocated[sigla] += Number(item.points) || 0;
+        }
+      }
+
+      this.pushStatsLog({
+        atMs: Date.now(), index: this.index, ok: true, reason: '',
+        level: plano.level, livres: plano.livres, gasto, remaining: resto,
+        origem: plano.origem, buildId: plano.buildId, buildName: plano.buildName,
+        plano: plano.plano
+      });
+      this.emit('stats', { index: this.index, ok: true, spent: gasto, stats: this.getStatsStats() });
+
+      // Sobrou ponto: outra subida de nível entrou no meio, ou o servidor
+      // aplicou menos do que o pedido. A próxima passada resolve com a base
+      // atualizada; recursão aqui poderia virar laço numa recusa parcial
+      // repetida.
+      this.emitUpdate();
+    } catch (err) {
+      const motivo = (err && err.message) || String(err);
+      contador.failed++;
+      contador.lastError = motivo;
+      this.statsAt = Date.now() + this.statsBackoffMs;
+      this.pushStatsLog({ atMs: Date.now(), index: this.index, ok: false, reason: motivo });
+      this.emit('stats', { index: this.index, ok: false, error: motivo, stats: this.getStatsStats() });
+    }
+  }
+
+  /**
+   * Uma linha no relatório, com teto. Mesma forma do log do câmbio, mas o
+   * destino é o manager: a janela mostra as contas juntas, e um log por cliente
+   * obrigaria a tela a costurar oito listas por ordem de tempo.
+   */
+  pushStatsLog(entry) {
+    this.statsLog.unshift(entry);
+    if (this.statsLog.length > autoStats.LOG_MAX) this.statsLog.length = autoStats.LOG_MAX;
+    this.emit('stats-log', entry);
+  }
+
+  getStatsStats() {
+    return { ...this.statsStats, busy: this.statsBusy, backoffUntilMs: this.statsAt };
+  }
+
+  /** O que a janela mostra desta conta: classe, build em uso e a prévia. */
+  getStatsSummary() {
+    return autoStats.summarize({
+      config: this.statsConfig,
+      index: this.index,
+      classId: this.state.classId,
+      catalog: this.classStore.value,
+      allocated: this.statsAllocated,
+      livres: this.state.points.stat,
+      level: this.state.level
+    });
+  }
+
+  // -------------------------------------------------------------- auto-forja
+
+  /** Troca a configuração em execução, sem derrubar a sessão. */
+  setForgeConfig(config) {
+    this.forgeConfig = autoForge.normalizeConfig(config);
+    // Mudar a configuração é pedido explícito: não esperar o recuo. Mas não
+    // dispara a rodada aqui, ao contrário do auto-status: uma rodada **destrói
+    // peça**, e salvar a tela não pode ser o gesto que moe o inventário. Quem
+    // dispara é o próximo drop, ou o botão da janela.
+    this.forgeAt = 0;
+  }
+
+  /**
+   * Guardas de execução. O que fundir e o que desmontar é decisão de
+   * `leveling-forge`; aqui só mora "uma rodada por vez, não logo depois de uma
+   * recusa, e não duas vezes no mesmo minuto".
+   *
+   * A espera entre rodadas é a guarda que mais importa: isto é chamado a cada
+   * `inventory_delta`, que numa caçada ativa chega a cada drop. Sem ela, cada
+   * peça caída pagaria uma varredura de inventário de doze páginas.
+   */
+  maybeForge() {
+    if (this.forgeBusy || !this.isOpen() || this.status !== 'connected') return;
+    if (!autoForge.isConfigured(this.forgeConfig)) return;
+    if (!autoForge.accountEnabled(this.forgeConfig, this.index)) return;
+    if (Date.now() < this.forgeAt) return;
+
+    this.forgeBusy = true;
+    this.forgeAt = Date.now() + this.forgeGapMs;
+    this.runForge().finally(() => { this.forgeBusy = false; });
+  }
+
+  /**
+   * Uma rodada: moe o lixo, veste o que já melhora, funde a peça que mais
+   * rende, e veste de novo.
+   *
+   * A ordem mudou em relação à primeira versão, e cada passo dela tem um
+   * motivo:
+   *
+   *   1. **ler a bolsa**. Só o escopo 1, como no auto-anunciar: o depósito é
+   *      onde o usuário guarda o que não quer que mexam.
+   *   2. **moer comum e incomum**. Primeiro, e sempre. Fusão custa pó, pó só
+   *      vem de desmonte, e essas raridades não servem de insumo nem de peça.
+   *      Deixá-las para o fim fazia a fusão falhar por falta de um pó que
+   *      estava na bolsa o tempo todo, em forma de lixo.
+   *   3. **reler**, se moeu. O plano de fusão depende do saldo de pó, e o saldo
+   *      acabou de mudar.
+   *   4. **equipar o melhor**, se a bolsa já tem peça melhor. É de graça, e
+   *      muda a referência contra a qual qualquer ganho de fusão é medido.
+   *   5. **fundir o lote**, em ordem de ganho. São fusões disjuntas em peça e
+   *      orçadas no mesmo saldo de pó; uma recusa interrompe o resto. Antes
+   *      delas, o desmonte dirigido de peças de nível baixo, se e só se faltar
+   *      pó para o lote inteiro.
+   *   6. **equipar de novo**, uma vez só. As peças novas são as candidatas, e
+   *      `equip_best` varre todos os slots e decide quais de fato melhoram.
+   *
+   * Nunca lança. Roda em segundo plano e uma falha de rede não pode derrubar
+   * nada — vira linha do relatório e recuo.
+   */
+  async runForge() {
+    const contador = this.forgeStats;
+    contador.lastAtMs = Date.now();
+
+    const catalogo = this.marketCatalogStore.value;
+
+    try {
+      let inv = await this.inventoryItems({ scopes: [1] });
+      if (inv.errorCode) {
+        this.forgeFail(inv.errorCode);
+        return;
+      }
+
+      const planejar = (config = this.forgeConfig) => autoForge.plan({
+        config,
+        index: this.index,
+        catalog: catalogo,
+        items: inv.items,
+        dust: this.state.stock.dust
+      });
+
+      let plano = planejar();
+      let mexeu = false;
+
+      // Passo 2: o lixo primeiro. Não depende de haver fusão nenhuma — a conta
+      // que ainda não tem material para fundir é justamente a que mais precisa
+      // acumular pó.
+      if (plano.junk.length) {
+        const moeu = await this.runDismantle(plano.junk);
+        if (moeu) {
+          mexeu = true;
+          // Passo 3: o saldo de pó mudou e as peças sumiram. Replanejar com o
+          // inventário velho escolheria insumos que não existem mais.
+          const relido = await this.inventoryItems({ scopes: [1] }).catch(() => null);
+          if (!relido || relido.errorCode) {
+            // Depois de uma operação destrutiva, o snapshot antigo é inválido:
+            // ele contém uids que podem ter acabado de ser desmontados.
+            this.pushForgeLog({
+              atMs: Date.now(), index: this.index, ok: false,
+              reason: 'forge.inventoryRefreshFailed'
+            });
+            return;
+          }
+          inv = relido;
+          plano = planejar();
+        }
+      }
+
+      // O resumo é calculado com o inventário já moído: a janela mostra o que
+      // de fato sobrou, sem pagar outra varredura.
+      this.forgeSummary = autoForge.summarize({
+        config: this.forgeConfig,
+        index: this.index,
+        catalog: catalogo,
+        items: inv.items,
+        dust: this.state.stock.dust,
+        level: this.state.level
+      });
+
+      // Passo 4: peça melhor parada na bolsa. Vestir é de graça, e o plano
+      // devolve `equipFirst` justamente para a fusão não gastar cinco peças
+      // substituindo algo que ia ser substituído sem custo.
+      if (plano.equipFirst.length && this.forgeConfig.equipBest) {
+        const equipou = await this.runEquipBest();
+        mexeu = equipou.ok || mexeu;
+
+        // `equip_best` pode recusar uma peça que o snapshot ainda mostra na
+        // bolsa (`item.equipped`). Não deixar essa recusa matar a forja: reler
+        // remove a informação velha e permite fundir os slots restantes.
+        const relido = await this.inventoryItems({ scopes: [1] }).catch(() => null);
+        if (!relido || relido.errorCode) {
+          this.pushForgeLog({
+            atMs: Date.now(), index: this.index, ok: false,
+            reason: 'forge.inventoryRefreshFailed'
+          });
+          return;
+        }
+        inv = relido;
+        plano = planejar(equipou.stale
+          ? { ...this.forgeConfig, equipBest: false }
+          : this.forgeConfig);
+      }
+
+      if (!plano.fusions.length) {
+        // `noInputs` é a espera normal por material, `noPositiveWindow` é a
+        // conta que já está no melhor que consegue, e `equipFirst` é o launcher
+        // funcionando. Nenhum dos três é falha, e registrá-los encheria o
+        // relatório de linhas vermelhas sem nada errado acontecendo.
+        const silencioso = ['forge.noInputs', 'forge.noPositiveWindow', 'forge.equipFirst', ''];
+        if (plano.reason && !silencioso.includes(plano.reason)) {
+          this.forgeAt = Date.now() + this.forgeBackoffMs;
+          this.pushForgeLog({
+            atMs: Date.now(), index: this.index, ok: false, reason: plano.reason,
+            need: plano.sacrifice ? plano.sacrifice.need : 0
+          });
+        }
+        if (mexeu) {
+          contador.runs++;
+          contador.lastError = '';
+          this.emit('forge', { index: this.index, ok: true, stats: this.getForgeStats() });
+        }
+        return;
+      }
+
+      // Passo 5: o lote, e depois dele o lote que o próprio lote tornou
+      // possível.
+      //
+      // Cinco raras viram uma épica, e cinco épicas viram uma lendária — mas as
+      // épicas novas não existiam quando o plano foi traçado. Sem o segundo
+      // passe elas ficariam paradas até a rodada seguinte, e uma conta com
+      // material para subir dois degraus levaria duas rodadas para fazer o que
+      // cabe numa. Cada passe custa uma varredura de bolsa, e é por isso que
+      // eles são contados: `FORGE_MAX_PASSES` é o teto.
+      let fundiu = 0;
+      let passe = 0;
+      let ultimaFusao = null;
+
+      while (plano.fusions.length && passe < FORGE_MAX_PASSES) {
+        passe++;
+
+        // Passo 5a: o desmonte dirigido. Só o que falta de pó, e só peças que
+        // nunca serviriam de insumo para as fusões deste passe.
+        if (plano.sacrifice.uids.length) {
+          const sacrificou = await this.runDismantle(plano.sacrifice.items, 'sacrifice');
+          if (!sacrificou) {
+            // Sem o pó, a fusão recusaria no servidor. Parar aqui evita gastar
+            // uma escrita para ouvir não.
+            this.pushForgeLog({
+              atMs: Date.now(), index: this.index, ok: false, reason: 'forge.noDust',
+              need: plano.sacrifice.need
+            });
+            break;
+          }
+          mexeu = true;
+        }
+
+        // Passo 5b: o lote. As fusões são disjuntas em peça e o pó já foi
+        // orçado em `plan`, então elas só dependem do servidor aceitar uma de
+        // cada vez. Uma recusa interrompe o resto: se a primeira falhou, o
+        // saldo de que as seguintes partem é um palpite, e insistir seria
+        // mandar escrita atrás de escrita para ouvir não.
+        let nestePasse = 0;
+        for (const fusao of plano.fusions) {
+          if (!await this.runFuse(fusao)) break;
+          ultimaFusao = fusao;
+          nestePasse++;
+          if (this.forgeGapMs) await sleep(FUSE_GAP_MS);
+        }
+
+        fundiu += nestePasse;
+        // Nenhuma saiu: o passe seguinte partiria do mesmo inventário e pediria
+        // exatamente a mesma fusão que o servidor acabou de recusar.
+        if (!nestePasse) break;
+        if (passe >= FORGE_MAX_PASSES) break;
+
+        // A bolsa mudou de verdade: as peças velhas sumiram e as novas, de um
+        // degrau acima, chegaram. Replanejar com o inventário anterior pediria
+        // fusão de uids que não existem mais.
+        const relido = await this.inventoryItems({ scopes: [1] }).catch(() => null);
+        if (!relido || relido.errorCode) break;
+        inv = relido;
+        plano = planejar();
+      }
+
+      mexeu = fundiu > 0 || mexeu;
+
+      // O último passe pode ter criado peças que ainda não foram vestidas. A
+      // janela deve refletir a bolsa final, não o retrato usado no primeiro
+      // lote; sem esta atualização a UI ficava um passe atrasada.
+      this.forgeSummary = autoForge.summarize({
+        config: this.forgeConfig,
+        index: this.index,
+        catalog: catalogo,
+        items: inv.items,
+        dust: this.state.stock.dust,
+        level: this.state.level
+      });
+
+      // Passo 6: vestir a peça nova, e medir se ela de fato melhorou. O ganho
+      // foi estimado por `stat_mult`; aqui o servidor diz o número real.
+      //
+      // Uma chamada para o lote inteiro: `equip_best` varre todos os slots de
+      // uma vez, e pedir por fusão seria repetir a mesma varredura N vezes.
+      if (fundiu && this.forgeConfig.equipBest) {
+        const ganho = await this.runEquipBest();
+        if (!ganho.ok) {
+          // Forjou e o jogo não quis vestir nenhuma: a estimativa errou no lote
+          // inteiro. Recuar evita o laço de refazer as mesmas fusões sem ganho
+          // a cada drop.
+          this.forgeAt = Date.now() + this.forgeBackoffMs;
+          this.pushForgeLog({
+            atMs: Date.now(), index: this.index, ok: false, reason: 'forge.noGain',
+            slot: ultimaFusao ? ultimaFusao.sigla : '',
+            slotName: ultimaFusao ? ultimaFusao.name : '',
+            fusions: fundiu
+          });
+        }
+      }
+
+      if (mexeu) {
+        contador.runs++;
+        contador.lastError = '';
+        this.emit('forge', { index: this.index, ok: true, stats: this.getForgeStats() });
+      }
+    } catch (err) {
+      this.forgeFail((err && err.message) || String(err));
+    }
+  }
+
+  /** Uma recusa: conta, recua e registra. */
+  forgeFail(motivo) {
+    this.forgeStats.failed++;
+    this.forgeStats.lastError = motivo;
+    this.forgeAt = Date.now() + this.forgeBackoffMs;
+    this.pushForgeLog({ atMs: Date.now(), index: this.index, ok: false, reason: motivo });
+    this.emit('forge', { index: this.index, ok: false, error: motivo, stats: this.getForgeStats() });
+  }
+
+  /**
+   * Funde as peças escolhidas numa só saída, no slot pedido.
+   *
+   * `uids` passa por `uint64()` e não por `Number()`, pelo mesmo motivo do
+   * anúncio e do cadeado: os uids do servidor passam de 2^53, e o arredondamento
+   * do ponto flutuante cai num uid vizinho — que existe, e que seria fundido
+   * sem erro nenhum. Aqui isso significaria consumir cinco peças erradas.
+   *
+   * `slot` vai como **número** do enum: o `verify` do codec recusa o nome.
+   */
+  async runFuse(fuse) {
+    const uids = fuse.uids.map(uint64);
+    // Um uid ilegível invalida a fusão inteira, não só aquela peça: fundir com
+    // quatro das cinco entradas seria uma peça a menos e um resultado que o
+    // usuário não pediu.
+    if (uids.some(u => u === null)) {
+      this.forgeFail('forge.badUid');
+      return false;
+    }
+
+    const res = await this.request('fuse', {
+      uids,
+      slot: fuse.slot,
+      slot_swap: !!fuse.slotSwap
+    }).catch(e => ({ caseName: 'error', value: { code: e.message } }));
+
+    if (res.caseName === 'error') {
+      this.forgeFail((res.value && res.value.code) || 'forge.fuseFailed');
+      return false;
+    }
+
+    const value = res.value || {};
+    const item = value.item || {};
+    const po = Number(value.dust_spent) || 0;
+
+    this.forgeStats.fused++;
+    // O saldo local é corrigido na hora. O `character_patch` com o material
+    // novo chega depois, e até ele a rodada seguinte veria pó que já foi gasto.
+    this.state.stock.dust = Math.max(0, this.state.stock.dust - po);
+
+    this.pushForgeLog({
+      atMs: Date.now(), index: this.index, ok: true, action: 'fuse',
+      slot: fuse.sigla, slotName: fuse.name, slotSwap: !!fuse.slotSwap,
+      rarity: String(item.rarity || fuse.rarity), level: Number(item.level) || fuse.level,
+      inputs: fuse.uids.length, inputRarity: fuse.inputRarity,
+      // Os níveis que entraram, para a auditoria. O nível que sai é o menor
+      // deles, e ver "55, 55, 55, 55, 52 → 52" é a única forma de o usuário
+      // perceber que uma peça de nível baixo arrastou a fusão para baixo.
+      inputLevels: fuse.inputLevels || [],
+      waste: Number(fuse.waste) || 0,
+      wasEstimated: !!fuse.assumed,
+      before: fuse.current || null,
+      dust: po, gold: Number(value.gold_spent) || 0,
+      uid: String(item.uid || '')
+    });
+    return true;
+  }
+
+  /**
+   * Desmonta as peças escolhidas, em lote.
+   *
+   * `Dismantle` recebe a lista inteira e responde com o total: o servidor não
+   * separa recusa por peça, então o lote é a granularidade que existe. Um uid
+   * ilegível é descartado da lista em vez de abortar tudo — ao contrário da
+   * fusão, aqui cada peça é independente das outras.
+   */
+  async runDismantle(candidatos, kind = 'junk') {
+    const uids = [];
+    for (const item of candidatos) {
+      const id = uint64(item.uid);
+      if (id !== null) uids.push(id);
+    }
+    if (!uids.length) return false;
+
+    const res = await this.request('dismantle', { uids })
+      .catch(e => ({ caseName: 'error', value: { code: e.message } }));
+
+    if (res.caseName === 'error') {
+      this.forgeFail((res.value && res.value.code) || 'forge.dismantleFailed');
+      return false;
+    }
+
+    const value = res.value || {};
+    const pecas = Number(value.pieces) || 0;
+    const po = Number(value.dust) || 0;
+    if (!pecas) return false;
+
+    this.forgeStats.dismantled += pecas;
+    this.forgeStats.dust += po;
+    this.state.stock.dust += po;
+
+    this.pushForgeLog({
+      atMs: Date.now(), index: this.index, ok: true, action: 'dismantle',
+      // `kind` separa as duas naturezas no relatório: moer comum e incomum é
+      // rotina, e sacrificar raro para fechar o pó de uma fusão é uma decisão
+      // que o usuário vai querer conferir.
+      kind,
+      pieces: pecas, dust: po, stones: Number(value.stones) || 0,
+      gems: Number(value.gems_returned) || 0
+    });
+    return true;
+  }
+
+  /**
+   * Veste a melhor peça de cada slot, pelo critério de potência.
+   *
+   * `preview` antes de `apply`, e não por conforto: o preview é leitura pura e
+   * devolve `already_best`, que é a resposta mais comum — a conta acabou de
+   * equipar na rodada anterior. Sem ele, cada rodada mandaria uma escrita para
+   * o servidor responder "não havia nada a trocar".
+   *
+   * `EQUIP_CRITERION_POWER` como número, pelo mesmo motivo de sempre.
+   */
+  async runEquipBest() {
+    const criterio = 2; // EQUIP_CRITERION_POWER
+
+    const previa = await this.request('equip_best_preview', { criterion: criterio })
+      .catch(e => ({ caseName: 'error', value: { code: e.message } }));
+    if (previa.caseName === 'error') {
+      const code = (previa.value && previa.value.code) || 'forge.equipFailed';
+      this.pushForgeLog({
+        atMs: Date.now(), index: this.index, ok: false, reason: code,
+        phase: 'preview', stale: code === 'item.equipped'
+      });
+      return { ok: false, code, stale: code === 'item.equipped' };
+    }
+    if (previa.value && previa.value.already_best) {
+      return { ok: false, code: 'item.alreadyBest', stale: true };
+    }
+
+    const res = await this.request('equip_best_apply', { criterion: criterio })
+      .catch(e => ({ caseName: 'error', value: { code: e.message } }));
+    if (res.caseName === 'error') {
+      this.forgeStats.lastError = (res.value && res.value.code) || 'forge.equipFailed';
+      const code = (res.value && res.value.code) || 'forge.equipFailed';
+      this.pushForgeLog({
+        atMs: Date.now(), index: this.index, ok: false, reason: code,
+        phase: 'apply', stale: code === 'item.equipped'
+      });
+      return { ok: false, code, stale: code === 'item.equipped' };
+    }
+
+    const value = res.value || {};
+    const trocas = (value.changes || []).length;
+    if (!trocas) return { ok: false, code: 'item.alreadyBest', stale: true };
+
+    this.forgeStats.equipped += trocas;
+    this.pushForgeLog({
+      atMs: Date.now(), index: this.index, ok: true, action: 'equip',
+      changes: trocas,
+      slots: (value.changes || []).map(c => autoForge.slotName(c && c.slot)).filter(Boolean),
+      power: Number(value.new_power) || 0,
+      delta: Number(value.delta_power) || 0
+    });
+    return { ok: true, changes: trocas };
+  }
+
+  /**
+   * Uma linha no relatório, com teto. Mesma forma do log do auto-status, e o
+   * destino é o manager pelo mesmo motivo: a janela mostra as contas juntas.
+   */
+  pushForgeLog(entry) {
+    this.forgeLog.unshift(entry);
+    if (this.forgeLog.length > autoForge.LOG_MAX) this.forgeLog.length = autoForge.LOG_MAX;
+    this.emit('forge-log', entry);
+  }
+
+  getForgeStats() {
+    return { ...this.forgeStats, busy: this.forgeBusy, backoffUntilMs: this.forgeAt };
+  }
+
+  /**
+   * O que a janela mostra desta conta: o déficit slot a slot e o estudo de
+   * custo.
+   *
+   * Sem `force` devolve o último resumo que a rodada já calculou. Uma varredura
+   * de inventário por conta a cada abertura de janela seria doze páginas vezes
+   * oito contas para mostrar números que a rodada acabou de apurar.
+   */
+  async getForgeSummary(force = false) {
+    if (!force && this.forgeSummary) return this.forgeSummary;
+    if (this.status !== 'connected') return null;
+
+    const inv = await this.inventoryItems({ scopes: [1] }).catch(() => ({ items: [] }));
+    this.forgeSummary = autoForge.summarize({
+      config: this.forgeConfig,
+      index: this.index,
+      catalog: this.marketCatalogStore.value,
+      items: inv.items || [],
+      dust: this.state.stock.dust,
+      level: this.state.level
+    });
+    return this.forgeSummary;
+  }
+
   // ------------------------------------------------------------------- grupo
 
   /**
@@ -3031,6 +3821,7 @@ class LevelingHeadlessClient extends EventEmitter {
             power: Number(item.power) || 0,
             locked: !!item.locked,
             equippedSlot: String(item.equipped_slot || ''),
+            equippedOnShadow: String(item.equipped_on_shadow || ''),
             // O que o NPC paga. É o piso absoluto: anunciar abaixo disso é
             // perder dinheiro para ter trabalho.
             sellPrice: Number(item.sell_price) || 0,
@@ -3263,6 +4054,33 @@ class LevelingHeadlessClient extends EventEmitter {
       }
     }
     return { claimed: recolhidos, gold, items, bagFull, unclaimed };
+  }
+
+  /**
+   * Recolhe todas as entradas não reclamadas, incluindo itens e diamantes.
+   *
+   * Lê a caixa inteira antes de começar os claims: resgatar a página zero pode
+   * alterar a paginação do servidor. Continua usando um claim por id, nunca
+   * `claim_all`, e deixa o `bagFull` interromper a conta com segurança.
+   */
+  async mailClaimAll() {
+    if (this.status !== 'connected') return { errorCode: 'mail.offline', claimed: [] };
+
+    const ids = [];
+    for (let page = 0; page < 100; page++) {
+      const caixa = await this.mailList(page);
+      if (caixa.errorCode) return { errorCode: caixa.errorCode, claimed: [] };
+      for (const entry of caixa.entries) {
+        if (!entry.claimed && entry.id) ids.push(entry.id);
+      }
+
+      const total = Number(caixa.total) || 0;
+      const lidas = (page + 1) * MAIL_PAGE_SIZE;
+      if (!caixa.entries.length || caixa.entries.length < MAIL_PAGE_SIZE
+        || (total > 0 && lidas >= total)) break;
+    }
+
+    return this.mailClaim(ids);
   }
 
   /** A caçada lida na entrada, ou `null` se a conta não estava caçando. */
@@ -3620,6 +4438,61 @@ class LevelingHeadlessManager extends EventEmitter {
     this.marketCatalogStore = { value: options.marketCatalog || null, fresh: false };
 
     /**
+     * Classes e builds, para o auto-status. Mesma origem e mesma regra do
+     * catálogo de caçadas.
+     */
+    this.classStore = { value: options.classCatalog || null, fresh: false };
+
+    /**
+     * Auto-status: gasta os pontos de cada nível na build escolhida.
+     *
+     * Não há laço nem relógio no manager, ao contrário de todos os outros
+     * automáticos: a distribuição é disparada pelo `character_patch` de cada
+     * cliente, que é o pacote que anuncia os pontos novos. Um relógio aqui só
+     * perguntaria o que o push já contou.
+     *
+     * A configuração é a exceção ao padrão de "uma para todas": `porConta`
+     * guarda a build de cada personagem, porque classe e build não têm valor
+     * global que sirva.
+     */
+    this.statsConfig = autoStats.normalizeConfig(options.statsConfig);
+    this.statsSink = typeof options.statsSink === 'function' ? options.statsSink : null;
+    /**
+     * Grava o relatório depois de cada linha. Mesma forma do log do sniper e
+     * pelo mesmo motivo: o processo principal é que sabe onde é `userData`, e o
+     * serviço não toca em disco.
+     *
+     * Aqui o log é do manager e não do cliente porque a pergunta que ele
+     * responde — "o que cada conta gastou, e quando?" — é sobre todas juntas.
+     */
+    this.statsLogSink = typeof options.statsLogSink === 'function' ? options.statsLogSink : null;
+    this.statsLog = [];
+
+    /**
+     * Auto-forja: desmonta o lixo, funde cinco peças numa melhor e veste o
+     * resultado, até os onze slots alcançarem o alvo.
+     *
+     * Como o auto-status, não há laço nem relógio no manager: a rodada é
+     * disparada pelo `inventory_delta` de cada cliente, que é o pacote que
+     * anuncia material novo. A espera entre rodadas mora no cliente, porque é
+     * ela que impede um drop por segundo de virar uma varredura por segundo.
+     *
+     * Uma configuração para todas as contas, com a lista de excluídas dentro —
+     * aqui isso cabe, ao contrário do auto-status: o alvo é um par de nível e
+     * raridade, não uma propriedade do personagem.
+     */
+    this.forgeConfig = autoForge.normalizeConfig(options.forgeConfig);
+    this.forgeSink = typeof options.forgeSink === 'function' ? options.forgeSink : null;
+    /**
+     * Grava o relatório depois de cada linha, igual ao do auto-status, e aqui
+     * com o motivo mais forte da série: o launcher **apagou peças** e o jogo
+     * não guarda histórico de desmonte. Cada linha traz o que entrou, o que
+     * saiu e quanto custou, porque é a única auditoria possível depois.
+     */
+    this.forgeLogSink = typeof options.forgeLogSink === 'function' ? options.forgeLogSink : null;
+    this.forgeLog = [];
+
+    /**
      * Coletor do mercado. Uma leitura para o launcher inteiro, não por conta:
      * `market_request{history}` devolve o feed global, idêntico em qualquer
      * sessão, então N contas lendo o mesmo feed seriam N vezes o mesmo dado.
@@ -3635,6 +4508,11 @@ class LevelingHeadlessManager extends EventEmitter {
     this.marketIntervalMs = Number(options.marketIntervalMs) || MARKET_POLL_MS;
     this.marketBusy = false;
     this.marketStats = { polls: 0, inserted: 0, lastAtMs: 0, lastError: '', lastCount: 0 };
+    /** Auto-correio: resgata toda a caixa, mesmo com o câmbio desligado. */
+    this.mailTimer = null;
+    this.mailBusy = false;
+    this.mailIntervalMs = Number(options.mailIntervalMs) || MAIL_POLL_MS;
+    this.mailStats = { polls: 0, claimed: 0, gold: 0, items: 0, lastAtMs: 0, lastError: '' };
     /**
      * Banco, para o enriquecedor de nível. Ele precisa da fila de vendas sem
      * nível, que só o banco conhece — `marketSink` é de mão única.
@@ -3710,6 +4588,14 @@ class LevelingHeadlessManager extends EventEmitter {
      * o launcher anunciar abaixo de um mercado que já subiu.
      */
     this.autosellPrices = new Map();
+    /**
+     * Cotação do diamante em ouro, também dentro de **uma** rodada.
+     *
+     * `null` é "ainda não perguntei"; `{rate: 0}` é "perguntei e o banco não
+     * tem amostra". Confundir os dois faria a consulta repetir por item num
+     * banco sem câmbio nenhum.
+     */
+    this.autosellRateCache = null;
     this.autosellStats = {
       rounds: 0, listed: 0, claimed: 0, goldClaimed: 0,
       lastAtMs: 0, lastError: '', lastCount: 0
@@ -3837,6 +4723,64 @@ class LevelingHeadlessManager extends EventEmitter {
     clearInterval(this.marketTimer);
     this.marketTimer = null;
     return true;
+  }
+
+  /**
+   * Resgata todas as mensagens de todas as contas em monitor.
+   *
+   * A operação é independente do câmbio: correio continua sendo correio mesmo
+   * quando nenhuma transferência de ouro está configurada. Uma conta cheia
+   * interrompe apenas a própria conta; as outras continuam na rodada.
+   */
+  async pollMail() {
+    if (this.mailBusy) return this.mailStats;
+    const clients = [...this.clients.values()]
+      .filter(client => client && client.index >= 0 && client.status === 'connected');
+    if (!clients.length) {
+      this.mailStats.lastError = 'mail.noneActive';
+      return this.mailStats;
+    }
+
+    this.mailBusy = true;
+    try {
+      const resultados = await Promise.all(clients.map(client =>
+        client.mailClaimAll().catch(error => ({ errorCode: error && error.message || 'mail.failed', claimed: [] }))
+      ));
+      this.mailStats.polls++;
+      this.mailStats.lastAtMs = Date.now();
+      this.mailStats.lastError = '';
+      for (const resultado of resultados) {
+        this.mailStats.claimed += (resultado.claimed || []).length;
+        this.mailStats.gold += Number(resultado.gold) || 0;
+        this.mailStats.items += Number(resultado.items) || 0;
+        if (resultado.errorCode) this.mailStats.lastError = resultado.errorCode;
+      }
+      return this.mailStats;
+    } catch (error) {
+      this.mailStats.lastError = error && error.message || String(error);
+      return this.mailStats;
+    } finally {
+      this.mailBusy = false;
+    }
+  }
+
+  startMailPoll() {
+    if (this.mailTimer) return false;
+    this.mailTimer = setInterval(() => { this.pollMail(); }, this.mailIntervalMs);
+    if (this.mailTimer.unref) this.mailTimer.unref();
+    this.pollMail();
+    return true;
+  }
+
+  stopMailPoll() {
+    if (!this.mailTimer) return false;
+    clearInterval(this.mailTimer);
+    this.mailTimer = null;
+    return true;
+  }
+
+  getMailStats() {
+    return { ...this.mailStats, running: !!this.mailTimer, busy: this.mailBusy };
   }
 
   getMarketStats() {
@@ -4333,6 +5277,28 @@ class LevelingHeadlessManager extends EventEmitter {
   }
 
   /**
+   * A cotação do diamante em ouro, uma vez por rodada.
+   *
+   * Por rodada e não por item: a taxa não depende do item, e consultá-la a
+   * cada linha de inventário seria a mesma resposta repetida centenas de
+   * vezes. Vive ao lado de `autosellPrices` e é descartada junto, pelo mesmo
+   * motivo — uma cotação de mercado envelhece rápido.
+   *
+   * Zero quando não há amostra, e zero faz `priceFor` recusar com
+   * `price.noRate` em vez de converter por um palpite.
+   */
+  autosellRate() {
+    if (this.autosellRateCache) return this.autosellRateCache;
+    let r = { rate: 0, samples: 0, days: 0 };
+    if (this.marketDb) {
+      try { r = this.marketDb.exchangeRate({ days: 7 }); }
+      catch { this.autosellStats.lastError = 'autosell.dbFailed'; }
+    }
+    this.autosellRateCache = r;
+    return r;
+  }
+
+  /**
    * O preço de referência de um item, com o nível e o encanto exatos.
    *
    * Duas fontes, e a divisão entre elas é deliberada:
@@ -4348,40 +5314,109 @@ class LevelingHeadlessManager extends EventEmitter {
    * O resultado fica em cache **dentro da rodada**. Oito contas com citrino
    * nv. 2 fariam oito buscas idênticas; uma rodada depois o cache é jogado
    * fora, porque o anúncio rival é o dado que envelhece mais rápido aqui.
+   *
+   * ## O encanto, em dois degraus
+   *
+   * A chave do cache é `defId@level+enchant`, mas a consulta filtrava só por
+   * nível: a chave prometia o encanto exato e a mediana vinha de uma mistura
+   * de encantos. O `lowestRival` sempre exigiu os dois exatos, então o piso e
+   * o rival falavam de produtos diferentes.
+   *
+   * Agora tenta `level + enchant`, e só cai para `level` sozinho quando a
+   * amostra do encanto exato não alcança `MIN_SAMPLES`. O degrau existe porque
+   * peça encantada é rara no feed — sem ele, quase todo item com encanto
+   * viraria `price.noLevelData` e o auto-anunciar pararia de vender. Mas a
+   * aproximação viaja em `enchantApprox` e aparece no relatório: estimar
+   * calado é o que não se pode fazer.
+   *
+   * Nunca cai para "qualquer nível". Esse é o erro de 3x que nenhum
+   * refinamento de média compensa.
    */
   async autosellPriceFor(item, client) {
     const chave = autosell.priceKeyOf(item);
     if (this.autosellPrices.has(chave)) return this.autosellPrices.get(chave);
 
+    const cfg = this.autosellConfig;
+    const moeda = cfg.currency === 'diamond' ? 'diamond' : 'gold';
     const defId = String(item.defId || '');
     const level = Number(item.level) || 0;
+    const enchant = Number(item.enchant) || 0;
     let median = 0;
+    let average = 0;
     let samples = 0;
+    let enchantApprox = false;
+    // O preço saiu de vendas na própria moeda do anúncio? Em diamante isso
+    // decide se a cotação do câmbio entra na conta ou não.
+    let directDiamond = false;
 
     if (this.marketDb) {
       try {
         // `level` exato: `salesForPricing` descarta as vendas sem nível
         // anotado, que é o que impede uma venda de nível desconhecido de
         // entrar na mediana de um nível específico.
-        const vendas = this.marketDb.salesForPricing(defId, {
-          level, days: 30, limit: listingRules.SAMPLE_SIZE
-        });
-        const conta = listingRules.suggestPrice(vendas);
+        const base = { level, days: 30, limit: listingRules.SAMPLE_SIZE, currency: moeda };
+        let conta = listingRules.suggestPrice(
+          this.marketDb.salesForPricing(defId, { ...base, enchant }),
+          { mode: cfg.priceMode === 'average' ? 'average' : 'top' }
+        );
+        // Degrau dois: o encanto exato não tinha vendas bastantes.
+        if (conta.samples < listingRules.MIN_SAMPLES) {
+          const amplo = listingRules.suggestPrice(
+            this.marketDb.salesForPricing(defId, base),
+            { mode: cfg.priceMode === 'average' ? 'average' : 'top' }
+          );
+          if (amplo.samples >= listingRules.MIN_SAMPLES) {
+            conta = amplo;
+            enchantApprox = true;
+          }
+        }
         median = conta.median;
+        average = conta.average;
         samples = conta.samples;
+        directDiamond = moeda === 'diamond' && median > 0;
+
+        // Diamante sem histórico em diamante: o preço vem do ouro e é
+        // convertido. É o caso comum — a maioria dos itens nunca foi vendida
+        // em diamante, e sem esta volta o modo diamante não venderia nada.
+        if (moeda === 'diamond' && median <= 0) {
+          const ouro = { level, days: 30, limit: listingRules.SAMPLE_SIZE, currency: 'gold' };
+          let g = listingRules.suggestPrice(
+            this.marketDb.salesForPricing(defId, { ...ouro, enchant }),
+            { mode: cfg.priceMode === 'average' ? 'average' : 'top' }
+          );
+          if (g.samples < listingRules.MIN_SAMPLES) {
+            const amplo = listingRules.suggestPrice(
+              this.marketDb.salesForPricing(defId, ouro),
+              { mode: cfg.priceMode === 'average' ? 'average' : 'top' }
+            );
+            if (amplo.samples >= listingRules.MIN_SAMPLES) {
+              g = amplo;
+              enchantApprox = true;
+            }
+          }
+          median = g.median;
+          average = g.average;
+          samples = g.samples;
+        }
       } catch (err) {
         this.autosellStats.lastError = 'autosell.dbFailed';
       }
     }
 
     let rival = 0;
-    // Sem mediana a busca é desperdício: o item vai ser pulado de qualquer
-    // forma, e uma busca por item sem referência multiplicaria o tráfego pela
-    // parte do inventário que o auto-anunciar nunca vai vender.
-    if (median > 0) {
+    // Duas condições para gastar uma busca de mercado:
+    //
+    // Sem mediana ela é desperdício — o item vai ser pulado de qualquer forma,
+    // e uma busca por item sem referência multiplicaria o tráfego pela parte
+    // do inventário que o auto-anunciar nunca vai vender.
+    //
+    // E no modo `average` o rival não entra na conta de preço nenhuma, então
+    // buscá-lo seria tráfego para um número que ninguém lê. É o que torna o
+    // modo média mais barato por rodada que o original.
+    if (median > 0 && cfg.priceMode !== 'average') {
       const busca = await client.marketSearch({
         defId,
-        currency: 'gold',
+        currency: moeda,
         sort: 'preco-asc',
         // O servidor filtra por faixa; min e max iguais é o nível exato. Sem
         // isto a primeira página viria cheia de nv. 1 baratos e o nv. 2 sairia
@@ -4390,10 +5425,10 @@ class LevelingHeadlessManager extends EventEmitter {
         levelMax: level
       }).catch(() => ({ errorCode: 'autosell.searchFailed', listings: [] }));
       if (busca.errorCode) this.autosellStats.lastError = busca.errorCode;
-      else rival = autosell.lowestRival(busca.listings || [], item);
+      else rival = autosell.lowestRival(busca.listings || [], item, moeda);
     }
 
-    const ref = { median, samples, rival };
+    const ref = { median, average, samples, rival, enchantApprox, directDiamond };
     this.autosellPrices.set(chave, ref);
     return ref;
   }
@@ -4492,8 +5527,14 @@ class LevelingHeadlessManager extends EventEmitter {
       prices.set(chave, await this.autosellPriceFor(it, client));
     }
 
+    // A cotação, uma vez. Em modo ouro ela nem é consultada: `autosellRate`
+    // só é chamada quando a moeda do anúncio é diamante, e um banco sem
+    // histórico de câmbio não paga uma consulta por rodada à toa.
+    const cotacao = cfg.currency === 'diamond' ? this.autosellRate() : { rate: 0, samples: 0 };
+
     const plano = autosell.planRound({
-      items: inv.items || [], catalog, prices, limit, active, config: cfg
+      items: inv.items || [], catalog, prices, limit, active, config: cfg,
+      rate: cotacao.rate
     });
     if (!plano.ready.length) {
       // O relatório registra a rodada vazia com o motivo mais comum: é a
@@ -4529,7 +5570,11 @@ class LevelingHeadlessManager extends EventEmitter {
         uid: draft.uid,
         unitPrice: draft.unitPrice,
         quantity: draft.quantity,
-        currency: 'gold',
+        // A moeda vem do rascunho, que a precificação decidiu. Era `'gold'`
+        // cravado aqui: com a configuração em diamante o preço seria calculado
+        // em diamante e o anúncio sairia em ouro, por um número três ordens de
+        // grandeza abaixo do valor — o pior erro possível nesta função.
+        currency: draft.currency || 'gold',
         hours: listingRules.LISTING_HOURS
       }).catch(e => ({ errorCode: e.message }));
 
@@ -4548,6 +5593,7 @@ class LevelingHeadlessManager extends EventEmitter {
         account: index, action: 'list', uid: draft.uid,
         defId: draft.defId, name: draft.name, level: draft.level,
         quantity: draft.quantity, unitPrice: draft.unitPrice, total: draft.total,
+        currency: draft.currency,
         listingId: (res.listing && String(res.listing.id)) || '',
         // A conta do preço vai para o relatório: um anúncio automático que não
         // dá para auditar depois é um anúncio em que não se pode confiar.
@@ -4648,6 +5694,7 @@ class LevelingHeadlessManager extends EventEmitter {
     // envelhece, e um preço velho faria o launcher anunciar abaixo de um
     // mercado que já subiu.
     this.autosellPrices.clear();
+    this.autosellRateCache = null;
     let total = 0;
     try {
       this.autosellStats.rounds++;
@@ -4666,6 +5713,7 @@ class LevelingHeadlessManager extends EventEmitter {
     } finally {
       this.autosellBusy = false;
       this.autosellPrices.clear();
+      this.autosellRateCache = null;
     }
     return total;
   }
@@ -4820,6 +5868,23 @@ class LevelingHeadlessManager extends EventEmitter {
     if (this.marketCatalogStore.fresh) return this.marketCatalogStore.value;
     if (marketCatalog.hasCatalog(catalog)) this.marketCatalogStore.value = catalog;
     return this.marketCatalogStore.value;
+  }
+
+  /** Classes e builds, ou `null` antes do primeiro login. */
+  getClassCatalog() {
+    return this.classStore.value;
+  }
+
+  /**
+   * Semeia com a cópia salva em disco, para a janela de status abrir já com as
+   * builds antes de qualquer monitor conectar. Não marca `fresh`: a primeira
+   * conta a logar ainda lê o catálogo do servidor e substitui esta cópia, que
+   * pode estar velha em relação ao jogo.
+   */
+  setClassCatalog(catalog) {
+    if (this.classStore.fresh) return this.classStore.value;
+    if (autoStats.hasClasses(catalog)) this.classStore.value = catalog;
+    return this.classStore.value;
   }
 
   /** Aplica a configuração de refill nos monitores já em execução. */
@@ -5014,6 +6079,248 @@ class LevelingHeadlessManager extends EventEmitter {
     return this.bossReport();
   }
 
+  // ------------------------------------------------------------- auto-status
+
+  /** Aplica a configuração de status nos monitores já em execução. */
+  setStatsConfig(config) {
+    this.statsConfig = autoStats.normalizeConfig(config);
+    for (const client of this.clients.values()) client.setStatsConfig(this.statsConfig);
+    if (this.statsSink) {
+      try { this.statsSink(this.statsConfig); } catch {}
+    }
+    return this.statsConfig;
+  }
+
+  getStatsConfig() {
+    return autoStats.normalizeConfig(this.statsConfig);
+  }
+
+  /**
+   * O que a janela mostra: uma linha por conta, com a classe detectada, a build
+   * em uso e a prévia da divisão que aconteceria agora.
+   *
+   * Conta desconectada aparece com `connected: false` em vez de sumir, como no
+   * relatório de boss: esconder faria parecer que ela não existe, quando o que
+   * falta é ligar o monitor nela. A configuração dela continua visível e
+   * editável — é o que permite preparar a build antes de conectar.
+   */
+  statsReport() {
+    const indices = [...this.clients.keys()].sort((a, b) => a - b);
+    const catalogo = this.classStore.value;
+
+    const contas = indices.map(index => {
+      const client = this.clients.get(index);
+      const conectado = !!client && client.status === 'connected';
+      const base = {
+        index,
+        name: (client && client.state && client.state.name) || '',
+        connected: conectado,
+        enabled: autoStats.accountEnabled(this.statsConfig, index),
+        stats: client ? client.getStatsStats() : null
+      };
+      if (!conectado) {
+        // Sem monitor não há classe nem pontos, mas a escolha salva precisa
+        // aparecer para a tela desenhar o seletor no lugar certo.
+        return {
+          ...base,
+          ...autoStats.summarize({ config: this.statsConfig, index, catalog: catalogo })
+        };
+      }
+      return { ...base, ...client.getStatsSummary() };
+    });
+
+    return {
+      config: this.getStatsConfig(),
+      accounts: contas,
+      // As classes inteiras, para a tela montar o seletor mesmo de uma conta
+      // desconectada cuja classe o usuário já conhece.
+      classes: catalogo ? catalogo.classes : {},
+      pointsPerLevel: catalogo ? catalogo.pointsPerLevel : autoStats.DEFAULT_POINTS_PER_LEVEL,
+      log: this.getStatsLog()
+    };
+  }
+
+  /**
+   * Distribui agora em todas as contas que participam, sem esperar um patch.
+   *
+   * É o botão "distribuir agora" da janela: o usuário que acabou de escolher a
+   * build quer ver os pontos parados irem embora, e esperar a próxima subida de
+   * nível pareceria que nada funcionou. O recuo é zerado pelo mesmo motivo —
+   * uma recusa anterior não pode engolir o clique.
+   */
+  async pollStats() {
+    const alvos = [...this.clients.values()].filter(c =>
+      c && c.status === 'connected'
+      && autoStats.accountEnabled(this.statsConfig, c.index));
+
+    // Em paralelo entre contas: são sockets independentes, e uma alocação é
+    // uma requisição curta.
+    await Promise.all(alvos.map(async client => {
+      if (client.statsBusy) return;
+      client.statsAt = 0;
+      client.statsBusy = true;
+      try {
+        await client.runStats();
+      } finally {
+        client.statsBusy = false;
+      }
+    }));
+
+    return this.statsReport();
+  }
+
+  getStatsLog() {
+    return this.statsLog.map(e => ({ ...e }));
+  }
+
+  /** Restaura o relatório do disco no boot. */
+  setStatsLog(entries) {
+    this.statsLog = (Array.isArray(entries) ? entries : [])
+      .slice(0, autoStats.LOG_MAX)
+      .map(e => ({ ...e }));
+    return this.statsLog.length;
+  }
+
+  clearStatsLog() {
+    this.statsLog = [];
+    if (this.statsLogSink) {
+      try { this.statsLogSink(this.statsLog); } catch {}
+    }
+    return true;
+  }
+
+  /** Uma linha no relatório, com teto. Mesma forma do log do câmbio. */
+  pushStatsLog(entry) {
+    this.statsLog.unshift(entry);
+    if (this.statsLog.length > autoStats.LOG_MAX) this.statsLog.length = autoStats.LOG_MAX;
+    if (this.statsLogSink) {
+      try { this.statsLogSink(this.statsLog); } catch {}
+    }
+  }
+
+  // -------------------------------------------------------------- auto-forja
+
+  /** Aplica a configuração de forja nos monitores já em execução. */
+  setForgeConfig(config) {
+    this.forgeConfig = autoForge.normalizeConfig(config);
+    for (const client of this.clients.values()) client.setForgeConfig(this.forgeConfig);
+    if (this.forgeSink) {
+      try { this.forgeSink(this.forgeConfig); } catch {}
+    }
+    return this.forgeConfig;
+  }
+
+  getForgeConfig() {
+    return autoForge.normalizeConfig(this.forgeConfig);
+  }
+
+  /**
+   * O que a janela mostra: uma linha por conta, com o estado de cada slot, o
+   * candidato de fusão daquele slot e o custo disso.
+   *
+   * Conta desconectada aparece com `connected: false` em vez de sumir, como no
+   * relatório de status: esconder faria parecer que ela não existe, quando o
+   * que falta é ligar o monitor nela.
+   *
+   * `force` relê a bolsa de cada conta. Sem ele a resposta usa o resumo que a
+   * última rodada já apurou — uma varredura por conta a cada abertura de janela
+   * seria doze páginas vezes oito contas para os mesmos números.
+   */
+  async forgeReport(options = {}) {
+    const force = !!options.force;
+    const indices = [...this.clients.keys()].sort((a, b) => a - b);
+    const catalogo = this.marketCatalogStore.value;
+
+    const contas = await Promise.all(indices.map(async index => {
+      const client = this.clients.get(index);
+      const conectado = !!client && client.status === 'connected';
+      const base = {
+        index,
+        name: (client && client.state && client.state.name) || '',
+        connected: conectado,
+        enabled: autoForge.accountEnabled(this.forgeConfig, index),
+        stats: client ? client.getForgeStats() : null,
+        summary: null
+      };
+      if (!conectado) return base;
+      const summary = await client.getForgeSummary(force).catch(() => null);
+      return { ...base, summary, stats: client.getForgeStats() };
+    }));
+
+    return {
+      config: this.getForgeConfig(),
+      accounts: contas,
+      // As raridades e as regras, para a tela se montar mesmo sem nenhuma
+      // conta conectada.
+      rarities: autoForge.rarityList(catalogo),
+      rules: autoForge.readRules(catalogo),
+      slots: autoForge.SLOT_ORDER.map(s => ({
+        sigla: s, slot: autoForge.SLOTS[s], name: autoForge.SLOT_NAMES[s]
+      })),
+      log: this.getForgeLog()
+    };
+  }
+
+  /**
+   * Uma rodada agora em todas as contas que participam, sem esperar um drop.
+   *
+   * É o botão "forjar agora" da janela. Destrói peça de verdade: o teto de
+   * desmontes por rodada vale aqui igual, e a automação tem de estar ligada.
+   *
+   * O recuo é zerado pelo mesmo motivo do auto-status: uma recusa anterior não
+   * pode engolir o clique. A espera entre rodadas também, porque é um pedido
+   * explícito e não o laço.
+   */
+  async pollForge() {
+    const alvos = [...this.clients.values()].filter(c =>
+      c && c.status === 'connected'
+      && autoForge.isConfigured(this.forgeConfig)
+      && autoForge.accountEnabled(this.forgeConfig, c.index));
+
+    // Em paralelo entre contas: são sockets independentes, e uma rodada é uma
+    // varredura de bolsa e no máximo três escritas.
+    await Promise.all(alvos.map(async client => {
+      if (client.forgeBusy) return;
+      client.forgeAt = 0;
+      client.forgeBusy = true;
+      try {
+        await client.runForge();
+      } finally {
+        client.forgeBusy = false;
+      }
+    }));
+
+    return this.forgeReport();
+  }
+
+  getForgeLog() {
+    return this.forgeLog.map(e => ({ ...e }));
+  }
+
+  /** Restaura o relatório do disco no boot. */
+  setForgeLog(entries) {
+    this.forgeLog = (Array.isArray(entries) ? entries : [])
+      .slice(0, autoForge.LOG_MAX)
+      .map(e => ({ ...e }));
+    return this.forgeLog.length;
+  }
+
+  clearForgeLog() {
+    this.forgeLog = [];
+    if (this.forgeLogSink) {
+      try { this.forgeLogSink(this.forgeLog); } catch {}
+    }
+    return true;
+  }
+
+  pushForgeLog(entry) {
+    this.forgeLog.unshift(entry);
+    if (this.forgeLog.length > autoForge.LOG_MAX) this.forgeLog.length = autoForge.LOG_MAX;
+    if (this.forgeLogSink) {
+      try { this.forgeLogSink(this.forgeLog); } catch {}
+    }
+  }
+
   start(accountIndex, options = {}) {
     this.stop(accountIndex);
     const client = new LevelingHeadlessClient(accountIndex, {
@@ -5029,17 +6336,31 @@ class LevelingHeadlessManager extends EventEmitter {
       // participando, e se a virada do dia já passou a rodada acontece no
       // próprio login.
       bossConfig: this.bossConfig,
+      // Mesma razão para o status: uma conta que subiu de nível com o monitor
+      // desligado acumulou pontos, e eles são distribuídos no próprio login.
+      statsConfig: this.statsConfig,
+      // Mesma razão para a forja: uma conta cujo monitor sobe depois já nasce
+      // participando, com o mesmo alvo das outras.
+      forgeConfig: this.forgeConfig,
       // O catálogo de caçadas é do jogo, não da conta: a primeira conta a logar
       // o preenche e as outras já nascem com a lista pronta.
       huntStore: this.huntStore,
       // Mesma lógica para a aparência do mercado: ícones e cores de raridade
       // são conteúdo do jogo, lidos uma vez por execução do launcher.
       marketCatalogStore: this.marketCatalogStore,
+      // E para as builds de cada classe, que o auto-status usa.
+      classStore: this.classStore,
       ...options
     });
     this.clients.set(accountIndex, client);
 
-    for (const event of ['update', 'status', 'error', 'ended', 'death', 'notice', 'token', 'arise', 'refill', 'expedition', 'boss', 'hunts', 'market-catalog', 'market-sold']) {
+    // `stats-log` não entra: o log do status é do manager, e repassar a linha
+    // sem gravá-la deixaria o relatório só na memória do cliente.
+    client.on('stats-log', entry => this.pushStatsLog(entry));
+    // `forge-log` pelo mesmo motivo: o relatório da forja é do manager, que é
+    // quem tem o gravador em disco.
+    client.on('forge-log', entry => this.pushForgeLog(entry));
+    for (const event of ['update', 'status', 'error', 'ended', 'death', 'notice', 'token', 'arise', 'refill', 'expedition', 'boss', 'stats', 'forge', 'classes', 'hunts', 'market-catalog', 'market-sold']) {
       // `cambio` não entra aqui: ele é emitido pelo manager, não pelo cliente —
       // um hop pertence ao par de contas, não a uma delas.
       client.on(event, data => this.emit(event, data));
@@ -5066,6 +6387,11 @@ class LevelingHeadlessManager extends EventEmitter {
 
   stopAll() {
     for (const index of [...this.clients.keys()]) this.stop(index);
+    this.stopMailPoll();
+    this.stopMarketPoll();
+    this.stopSniperPoll();
+    this.stopAutosellPoll();
+    this.stopCambioPoll();
   }
 
   getClient(accountIndex) {
@@ -5874,6 +7200,7 @@ module.exports = {
   CAMBIO_CASES,
   CAMBIO_TICK_MS,
   CAMBIO_MAIL_MS,
+  MAIL_POLL_MS,
   CAMBIO_HOP_TIMEOUT_MS,
   CAMBIO_LOG_MAX,
   FRIEND_KIND,

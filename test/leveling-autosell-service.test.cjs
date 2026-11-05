@@ -97,8 +97,41 @@ const bancoCom = (precos, registro) => ({
   salesForPricing: (defId, opts) => {
     if (registro) registro.push({ defId, level: opts && opts.level });
     return precos.map(p => ({ unit_price: p }));
-  }
+  },
+  exchangeRate: () => ({ rate: 0, samples: 0, days: 7 })
 });
+
+/**
+ * Banco de mentira que responde por moeda e por encanto, e conta as consultas.
+ *
+ * Separado de `bancoCom` porque os testes antigos comparam o registro com
+ * `deepEqual` numa forma de dois campos — ampliá-la ali quebraria todos eles
+ * por uma razão que não é a do teste.
+ *
+ * `vendas` é indexado por `"<moeda>"` e devolve a lista daquela moeda;
+ * `encantadas` responde quando o encanto exato é pedido.
+ */
+const bancoDetalhado = (vendas, opts = {}) => {
+  const registro = opts.registro || [];
+  const cotacoes = opts.cotacoes || [];
+  return {
+    registro,
+    cotacoes,
+    salesForPricing: (defId, o = {}) => {
+      registro.push({ defId, level: o.level, enchant: o.enchant, currency: o.currency });
+      const moeda = o.currency === 'diamond' ? 'diamond' : 'gold';
+      // Encanto pedido e sem resposta própria: a lista fica vazia, que é o que
+      // força o segundo degrau do serviço.
+      if (o.enchant != null && !(opts.encantadas || {})[moeda]) return [];
+      const fonte = o.enchant != null ? opts.encantadas[moeda] : vendas[moeda];
+      return (fonte || []).map(p => ({ unit_price: p, quantity: 1 }));
+    },
+    exchangeRate: o => {
+      cotacoes.push(o);
+      return { rate: opts.rate || 0, samples: opts.rate ? 5 : 0, days: 7 };
+    }
+  };
+};
 
 /** Manager com uma conta conectada e o auto-anunciar configurado. */
 async function comAutosell(autosellConfig, opts = {}) {
@@ -471,6 +504,167 @@ test('sem mediana do nível exato, não há nem busca de rival', async () => {
   assert.equal(ws.markets().filter(m => m.search).length, 0, 'uma venda só não é referência');
   const vazia = mgr.getAutosellLog().find(l => l.action === 'none');
   assert.equal(vazia.skipped['price.noLevelData'], 1);
+  mgr.stopAll();
+});
+
+// ------------------------------------------------------- modo média e moeda
+
+/** Leva a rodada até o ponto em que a bolsa já respondeu. */
+async function ateBolsa(ws, items) {
+  await sleep(5);
+  ws.reply('mail_request', 'mail_response', { page: { entries: [] } });
+  await sleep(5);
+  ws.reply('market_request', 'market_response', { mine: { listings: [], active: 0, limit: 10 } });
+  await sleep(5);
+  ws.reply('inventory_page', 'inventory_page', { items, has_next: false });
+  await sleep(5);
+}
+
+test('o modo média não gasta busca de rival: o rival não entra na conta', async () => {
+  // É o que torna o modo média mais barato por rodada que o original. Buscar
+  // seria tráfego por um número que ninguém lê.
+  const { mgr, ws } = await comAutosell({ priceMode: 'average' });
+  mgr.marketDb = bancoDetalhado({ gold: [1000000, 1400000] });
+
+  const promessa = mgr.runAutosell(0);
+  await ateBolsa(ws, [inst('1', 'citrino')]);
+
+  assert.equal(ws.markets().filter(m => m.search).length, 0, 'nenhuma busca saiu');
+  const criado = ws.markets().find(m => m.create);
+  assert.equal(criado.create.unit_price, '1200000', 'a média das duas vendas');
+  ws.reply('market_request', 'market_response', { created: { listing: { id: 1 } } });
+  assert.equal(await promessa, 1);
+  mgr.stopAll();
+});
+
+test('a mediana é pedida com o encanto exato, e só depois sem ele', async () => {
+  // A chave do cache é `defId@level+enchant`: filtrar só por nível fazia a
+  // peça +3 sair pelo preço da +0, e o `lowestRival` sempre exigiu os dois.
+  const banco = bancoDetalhado({ gold: [1000000, 1400000] });
+  const { mgr, ws } = await comAutosell({ priceMode: 'average' });
+  mgr.marketDb = banco;
+
+  const promessa = mgr.runAutosell(0);
+  await ateBolsa(ws, [inst('1', 'citrino', { enchant: 3 })]);
+
+  assert.deepEqual(banco.registro, [
+    { defId: 'citrino', level: 1, enchant: 3, currency: 'gold' },
+    { defId: 'citrino', level: 1, enchant: undefined, currency: 'gold' }
+  ], 'primeiro o encanto exato; a queda para o nível só por falta de amostra');
+
+  const criado = ws.markets().find(m => m.create);
+  ws.reply('market_request', 'market_response', { created: { listing: { id: 1 } } });
+  await promessa;
+  assert.equal(mgr.getAutosellLog().find(l => l.action === 'list').from.enchantApprox, true,
+    'a aproximação é dita em voz alta, não estimada calada');
+  assert.ok(criado);
+  mgr.stopAll();
+});
+
+test('com amostra do encanto exato, não há segundo degrau', async () => {
+  const banco = bancoDetalhado(
+    { gold: [10, 10] },
+    { encantadas: { gold: [2000000, 2000000] } }
+  );
+  const { mgr, ws } = await comAutosell({ priceMode: 'average' });
+  mgr.marketDb = banco;
+
+  const promessa = mgr.runAutosell(0);
+  await ateBolsa(ws, [inst('1', 'citrino', { enchant: 3 })]);
+
+  assert.equal(banco.registro.length, 1, 'uma consulta só');
+  const criado = ws.markets().find(m => m.create);
+  assert.equal(criado.create.unit_price, '2000000', 'o preço é o do encanto, não o do nível');
+  ws.reply('market_request', 'market_response', { created: { listing: { id: 1 } } });
+  await promessa;
+  assert.equal(mgr.getAutosellLog().find(l => l.action === 'list').from.enchantApprox, false);
+  mgr.stopAll();
+});
+
+test('em diamante o anúncio sai na moeda escolhida, convertido pela cotação', async () => {
+  // Era `'gold'` cravado no `create`: o preço seria calculado em diamante e o
+  // anúncio sairia em ouro, três ordens de grandeza abaixo do valor.
+  const banco = bancoDetalhado({ gold: [3800000, 3800000] }, { rate: 380000 });
+  const { mgr, ws } = await comAutosell({ priceMode: 'average', currency: 'diamond' });
+  mgr.marketDb = banco;
+
+  const promessa = mgr.runAutosell(0);
+  await ateBolsa(ws, [inst('1', 'citrino')]);
+
+  // Diamante primeiro, sem resposta; o ouro é a volta que faz o modo vender.
+  assert.deepEqual(banco.registro.map(r => r.currency),
+    ['diamond', 'diamond', 'gold', 'gold']);
+
+  const criado = ws.markets().find(m => m.create);
+  assert.equal(criado.create.currency, 'MARKET_CURRENCY_DIAMOND');
+  assert.equal(criado.create.unit_price, '10', '3,8 M a 380 k por diamante');
+  ws.reply('market_request', 'market_response', { created: { listing: { id: 1 } } });
+  assert.equal(await promessa, 1);
+
+  const linha = mgr.getAutosellLog().find(l => l.action === 'list');
+  assert.equal(linha.currency, 'diamond');
+  assert.equal(linha.from.rate, 380000, 'a taxa usada fica para auditar');
+  assert.equal(linha.from.goldPrice, 3800000);
+  mgr.stopAll();
+});
+
+test('a cotação é consultada uma vez por rodada, e só em diamante', async () => {
+  // A taxa não depende do item: consultá-la por linha de inventário seria a
+  // mesma resposta repetida centenas de vezes.
+  const banco = bancoDetalhado({ gold: [3800000, 3800000] }, { rate: 380000 });
+  const { mgr, ws } = await comAutosell({ priceMode: 'average', currency: 'diamond', maxPerRound: 2 });
+  mgr.marketDb = banco;
+
+  const promessa = mgr.runAutosell(0);
+  await ateBolsa(ws, [inst('1', 'citrino'), inst('2', 'citrino', { level: 2 })]);
+  for (let i = 0; i < 2; i++) {
+    ws.reply('market_request', 'market_response', { created: { listing: { id: i + 1 } } });
+    await sleep(5);
+  }
+  await promessa;
+  assert.equal(banco.cotacoes.length, 1, 'uma cotação para dois itens de níveis diferentes');
+  mgr.stopAll();
+});
+
+test('em ouro a cotação não é nem consultada', async () => {
+  // Um banco sem histórico de câmbio não paga uma consulta por rodada à toa.
+  const banco = bancoDetalhado({ gold: [1000000, 1000000] }, { rate: 380000 });
+  const { mgr, ws } = await comAutosell({ priceMode: 'average' });
+  mgr.marketDb = banco;
+
+  const promessa = mgr.runAutosell(0);
+  await ateBolsa(ws, [inst('1', 'citrino')]);
+  ws.reply('market_request', 'market_response', { created: { listing: { id: 1 } } });
+  await promessa;
+  assert.deepEqual(banco.cotacoes, []);
+  mgr.stopAll();
+});
+
+test('item com histórico em diamante usa aquele preço, sem converter', async () => {
+  // `median` já está na moeda final: converter por cima multiplicaria o preço
+  // pela cotação e o anúncio sairia em dezenas de milhares de diamantes.
+  const banco = bancoDetalhado({ diamond: [40, 40], gold: [100, 100] }, { rate: 380000 });
+  const { mgr, ws } = await comAutosell({ priceMode: 'average', currency: 'diamond' });
+  mgr.marketDb = banco;
+
+  const promessa = mgr.runAutosell(0);
+  await ateBolsa(ws, [inst('1', 'citrino')]);
+
+  const criado = ws.markets().find(m => m.create);
+  assert.equal(criado.create.unit_price, '40');
+  assert.equal(criado.create.currency, 'MARKET_CURRENCY_DIAMOND');
+  ws.reply('market_request', 'market_response', { created: { listing: { id: 1 } } });
+  await promessa;
+  assert.equal(mgr.getAutosellLog().find(l => l.action === 'list').from.rate, 0,
+    'a cotação não entrou na conta');
+  mgr.stopAll();
+});
+
+test('a cotação também não sobrevive à rodada', async () => {
+  const { mgr } = await comAutosell({});
+  mgr.autosellRateCache = { rate: 1, samples: 1, days: 7 };
+  await mgr.pollAutosell();
+  assert.equal(mgr.autosellRateCache, null);
   mgr.stopAll();
 });
 
