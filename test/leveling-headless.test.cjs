@@ -84,6 +84,136 @@ test('auto-correio roda independente do câmbio e inclui qualquer mensagem', asy
   manager.stopMailPoll();
 });
 
+test('Outros registra falha de claim individual do correio', async () => {
+  const client = makeClient();
+  client.status = 'connected';
+  client.request = async (_name, value) => {
+    if (value.claim.id === 10) return { caseName: 'error', value: { code: 'mail.expired' } };
+    return { caseName: 'mail_response', value: { claimed: { claimed: [11] } } };
+  };
+  const result = await client.mailClaim(['10', '11']);
+  assert.deepEqual(result.claimed, ['11']);
+  assert.deepEqual(result.failures, [{ id: '10', error: 'mail.expired' }]);
+});
+
+test('diárias prontas usam missions_request e só contam confirmação do servidor', async () => {
+  const client = makeClient({ requestTimeoutMs: 500 });
+  client.status = 'connected';
+  client.isOpen = () => true;
+  const pedidos = [];
+  client.request = async (name, value) => {
+    pedidos.push({ name, value });
+    if (value.state) {
+      return { caseName: 'missions_response', value: { state: {
+        daily: [
+          { id: 'daily-ready', amount: 5, progress: 5, claimed: false },
+          { id: 'daily-done', amount: 1, progress: 1, claimed: true },
+          { id: 'daily-progress', amount: 5, progress: 4, claimed: false }
+        ]
+      } } };
+    }
+    return { caseName: 'missions_response', value: { claimed: { reward: { gold: '42' } } } };
+  };
+  const result = await client.claimDailyAll();
+  assert.deepEqual(pedidos, [
+    { name: 'missions_request', value: { state: true } },
+    { name: 'missions_request', value: { claim_daily: 'daily-ready' } }
+  ]);
+  assert.equal(result.claimed.length, 1);
+  assert.equal(result.claimed[0].id, 'daily-ready');
+});
+
+test('diária interpreta progress uint64 real como string e omissão como zero', async () => {
+  const client = makeClient();
+  client.status = 'connected';
+  const pedidos = [];
+  client.request = async (name, value) => {
+    pedidos.push({ name, value });
+    if (value.state) {
+      return { caseName: 'missions_response', value: { state: {
+        daily: [
+          { id: 'string-ready', amount: 300, progress: '300', claimed: false },
+          { id: 'not-started', amount: 1, claimed: false }
+        ]
+      } } };
+    }
+    return { caseName: 'missions_response', value: { claimed: { reward: { gold: '2' } } } };
+  };
+
+  const result = await client.claimDailyAll();
+
+  assert.deepEqual(pedidos, [
+    { name: 'missions_request', value: { state: true } },
+    { name: 'missions_request', value: { claim_daily: 'string-ready' } }
+  ]);
+  assert.deepEqual(result.ready, ['string-ready']);
+});
+
+test('diária rejeita resposta de estado que não é missions_response', async () => {
+  const client = makeClient();
+  client.status = 'connected';
+  client.request = async () => ({ caseName: 'missions_push', value: { state: { daily: [] } } });
+
+  const result = await client.missionsState();
+
+  assert.equal(result.errorCode, 'missions.unexpectedResponse');
+  assert.equal(result.state, undefined);
+});
+
+test('claim de diária só confirma resposta missions_response.claimed', async () => {
+  const client = makeClient();
+  client.status = 'connected';
+  client.request = async () => ({ caseName: 'missions_response', value: { state: { daily: [] } } });
+
+  const result = await client.claimDaily('daily-ready');
+
+  assert.equal(result.errorCode, 'missions.unexpectedResponse');
+  assert.equal(result.claimed, undefined);
+});
+
+test('payloads novos passam pelo codec protobuf real', () => {
+  assert.doesNotThrow(() => codec.encode(1, 'missions_request', { state: true }));
+  assert.doesNotThrow(() => codec.encode(2, 'missions_request', { claim_daily: 'daily-1' }));
+  assert.doesNotThrow(() => codec.encode(3, 'shadow_set_team', { action: 5 }));
+});
+
+test('melhor time envia exatamente a ação BEST do botão do jogo', async () => {
+  const client = makeClient();
+  client.status = 'connected';
+  const pedidos = [];
+  client.request = async (name, value) => {
+    pedidos.push({ name, value });
+    return { caseName: 'shadow_set_team_result', value: { team: { max_size: 3 } } };
+  };
+  const result = await client.shadowSetBest();
+  assert.deepEqual(pedidos, [{ name: 'shadow_set_team', value: { action: 5 } }]);
+  assert.equal(result.team.max_size, 3);
+});
+
+test('Outros processa contas, separa sucesso/falha e registra horário por conta', async () => {
+  const manager = new LevelingHeadlessManager({ othersConfig: {
+    enabled: true, daily: true, bestTeam: true, mail: true, intervalMs: 60000
+  } });
+  manager.clients.set(0, {
+    index: 0, status: 'connected',
+    mailClaimAll: async () => ({ claimed: ['m1'] }),
+    claimDailyAll: async () => ({ claimed: [{ id: 'd1' }] }),
+    shadowSetBest: async () => ({ team: {} })
+  });
+  manager.clients.set(1, {
+    index: 1, status: 'connected',
+    mailClaimAll: async () => ({ errorCode: 'mail.bagFull', claimed: [] }),
+    claimDailyAll: async () => ({ claimed: [] }),
+    shadowSetBest: async () => ({ team: {} })
+  });
+  const result = await manager.pollOthers();
+  assert.equal(result.results.length, 2);
+  assert.equal(result.succeeded, 1);
+  assert.equal(result.failed, 1);
+  assert.ok(manager.getOthersLog().some(row => row.operation === 'outros' && row.index === 0));
+  assert.ok(manager.getOthersLog().every(row => Number(row.atMs) > 0));
+});
+
 function makeClient(options = {}) {
   return new LevelingHeadlessClient(0, {
     WebSocket: MockWebSocket,
@@ -565,7 +695,7 @@ test('arise_result contabiliza as sombras extraídas automaticamente', async () 
   client.disconnect();
 });
 
-test('inventory_delta guarda só a ocupação da mochila', async () => {
+test('inventory_delta guarda a ocupação da mochila', async () => {
   const client = makeClient();
   client.connect();
   await sleep(10);
@@ -578,6 +708,67 @@ test('inventory_delta guarda só a ocupação da mochila', async () => {
 
   assert.deepEqual(client.state.inventory, { usedSlots: 42, capacity: 120 });
   assert.equal(client.state.inventory.capacity, 120);
+
+  client.disconnect();
+});
+
+test('inventory_delta também registra o que caiu, menos equipamento', async () => {
+  const client = makeClient();
+  client.connect();
+  await sleep(10);
+  const ws = MockWebSocket.last;
+  ws.reply('login', 'auth_ok', { token: 't', account_id: 1 });
+  await sleep(5);
+
+  // Pelo codec de verdade: é o único jeito de provar que o enum de motivo e o
+  // de escopo sobrevivem à ida e volta do protobuf como este código os lê.
+  ws.push('inventory_delta', {
+    scope: 1,
+    reason: 1,
+    used_slots: 43,
+    capacity: 120,
+    added: [
+      { uid: 1, def_id: 'chave-portal-vermelho', qty: 2, rarity: 'epico' },
+      // Equipamento como o servidor manda: com atributos e poder, que é o que
+      // o permite ser reconhecido antes de o catálogo de 1 MB chegar.
+      { uid: 2, def_id: 'arco-arqueiro', qty: 1, rarity: 'raro', power: 318, stats: { atk: 42 } }
+    ]
+  });
+  await sleep(5);
+
+  const session = client.state.loot.session;
+  assert.deepEqual(Object.keys(session), ['chave-portal-vermelho'],
+    'equipamento afogaria a chave que cai uma vez por hora');
+  assert.equal(session['chave-portal-vermelho'].qty, 2);
+  assert.equal(session['chave-portal-vermelho'].key, true);
+  assert.equal(client.state.loot.log[0].qty, 2);
+  assert.ok(client.state.loot.log[0].atMs > 0, 'o registro precisa do horário');
+
+  client.disconnect();
+});
+
+test('caçada nova zera os drops dela, e o registro sobrevive', async () => {
+  const client = makeClient();
+  client.connect();
+  await sleep(10);
+  const ws = MockWebSocket.last;
+  ws.reply('login', 'auth_ok', { token: 't', account_id: 1 });
+  await sleep(5);
+
+  ws.push('hunt_session', { started_at_ms: 1000, gate_id: 'blue-gate', kills: 10 });
+  ws.push('inventory_delta', {
+    scope: 1, reason: 1, used_slots: 1, capacity: 120,
+    added: [{ uid: 1, def_id: 'essencia-extracao', qty: 5 }]
+  });
+  await sleep(5);
+  assert.equal(client.state.loot.session['essencia-extracao'].qty, 5);
+
+  ws.push('hunt_session', { started_at_ms: 90000, gate_id: 'red-gate' });
+  await sleep(5);
+
+  assert.deepEqual(client.state.loot.session, {}, 'o acumulado é da caçada');
+  assert.equal(client.state.loot.log.length, 1,
+    'o que caiu há dois minutos ainda responde "o que caiu agora"');
 
   client.disconnect();
 });
@@ -1624,4 +1815,44 @@ test('contas na mesma rota compartilham o dispatcher', () => {
   assert.equal(a, b, 'duas contas no mesmo proxy não devem abrir dois pools');
   assert.notEqual(a, c);
   assert.equal(proxyDispatcher(''), null, 'sem proxy não há dispatcher');
+});
+
+test('a rota mascarada identifica a linha errada sem vazar a senha', () => {
+  const { maskProxy } = require('../src/domain/leveling-headless-service');
+
+  assert.equal(maskProxy('http://ana:s3nha@1.2.3.4:8080'), 'http://ana:\u2022\u2022\u2022@1.2.3.4:8080');
+  // Sem senha não há o que esconder; o usuário sozinho não é segredo.
+  assert.equal(maskProxy('http://ana@1.2.3.4:8080'), 'http://ana@1.2.3.4:8080');
+  assert.equal(maskProxy('http://1.2.3.4:8080'), 'http://1.2.3.4:8080');
+  assert.equal(maskProxy(''), '');
+
+  /*
+   * O caso que importa: quem chama isto está no caminho em que a URL **não**
+   * se deixa parsear. Um `new URL` aqui estouraria e devolveria a string crua,
+   * com a senha dentro, justamente no texto que vai para a tela e para o log.
+   */
+  assert.equal(maskProxy('1.2.3.4:8080:ana:s3nha@x'), '1.2.3.4:8080:ana:\u2022\u2022\u2022@x');
+  assert.ok(!maskProxy('1.2.3.4:8080:ana:s3nha@x').includes('s3nha'));
+});
+
+test('proxy malformado para o monitor em vez de reconectar para sempre', async () => {
+  /*
+   * Nenhuma espera conserta uma URL malformada. Antes o cliente agendava a
+   * volta a cada poucos segundos, e a tela ficava em "Reconectando" eterno sem
+   * dizer que o problema era a configuração, não a rede.
+   */
+  const client = makeClient({ proxy: '1.2.3.4:8080', autoReconnect: true });
+
+  client.connect();
+  await sleep(10);
+
+  // A rota está impossível de montar, e o cliente para sem insistir.
+  assert.equal(client.reconnectTimer, null, 'rota impossível não se tenta de novo');
+  assert.equal(client.endedReason, 'proxy.invalid', 'a parada tem de ter motivo');
+  assert.equal(client.autoReconnect, false);
+  // A mensagem de erro contém a rota mascarada e explica o problema.
+  assert.match(client.lastError || '', /1\.2\.3\.4:8080/);
+  assert.match(client.lastError || '', /proxy inválido/);
+
+  client.disconnect();
 });

@@ -36,7 +36,8 @@
           <span class="lh-place-map" data-role="placeMap"></span>
           <span class="lh-place-detail" data-role="placeDetail"></span>
         </div>
-        <div class="lh-grid" data-role="grid"></div>
+        <div class="lh-groups" data-role="grid"></div>
+        <div class="lh-loot" data-role="loot" hidden></div>
         <div class="lh-party" data-role="party" hidden></div>
         <div class="lh-refill" data-role="refill" hidden></div>
         <div class="lh-foot" data-role="foot"></div>
@@ -47,6 +48,7 @@
         name: pick('name'), level: pick('level'), status: pick('status'),
         hpfill: pick('hpfill'), hptext: pick('hptext'), alert: pick('alert'),
         grid: pick('grid'), party: pick('party'), refill: pick('refill'),
+        loot: pick('loot'),
         foot: pick('foot'), place: pick('place'), placeLabel: pick('placeLabel'),
         placeMap: pick('placeMap'), placeDetail: pick('placeDetail')
       };
@@ -128,19 +130,77 @@
 
           // Recria a grade só quando o conjunto de colunas muda; o caso comum é
           // atualização de valores, que não deve mexer no DOM mais do que preciso.
-          const signature = resolved.columns.map(c => c.key).join(',');
+          // A assinatura inclui o bloco de cada coluna: uma coluna que muda de
+          // bloco precisa de DOM novo, e só a chave não contaria isso.
+          const signature = resolved.groups
+            .map(g => g.id + ':' + g.columns.map(c => c.key).join(',')).join('|');
           if (signature !== this._signature) {
             this._signature = signature;
-            el.grid.innerHTML = resolved.columns.map(c => `
-              <div class="lh-cell" data-key="${c.key}">
-                <span class="lh-label">${c.label}</span>
-                <span class="lh-value">—</span>
-              </div>
+            el.grid.innerHTML = resolved.groups.map(group => `
+              <section class="lh-group">
+                ${group.title ? `<h3 class="lh-group-title">${escape(group.title)}</h3>` : ''}
+                <div class="lh-grid">
+                  ${group.columns.map(c => `
+                    <div class="lh-cell" data-key="${c.key}">
+                      <span class="lh-label">${c.label}</span>
+                      <span class="lh-value">—</span>
+                      <span class="lh-hint" hidden></span>
+                    </div>
+                  `).join('')}
+                </div>
+              </section>
             `).join('');
           }
           for (const column of resolved.columns) {
-            const cell = el.grid.querySelector(`.lh-cell[data-key="${column.key}"] .lh-value`);
-            if (cell && cell.textContent !== column.value) cell.textContent = column.value;
+            const cell = el.grid.querySelector(`.lh-cell[data-key="${column.key}"]`);
+            if (!cell) continue;
+            const value = cell.querySelector('.lh-value');
+            if (value.textContent !== column.value) value.textContent = column.value;
+            const hint = cell.querySelector('.lh-hint');
+            if (hint.textContent !== column.hint) hint.textContent = column.hint;
+            hint.hidden = !column.hint;
+            // `dataset` em vez de classe: o tom é um eixo só e sobrescrever a
+            // classe inteira apagaria `lh-cell`.
+            const tone = column.tone || '';
+            if (cell.dataset.tone !== tone) cell.dataset.tone = tone;
+          }
+
+          // O que caiu. Nomes de item vêm do servidor e as cores de raridade
+          // também, então os dois vão escapados — `color` entra num `style`,
+          // que é o lugar onde uma string solta faz mais estrago.
+          const loot = resolved.loot;
+          if (loot && (loot.items.length || loot.log.length)) {
+            const cor = c => (/^#[0-9a-f]{3,8}$/i.test(String(c)) ? String(c) : '');
+            const itens = loot.items.map(it => `
+              <div class="lh-drop${it.key ? ' is-key' : ''}">
+                <span class="lh-drop-qty">${escape(it.qty)}×</span>
+                <span class="lh-drop-name"${cor(it.color) ? ` style="color:${cor(it.color)}"` : ''}>${escape(it.name)}</span>
+                <span class="lh-drop-bag">${escape(it.bag)}</span>
+              </div>
+            `).join('');
+            const log = loot.log.map(ev => `
+              <div class="lh-droplog-row${ev.key ? ' is-key' : ''}">
+                <span class="lh-droplog-time">${escape(ev.time)}</span>
+                <span class="lh-droplog-qty">+${escape(ev.qty)}</span>
+                <span class="lh-droplog-name"${cor(ev.color) ? ` style="color:${cor(ev.color)}"` : ''}>${escape(ev.name)}${
+                  // "drop" não aparece: dizer num registro de drops que algo
+                  // é drop é ruído. Baú, boss e correio aparecem, porque eles
+                  // explicam um item que não veio de matar monstro.
+                  ev.reason ? `<span class="lh-droplog-reason">${escape(ev.reason)}</span>` : ''
+                }</span>
+                <span class="lh-droplog-bag">${escape(ev.bag ? `${ev.bag} na bolsa` : '')}</span>
+              </div>
+            `).join('');
+            const html = `
+              <div class="lh-loot-title">${escape(loot.title)}</div>
+              <div class="lh-drops">${itens}</div>
+              ${log ? `<div class="lh-droplog">${log}</div>` : ''}
+            `;
+            if (el.loot.innerHTML !== html) el.loot.innerHTML = html;
+            el.loot.hidden = false;
+          } else {
+            el.loot.hidden = true;
+            el.loot.innerHTML = '';
           }
 
           // Nomes vêm de outros jogadores, então vão escapados para o HTML.
@@ -199,6 +259,8 @@
           el.place.hidden = true;
           el.place.classList.remove('is-hunting');
           el.grid.innerHTML = '';
+          el.loot.hidden = true;
+          el.loot.innerHTML = '';
           el.party.hidden = true;
           el.party.innerHTML = '';
           el.refill.hidden = true;

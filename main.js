@@ -34,14 +34,18 @@ const levelingAutosell = require('./src/domain/leveling-autosell');
 const levelingCambio = require('./src/domain/leveling-cambio');
 const levelingStats = require('./src/domain/leveling-stats');
 const levelingForge = require('./src/domain/leveling-forge');
-const { levelingCredentials } = require('./src/domain/leveling-credentials');
+const levelingOthers = require('./src/domain/leveling-others');
+const { levelingCredentials, LevelingProxyPool } = require('./src/domain/leveling-credentials');
 
 /** Conta isolada do sniper: somente leitura do mercado. Segredos vêm do ambiente. */
 function startDedicatedSniperMarketAccount() {
+  const { normalizeProxy } = require('./src/domain/leveling-credentials');
   const saved = levelingCredentials.getSniper();
   const username = saved.username || process.env.SNIPER_MARKET_USERNAME || '';
   const password = saved.password || process.env.SNIPER_MARKET_PASSWORD || '';
-  const proxy = saved.proxy || process.env.SNIPER_MARKET_PROXY || '';
+  // saved.proxy é do formato legado (host:porta), precisa normalizar como quem vai usar.
+  // Env pode estar em qualquer forma, também normaliza.
+  const proxy = normalizeProxy(saved.proxy || process.env.SNIPER_MARKET_PROXY || '');
   if (!username || !password) return;
   levelingHeadlessManager.start(-1, { username, password, proxy });
 }
@@ -221,7 +225,8 @@ const defaultPrefs = () => ({
    * peça** e fundir consome cinco delas. Nascer num padrão depois de um
    * reinício começaria a moer o inventário no primeiro drop.
    */
-  forge: levelingForge.defaultConfig(),
+   forge: levelingForge.defaultConfig(),
+   others: levelingOthers.defaultConfig(),
   /**
    * Quando o último hop fechou. Não é configuração, é o relógio do intervalo:
    * sem ele, reiniciar o launcher liberaria um hop na hora, por mais perto que
@@ -301,6 +306,7 @@ function normalizePrefs(raw) {
   // guardados corrompida ou teto de desmonte absurdo passa por aqui antes de
   // qualquer fusão.
   raw.forge = levelingForge.normalizeConfig(raw.forge);
+  raw.others = levelingOthers.normalizeConfig(raw.others);
   return raw;
 }
 
@@ -339,27 +345,61 @@ function setupAccountSession(num) {
 }
 
 /**
- * Aponta a partição da conta para o proxy configurado. É por partição, não por
- * aplicação, porque o ponto é justamente que contas diferentes saiam por IPs
- * diferentes: o servidor recusa várias contas vindas do mesmo endereço.
+ * Aponta a partição da conta para o proxy atribuído no pool.
+ * É por partição, não por aplicação, porque o ponto é que contas diferentes
+ * saiam por IPs diferentes: o servidor recusa várias contas do mesmo endereço.
  *
  * O Chromium quer regras no formato `esquema://host:porta` e não lê credenciais
  * da URL, então o usuário e a senha são respondidos no `login` do webContents.
  */
+/**
+ * A rota de saída de uma conta, do pool. Uma única fonte para os dois caminhos.
+ *
+ * Existe porque não existia: a WebView lia a rota do pool e o monitor lia o
+ * campo `proxy` da conta, que é o formato legado e nunca passou por
+ * `normalizeProxy`. O resultado era a conta abrir no modo normal e o monitor
+ * ficar em "proxy inválido: Invalid URL" para sempre — `undici` recusa um
+ * `host:porta` sem esquema, e é isso que o campo antigo guarda.
+ *
+ * Pior que o erro: quando o campo legado *era* uma URL válida mas diferente da
+ * do pool, não havia erro nenhum — a WebView e o monitor da mesma conta saíam
+ * por dois IPs, que é exatamente o que o pool existe para impedir.
+ */
+function accountProxyUrl(index) {
+  const data = levelingCredentials.load();
+  const pool = data.proxyPool || new LevelingProxyPool();
+  return pool.getProxyUrl(pool.assignments.get(index) || '');
+}
+
 function applyAccountProxy(index) {
   const num = index + 1;
-  const proxy = levelingCredentials.get(index).proxy || '';
+  const proxyUrl = accountProxyUrl(index);
+
   try {
     const ses = session.fromPartition('persist:conta' + num);
     if (typeof ses.setProxy !== 'function') return;
 
-    if (!proxy) {
-      ses.setProxy({ mode: 'system' }).catch(e => logErro('proxy', `conta${num}: ${e.message}`));
+    if (!proxyUrl) {
+      /*
+       * Sem rota atribuída. Só as duas primeiras contas saem pelo IP da
+       * máquina; da terceira em diante a sessão é **bloqueada**, não liberada.
+       *
+       * `mode: 'system'` para todas era o furo: uma conta sem proxy saía pelo
+       * IP local calada, e o servidor respondia `session.multi_account_ip` sem
+       * que nada no launcher explicasse o motivo. Apontar para um proxy que não
+       * existe faz a conexão falhar de imediato, o que é o resultado honesto —
+       * e `canOpen` impede que se chegue até aqui no caminho normal.
+       */
+      const local = index < LevelingProxyPool.LOCAL_IP_CAPACITY;
+      ses.setProxy(local
+        ? { mode: 'system' }
+        : { proxyRules: 'http://0.0.0.0:1', proxyBypassRules: '<-loopback>' })
+        .catch(e => logErro('proxy', `conta${num}: ${e.message}`));
       proxyAuth.delete(num);
       return;
     }
 
-    const url = new URL(proxy);
+    const url = new URL(proxyUrl);
     const scheme = url.protocol.replace(':', '');
     // `socks5://` nas regras cobre também o `socks` genérico do Chromium.
     const rules = `${scheme}://${url.host}`;
@@ -376,6 +416,47 @@ function applyAccountProxy(index) {
     }
   } catch (e) {
     logErro('proxy', `conta${num}: ${e.message}`);
+  }
+}
+
+/**
+ * Dá rota às contas que já existem e ainda não têm proxy atribuído.
+ *
+ * Sem isto, quem tinha contas antes do pool existir ficava bloqueado para
+ * sempre: `assign` só era chamado no cadastro assistido, então a conta 3 via
+ * "sem proxy funcional no pool" com vinte proxies aprovados e quarenta vagas
+ * livres ao lado. Roda no boot e depois de importar ou testar proxies, que são
+ * os momentos em que a oferta de rotas muda.
+ *
+ * Aplica o proxy na partição das contas que ganharam rota, senão a sessão
+ * continuaria apontando para o bloqueio até o próximo reinício.
+ */
+function reconcileProxyRoutes() {
+  try {
+    const data = levelingCredentials.load();
+    const pool = data.proxyPool || new LevelingProxyPool();
+
+    // Conta "existe" quando tem nome ou senha guardada. Reservar rota para um
+    // slot vazio gastaria vaga de proxy com conta que talvez nunca venha.
+    const existentes = data.accounts
+      .map((acc, i) => (acc && (acc.username || acc.password) ? i : -1))
+      .filter(i => i >= 0);
+
+    const { assigned, unassigned } = pool.reconcile(existentes);
+    if (!assigned.length) {
+      if (unassigned.length) {
+        logErro('proxy', `sem proxy livre para as contas ${unassigned.map(i => i + 1).join(', ')}`);
+      }
+      return { assigned, unassigned };
+    }
+
+    data.proxyPool = pool;
+    levelingCredentials.save(data);
+    for (const i of assigned) applyAccountProxy(i);
+    return { assigned, unassigned };
+  } catch (e) {
+    logErro('proxy', 'reconcile: ' + e.message);
+    return { assigned: [], unassigned: [] };
   }
 }
 
@@ -532,10 +613,9 @@ function syncMarketPoll() {
 
 levelingHeadlessManager.on('status', syncMarketPoll);
 function syncMailPoll() {
-  const ativa = [...levelingHeadlessManager.clients.values()]
-    .some(c => c && c.index >= 0 && c.status === 'connected');
-  if (ativa) levelingHeadlessManager.startMailPoll();
-  else levelingHeadlessManager.stopMailPoll();
+  // O correio pertence ao ciclo "Outros". Manter o laço legado ativo aqui
+  // duplicaria claims quando a nova automação estivesse ligada.
+  levelingHeadlessManager.stopMailPoll();
 }
 
 levelingHeadlessManager.on('status', syncMailPoll);
@@ -672,6 +752,34 @@ function syncAutosellPoll() {
 
 levelingHeadlessManager.on('status', syncAutosellPoll);
 levelingHeadlessManager.on('autosell', data => broadcast('leveling:autosell', data));
+
+// --------------------------------------------------------------- outras automações
+const OTHERS_LOG_FILE = () => path.join(app.getPath('userData'), 'others-log.json');
+
+function readOthersLogFile() {
+  try {
+    const value = JSON.parse(fs.readFileSync(OTHERS_LOG_FILE(), 'utf-8'));
+    return Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+levelingHeadlessManager.othersLogSink = entries => {
+  try { fs.writeFileSync(OTHERS_LOG_FILE(), JSON.stringify(entries)); }
+  catch (e) { logErro('others', e.message); }
+};
+
+function syncOthersPoll() {
+  const cfg = levelingHeadlessManager.getOthersConfig();
+  const active = [...levelingHeadlessManager.clients.values()]
+    .some(client => client && client.index >= 0 && client.status === 'connected');
+  if (active && cfg.enabled) levelingHeadlessManager.startOthersPoll();
+  else levelingHeadlessManager.stopOthersPoll();
+}
+
+levelingHeadlessManager.on('status', syncOthersPoll);
+levelingHeadlessManager.on('others', data => broadcast('leveling:others', data));
 
 // ------------------------------------------------------------------- câmbio
 
@@ -875,7 +983,7 @@ levelingHeadlessManager.on('market-sold', ({ index, sold }) => {
  */
 const LAUNCHER_PAGES = [
   'index.html', 'market.html', 'sniper.html', 'expedition.html', 'boss.html', 'autosell.html',
-  'cambio.html', 'stats.html', 'forge.html'
+  'cambio.html', 'stats.html', 'forge.html', 'outros.html', 'proxies.html', 'cadastro.html'
 ].map(
   f => require('url').pathToFileURL(path.join(__dirname, f)).href
 );
@@ -907,10 +1015,30 @@ ipcMain.handle('leveling:start', (event, index) => {
   if (!creds.username || !creds.password) {
     return { ok: false, error: 'Credenciais não configuradas.' };
   }
+  
+  /*
+   * A rota antes da conexão. Só as duas primeiras contas saem pelo IP da
+   * máquina; as outras precisam de um proxy que passou no teste.
+   *
+   * Antes bastava haver vaga no pool, e vaga não é rota: a conta conectava sem
+   * proxy aplicado e o servidor respondia `session.multi_account_ip` depois,
+   * quando já não havia o que fazer além de desligar.
+   */
+  const data = levelingCredentials.load();
+  const pool = data.proxyPool || new LevelingProxyPool();
+  const porta = pool.canOpen(index);
+  if (!porta.ok) {
+    return { ok: false, error: `Conta ${index + 1} não pode conectar: ${porta.motivo}.` };
+  }
+
   try {
     // O monitor precisa sair pelo mesmo IP da WebView da conta; falhar aqui é
     // melhor que conectar pela rota errada e tomar `session.multi_account_ip`.
-    levelingHeadlessManager.start(index, creds);
+    //
+    // A rota vem do pool, a mesma fonte que `applyAccountProxy` usa na WebView.
+    // Herdar `creds.proxy` era o furo: aquele campo é o formato legado, não
+    // passa por `normalizeProxy` e pode estar vazio ou divergente da rota real.
+    levelingHeadlessManager.start(index, { ...creds, proxy: accountProxyUrl(index) });
   } catch (e) {
     logErro('headless', `conta ${index}: ${e.message}`);
     return { ok: false, error: e.message };
@@ -942,17 +1070,342 @@ ipcMain.handle('leveling:creds:set', (event, index, username, password) => {
   return { ok, status: levelingCredentials.getPublicStatus() };
 });
 
-ipcMain.handle('leveling:proxy:set', (event, index, proxy) => {
-  launcherOnly(event);
-  // O monitor em curso está conectado pela rota antiga; derrubá-lo é o que
-  // garante que a nova valha para os dois modos.
-  const wasRunning = levelingHeadlessManager.getClient(index) !== null;
-  levelingHeadlessManager.stop(index);
-  pendingUpdates.delete(index);
+ipcMain.on('leveling:creds:capture', (event, { username, password, kind }) => {
+  // Resolve o índice pela partição de quem chamou (mesmo que account-preload.js usa para o token).
+  const partition = event.sender.session.partition;
+  let index = -1;
+  if (partition.startsWith('persist:conta')) {
+    const match = partition.match(/persist:conta(\d+)/);
+    if (match) index = parseInt(match[1], 10) - 1;
+  }
+  
+  if (index < 0 || index >= levelingCredentials.maxAccounts) return;
+  if (!username || !password) return;
 
-  const ok = levelingCredentials.setProxy(index, proxy);
-  applyAccountProxy(index);
-  return { ok, wasRunning, status: levelingCredentials.getPublicStatus() };
+  // Captura preservando o token (diferente de setCredentials, que o zera).
+  const creds = levelingCredentials.get(index);
+  const data = levelingCredentials.load();
+  const nome = username.trim();
+  data.accounts[index] = {
+    username: nome,
+    password,
+    token: creds.token, // Preserva o token existente (se houver).
+    proxy: creds.proxy,  // Preserva o proxy também
+    email: creds.email || '',
+    /*
+     * O envio do formulário é a prova de que a conta saiu do limbo do cadastro:
+     * um `register` enviado passou pelo captcha, e um `login` enviado só faz
+     * sentido numa conta que existe. Em ambos os casos a marca cai — mas só se
+     * o nome for o mesmo que o assistente reservou, senão um login de outra
+     * conta na mesma aba apagaria a pendência errada.
+     */
+    signup: creds.signup && creds.username !== nome
+  };
+  levelingCredentials.save(data);
+  
+  // Informa à UI que a credencial foi capturada.
+  mainWindow.webContents.send('leveling:creds:captured', { index, kind });
+});
+
+ipcMain.handle('leveling:proxy:import', (event, text) => {
+  launcherOnly(event);
+  const data = levelingCredentials.load();
+  const pool = data.proxyPool || new LevelingProxyPool();
+  const result = pool.importText(text);
+  data.proxyPool = pool;
+  levelingCredentials.save(data);
+  // Proxy importado nasce `pending`, então nada é atribuído agora — mas se o
+  // pool já tinha aprovados sobrando, as contas presas aproveitam.
+  reconcileProxyRoutes();
+  return result; // { added, duplicates, invalid }
+});
+
+ipcMain.handle('leveling:proxy:pool', (event) => {
+  launcherOnly(event);
+  const data = levelingCredentials.load();
+  const pool = data.proxyPool || new LevelingProxyPool();
+  const proxies = pool.getAll().map(p => ({
+    id: p.id,
+    label: p.label,
+    status: p.status,
+    ip: p.ip,
+    error: p.error,
+    assignedCount: Array.from(pool.assignments.values()).filter(pid => pid === p.id).length
+  }));
+  return {
+    proxies,
+    capacity: pool.capacity()
+  };
+});
+
+ipcMain.handle('leveling:proxy:test', async (event, proxyId) => {
+  launcherOnly(event);
+  const data = levelingCredentials.load();
+  const pool = data.proxyPool || new LevelingProxyPool();
+  const proxy = pool.proxies.find(p => p.id === proxyId);
+  if (!proxy) return { error: 'Proxy não encontrado' };
+  
+  try {
+    // Usa o mesmo teste que o headless faz
+    const undici = require('undici');
+    const proxyDispatcher = require('./src/domain/leveling-headless-service').proxyDispatcher;
+    const dispatcher = proxyDispatcher(proxy.url);
+    const res = await undici.request('https://api.ipify.org?format=json', {
+      dispatcher,
+      headersTimeout: 8000,
+      bodyTimeout: 8000
+    });
+    const body = await res.body.json();
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      pool.setProxyStatus(proxyId, 'fail', '', `HTTP ${res.statusCode}`);
+      levelingCredentials.save(data);
+      return { status: 'fail', error: `HTTP ${res.statusCode}` };
+    }
+    pool.setProxyStatus(proxyId, 'ok', body.ip || '', '');
+    levelingCredentials.save(data);
+    // Um proxy que acabou de passar é rota nova: as contas que estavam
+    // bloqueadas por falta dela são atendidas sem o usuário pedir.
+    reconcileProxyRoutes();
+    return { status: 'ok', ip: body.ip };
+  } catch (e) {
+    pool.setProxyStatus(proxyId, 'fail', '', e.message);
+    levelingCredentials.save(data);
+    return { status: 'fail', error: e.message };
+  }
+});
+
+ipcMain.handle('leveling:proxy:remove', (event, proxyId) => {
+  launcherOnly(event);
+  const data = levelingCredentials.load();
+  const pool = data.proxyPool || new LevelingProxyPool();
+  pool.remove(proxyId);
+  data.proxyPool = pool;
+  levelingCredentials.save(data);
+  return { ok: true };
+});
+
+/**
+ * Monta o plano de cadastro e devolve a pré-visualização.
+ *
+ * O cálculo vive aqui, e não no renderer, por dois motivos: a página do
+ * assistente não tem `require` (a CSP e o `contextIsolation` cuidam disso), e
+ * as senhas saem de `crypto.randomInt`, que é do processo principal.
+ *
+ * A senha vai mascarada para a janela. O assistente não precisa mostrar a
+ * senha para montar a fila, e um valor que não atravessa o IPC é um valor que
+ * não vaza por um log de renderer.
+ */
+/** O último plano montado, à espera de ser guardado. */
+let pendingSignupPlan = [];
+
+/** As classes que o assistente oferece. Vêm do domínio, não da página. */
+ipcMain.handle('leveling:signup:classes', event => {
+  launcherOnly(event);
+  return require('./src/domain/leveling-signup.js').CLASSES;
+});
+
+ipcMain.handle('leveling:signup:plan', (event, opts) => {
+  launcherOnly(event);
+  const signup = require('./src/domain/leveling-signup.js');
+  const { items, invalid } = signup.buildPlan(opts || {});
+
+  // O plano fica no processo principal até o usuário guardar; a janela só vê
+  // o que precisa para mostrar a fila.
+  pendingSignupPlan = items;
+
+  return {
+    items: items.map((it, i) => ({
+      index: i,
+      username: it.username,
+      email: it.email,
+      gender: it.gender,
+      referral: it.referral
+    })),
+    invalid
+  };
+});
+
+/**
+ * Guarda o plano nas credenciais, nos primeiros slots que estiverem vazios.
+ *
+ * Guardar antes de cadastrar é de propósito: é o que permite a WebView
+ * preencher o formulário sozinha depois. A conta ainda não existe no
+ * servidor, e é por isso que `pending` fica marcado — o monitor não deve
+ * tentar usar uma credencial que ainda não passou pelo captcha.
+ */
+ipcMain.handle('leveling:signup:save', event => {
+  launcherOnly(event);
+  if (!pendingSignupPlan.length) return { ok: false, error: 'Nenhum plano montado.' };
+
+  const vazio = acc => !acc || (!acc.username && !acc.hasPassword);
+  const slotsLivres = () => {
+    const { accounts } = levelingCredentials.getPublicStatus();
+    const livres = [];
+    for (let i = 0; i < accounts.length && livres.length < pendingSignupPlan.length; i++) {
+      if (vazio(accounts[i])) livres.push(i);
+    }
+    return livres;
+  };
+
+  let livres = slotsLivres();
+
+  // Os slots só existem até `abas * ACCOUNTS_PER_TAB`. Em vez de recusar o
+  // plano, abre-se a capacidade que falta — é o mesmo que o usuário faria
+  // adicionando abas na mão.
+  if (livres.length < pendingSignupPlan.length) {
+    const { accounts } = levelingCredentials.getPublicStatus();
+    const ocupados = accounts.filter(acc => !vazio(acc)).length;
+    const preciso = ocupados + pendingSignupPlan.length;
+    applyAccountCapacity(Math.ceil(preciso / ACCOUNTS_PER_TAB));
+    livres = slotsLivres();
+  }
+
+  if (livres.length < pendingSignupPlan.length) {
+    return {
+      ok: false,
+      error: `O plano tem ${pendingSignupPlan.length} contas, mas só há ${livres.length} slot(s) livre(s).`
+    };
+  }
+
+  /*
+   * Tudo numa gravação só.
+   *
+   * Antes isto chamava `setPendingSignup` por conta e, no fim, um `save` com um
+   * `data` lido **antes** do laço. Cada `setPendingSignup` substitui o cache
+   * interno, então o `data` da ponta virava um retrato velho e o `save` final
+   * apagava todas as contas do plano menos a primeira — o motivo real de "só a
+   * primeira conta é cadastrada". A segunda janela abria sem credencial para
+   * preencher.
+   *
+   * Montar o `data` uma vez e salvar uma vez também torna o plano atômico: ou
+   * todas as contas entram com sua rota, ou nenhuma entra.
+   */
+  const data = levelingCredentials.load();
+  const pool = data.proxyPool || new LevelingProxyPool();
+
+  const salvos = [];
+  const semRota = [];
+  pendingSignupPlan.forEach((item, i) => {
+    const index = livres[i];
+
+    /*
+     * A rota primeiro. Duas contas no mesmo IP já são recusadas pelo servidor
+     * (`session.multi_account_ip`), e no cadastro a recusa viria depois do
+     * captcha resolvido à mão — o pior momento para descobrir que faltava
+     * proxy, porque o nome já foi queimado.
+     */
+    const rota = pool.assign(index);
+    const podeLocal = index < LevelingProxyPool.LOCAL_IP_CAPACITY;
+    if (!rota && !podeLocal) {
+      // Sem rota e sem direito ao IP local: a conta não entra no plano. Gravar
+      // a credencial aqui criaria uma conta que nunca poderia abrir.
+      semRota.push(item.username);
+      return;
+    }
+
+    data.accounts[index] = {
+      username: item.username,
+      password: item.password,
+      token: '',
+      proxy: (data.accounts[index] && data.accounts[index].proxy) || '',
+      email: item.email,
+      signup: true,
+      classId: item.classId || ''
+    };
+
+    salvos.push({
+      index,
+      username: item.username,
+      tab: Math.floor(index / ACCOUNTS_PER_TAB),
+      proxy: rota ? (pool.getPublicProxy(rota.proxyId) || {}).label || '' : ''
+    });
+  });
+
+  data.proxyPool = pool;
+  levelingCredentials.save(data);
+  // Depois de salvar: a partição lê a atribuição do disco.
+  for (const s of salvos) applyAccountProxy(s.index);
+
+  if (!salvos.length) {
+    pendingSignupPlan = [];
+    return {
+      ok: false,
+      error: 'Nenhuma conta pôde ser criada: o pool não tem proxy funcional livre. '
+        + 'Importe e teste proxies — cada proxy aprovado abre duas contas.'
+    };
+  }
+
+  pendingSignupPlan = [];
+
+  /*
+   * A janela do assistente não alcança as abas: os painéis e as WebViews são
+   * do renderer do launcher. Avisá-lo é o que faz as abas abrirem já com a
+   * rota e o formulário preenchidos, sem o usuário ter de procurar em qual
+   * slot cada nome caiu.
+   */
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('leveling:signup:ready', salvos);
+    try {
+      mainWindow.show();
+      mainWindow.focus();
+    } catch { /* janela indisponível; as abas abrem quando ela voltar */ }
+  }
+
+  return {
+    ok: true,
+    saved: salvos,
+    // Saem pelo IP da máquina: só as duas primeiras contas chegam aqui, porque
+    // as outras já foram recusadas em `semRota`.
+    semProxy: salvos.filter(s => !s.proxy).map(s => s.username),
+    // Recusadas por falta de proxy. Nomeá-las é o que deixa claro que o plano
+    // saiu menor do que o pedido, e por quê.
+    recusadas: semRota,
+    status: levelingCredentials.getPublicStatus()
+  };
+});
+
+/**
+ * Apaga as credenciais das contas a partir de um slot, com a sessão delas.
+ *
+ * É o que acontece ao remover uma aba: a conta deixa de ter onde aparecer, e
+ * deixar a credencial órfã no disco significaria que recriar a aba traria de
+ * volta um login que o usuário achava apagado.
+ *
+ * A partição é limpa junto (`clearStorageData`): só apagar a credencial
+ * deixaria o token no `localStorage`, e a WebView voltaria logada sozinha.
+ *
+ * A vaga no pool de proxies é devolvida: ela está presa a um índice de conta
+ * que não existe mais, e sem liberar o pool esgotaria com contas fantasmas.
+ */
+ipcMain.handle('leveling:creds:clear-from', async (event, from) => {
+  launcherOnly(event);
+  const inicio = Math.max(1, +from || 1); // A conta 1 nunca entra.
+  const data = levelingCredentials.load();
+  const pool = data.proxyPool || new LevelingProxyPool();
+  const apagados = [];
+
+  for (let i = inicio; i < data.accounts.length; i++) {
+    const acc = data.accounts[i];
+    const tinha = acc && (acc.username || acc.password || acc.token);
+    levelingHeadlessManager.stop(i);
+    pool.release(i);
+    data.accounts[i] = { username: '', password: '', token: '', proxy: '', email: '', signup: false };
+    if (tinha) apagados.push(i);
+  }
+
+  data.proxyPool = pool;
+  levelingCredentials.save(data);
+
+  for (const i of apagados) {
+    try {
+      await session.fromPartition('persist:conta' + (i + 1)).clearStorageData();
+      applyAccountProxy(i);
+    } catch (e) {
+      logErro('creds-clear', `conta${i + 1}: ${e.message}`);
+    }
+  }
+
+  return { ok: true, cleared: apagados, status: levelingCredentials.getPublicStatus() };
 });
 
 ipcMain.handle('leveling:creds:clear', (event, index) => {
@@ -2345,6 +2798,88 @@ ipcMain.handle('leveling:sniper-account:get', event => {
   launcherOnly(event);
   return levelingCredentials.getPublicStatus().sniper;
 });
+
+function othersState() {
+  const creds = levelingCredentials.getPublicStatus();
+  return {
+    config: levelingHeadlessManager.getOthersConfig(),
+    accounts: (creds.accounts || []).map((entry, index) => {
+      const client = levelingHeadlessManager.getClient(index);
+      return {
+        index,
+        username: (entry && entry.username) || '',
+        name: (client && client.state && client.state.name) || '',
+        connected: !!client && client.status === 'connected'
+      };
+    }),
+    log: levelingHeadlessManager.getOthersLog(),
+    stats: levelingHeadlessManager.getOthersStats(),
+    limits: {
+      minIntervalMs: levelingOthers.MIN_INTERVAL_MS,
+      maxIntervalMs: levelingOthers.MAX_INTERVAL_MS
+    }
+  };
+}
+
+ipcMain.handle('leveling:others:get', event => {
+  launcherOnly(event);
+  return othersState();
+});
+
+ipcMain.handle('leveling:others:set', (event, config) => {
+  launcherOnly(event);
+  const applied = levelingHeadlessManager.setOthersConfig(config);
+  writePrefs({ others: applied });
+  syncMailPoll();
+  syncOthersPoll();
+  return { ok: true, ...othersState() };
+});
+
+ipcMain.handle('leveling:others:poll', async event => {
+  launcherOnly(event);
+  return { resultado: await levelingHeadlessManager.pollOthers(), ...othersState() };
+});
+
+ipcMain.handle('leveling:others:log-clear', event => {
+  launcherOnly(event);
+  levelingHeadlessManager.clearOthersLog();
+  return { ok: true };
+});
+
+let othersWindow = null;
+function openOthersWindow() {
+  if (othersWindow && !othersWindow.isDestroyed()) {
+    resetStandaloneWindowZoom(othersWindow);
+    if (othersWindow.isMinimized()) othersWindow.restore();
+    othersWindow.focus();
+    return true;
+  }
+  othersWindow = new BrowserWindow({
+    width: 980,
+    height: 720,
+    minWidth: 680,
+    minHeight: 440,
+    title: 'Outros · Leveling Idle 2D',
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#0b0f14',
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false, spellcheck: false }
+  });
+  fixStandaloneWindowZoom(othersWindow);
+  othersWindow.loadFile(path.join(__dirname, 'outros.html'));
+  othersWindow.once('ready-to-show', () => othersWindow.show());
+  othersWindow.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith('file://')) { event.preventDefault(); openOutside(url); }
+  });
+  othersWindow.webContents.setWindowOpenHandler(({ url }) => { openOutside(url); return { action: 'deny' }; });
+  othersWindow.on('closed', () => { othersWindow = null; });
+  return true;
+}
+
+ipcMain.handle('leveling:others:window', event => {
+  launcherOnly(event);
+  return openOthersWindow();
+});
 ipcMain.handle('leveling:sniper-account:set', (event, username, password, proxy) => {
   launcherOnly(event);
   const old = levelingCredentials.getSniper();
@@ -2359,6 +2894,175 @@ ipcMain.handle('leveling:sniper-account:set', (event, username, password, proxy)
 ipcMain.handle('leveling:market:window', event => {
   launcherOnly(event);
   return openMarketWindow();
+});
+
+/**
+ * Janela de gerenciamento de proxies. Independente, semelhante ao mercado.
+ */
+let proxiesWindow = null;
+
+function openProxiesWindow() {
+  if (proxiesWindow && !proxiesWindow.isDestroyed()) {
+    if (proxiesWindow.isMinimized()) proxiesWindow.restore();
+    proxiesWindow.focus();
+    return;
+  }
+
+  try {
+    proxiesWindow = new BrowserWindow({
+      width: 1200,
+      height: 800,
+      minWidth: 600,
+      minHeight: 400,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        nodeIntegration: false,
+        contextIsolation: true,
+        enableRemoteModule: false
+      }
+    });
+
+    const proxyHtml = path.join(__dirname, 'proxies.html');
+    proxiesWindow.loadFile(proxyHtml);
+    proxiesWindow.once('ready-to-show', () => proxiesWindow.show());
+
+    proxiesWindow.on('closed', () => { proxiesWindow = null; });
+  } catch (e) {
+    logErro('proxies-window', e.message);
+  }
+}
+
+ipcMain.handle('leveling:proxies:window', event => {
+  launcherOnly(event);
+  return openProxiesWindow();
+});
+
+/**
+ * Janela de cadastro assistido.
+ */
+let signupWindow = null;
+
+function openSignupWindow() {
+  if (signupWindow && !signupWindow.isDestroyed()) {
+    if (signupWindow.isMinimized()) signupWindow.restore();
+    signupWindow.focus();
+    return;
+  }
+
+  try {
+    signupWindow = new BrowserWindow({
+      width: 900,
+      height: 1000,
+      minWidth: 600,
+      minHeight: 600,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        nodeIntegration: false,
+        contextIsolation: true,
+        enableRemoteModule: false
+      }
+    });
+
+    const signupHtml = path.join(__dirname, 'cadastro.html');
+    signupWindow.loadFile(signupHtml);
+    signupWindow.once('ready-to-show', () => signupWindow.show());
+
+    signupWindow.on('closed', () => { signupWindow = null; });
+  } catch (e) {
+    logErro('signup-window', e.message);
+  }
+}
+
+ipcMain.handle('leveling:signup:window', event => {
+  launcherOnly(event);
+  return openSignupWindow();
+});
+
+/**
+ * A janela onde a conta é de fato cadastrada, uma por conta.
+ *
+ * Ela carrega o jogo na **partição da conta** (`persist:contaN`), e é isso que
+ * faz a ideia funcionar: a partição é compartilhada por nome, então o token que
+ * o cadastro gravar aqui é o mesmo que a WebView do painel vai ler. Terminado o
+ * cadastro, a janela fecha e o painel recarrega já logado — sem repetir login.
+ *
+ * O proxy também vem da partição: `applyAccountProxy()` chamou `setProxy` nela,
+ * e a autenticação do proxy é respondida no evento `login` de
+ * `web-contents-created`. A janela nasce na rota da conta sem fazer nada aqui.
+ *
+ * É uma janela separada, e não a WebView do painel, porque o captcha precisa de
+ * espaço e foco: o Turnstile num painel de um quarto da tela é difícil de
+ * resolver, e trocar de aba no meio descartaria a WebView junto com o desafio.
+ */
+const signupTabs = new Map();
+
+function openSignupTab(index) {
+  const num = index + 1;
+
+  const existente = signupTabs.get(index);
+  if (existente && !existente.isDestroyed()) {
+    if (existente.isMinimized()) existente.restore();
+    existente.focus();
+    return { ok: true, already: true };
+  }
+
+  try {
+    // A sessão e o proxy antes da janela: carregar o jogo sem rota aplicada
+    // sairia pelo IP da máquina, que é exatamente o que o proxy evita.
+    applyAccountCapacity(Math.ceil(num / ACCOUNTS_PER_TAB));
+    applyAccountProxy(index);
+
+    /*
+     * Sem rota, sem janela. Cadastrar é o pior momento para descobrir que a
+     * conta saiu pelo IP errado: o captcha já foi resolvido à mão, e o nome
+     * fica queimado se o servidor recusar.
+     */
+    const dados = levelingCredentials.load();
+    const poolAtual = dados.proxyPool || new LevelingProxyPool();
+    const porta = poolAtual.canOpen(index);
+    if (!porta.ok) {
+      return { ok: false, error: `Conta ${num}: ${porta.motivo}.` };
+    }
+
+    const creds = levelingCredentials.get(index);
+
+    // Escalonadas: com duas contas no mesmo plano, as janelas nasciam uma
+    // exatamente sobre a outra e parecia que só a de cima tinha sido
+    // preenchida. O deslocamento é por janela já aberta, não pelo índice da
+    // conta, senão a conta 7 abriria fora da tela.
+    const desloco = signupTabs.size * 40;
+    const win = new BrowserWindow({
+      width: 760,
+      height: 900,
+      minWidth: 420,
+      minHeight: 600,
+      x: 80 + desloco,
+      y: 40 + desloco,
+      title: `Cadastrar conta ${num}` + (creds.username ? ` — ${creds.username}` : ''),
+      webPreferences: {
+        partition: 'persist:conta' + num,
+        preload: path.join(__dirname, 'src', 'main', 'account-preload.js'),
+        nodeIntegration: false,
+        contextIsolation: false,
+        sandbox: false
+      }
+    });
+
+    signupTabs.set(index, win);
+    win.loadURL(GAME_URL);
+    win.once('ready-to-show', () => win.show());
+    win.on('closed', () => { signupTabs.delete(index); });
+    return { ok: true };
+  } catch (e) {
+    logErro('signup-tab', `conta${num}: ${e.message}`);
+    return { ok: false, error: e.message };
+  }
+}
+
+ipcMain.handle('leveling:signup:tab', (event, index) => {
+  launcherOnly(event);
+  const i = Math.max(0, +index || 0);
+  return openSignupTab(i);
 });
 
 /**
@@ -2911,6 +3615,8 @@ function createWindow() {
   // seguro, mas não é o que o usuário escolheu.
   levelingHeadlessManager.setForgeConfig(prefs.forge);
   levelingHeadlessManager.setForgeLog(readForgeLogFile() || []);
+  levelingHeadlessManager.setOthersConfig(prefs.others);
+  levelingHeadlessManager.setOthersLog(readOthersLogFile() || []);
   // Não há laço a ligar: a distribuição é disparada pelo `character_patch` de
   // cada conta, que é o pacote que anuncia os pontos novos.
 
@@ -3014,6 +3720,25 @@ app.on('web-contents-created', (_event, contents) => {
     });
   });
 
+  /*
+   * Proxy com autenticação: o Chromium não aceita usuário e senha na regra, e
+   * pede aqui. Responder uma vez só evita laço infinito com senha errada.
+   *
+   * Fora do bloco `webview` de propósito: a janela de cadastro é uma
+   * `BrowserWindow` na partição da conta, e sem isto ela ficaria presa no
+   * desafio do proxy — justamente a janela que precisa sair pela rota certa.
+   */
+  const asked = new Set();
+  contents.on('login', (event, _request, authInfo, callback) => {
+    if (!authInfo.isProxy) return;
+    const index = accountIndexOf(contents.session);
+    const creds = proxyAuth.get(index + 1);
+    if (!creds || asked.has(index)) return;
+    asked.add(index);
+    event.preventDefault();
+    callback(creds.username, creds.password);
+  });
+
   if (type !== 'webview') return;
 
   contents.on('console-message', (_consoleEvent, level, message, line, sourceId) => {
@@ -3050,19 +3775,6 @@ app.on('web-contents-created', (_event, contents) => {
       e.preventDefault();
     }
   });
-
-  // Proxy com autenticação: o Chromium não aceita usuário e senha na regra, e
-  // pede aqui. Responder uma vez só evita laço infinito com senha errada.
-  const asked = new Set();
-  contents.on('login', (event, _request, authInfo, callback) => {
-    if (!authInfo.isProxy) return;
-    const index = accountIndexOf(contents.session);
-    const creds = proxyAuth.get(index + 1);
-    if (!creds || asked.has(index)) return;
-    asked.add(index);
-    event.preventDefault();
-    callback(creds.username, creds.password);
-  });
 });
 
 ipcMain.on('graphics:webgl', (event, kind) => {
@@ -3086,11 +3798,100 @@ ipcMain.on('leveling:token:get', event => {
   event.returnValue = index >= 0 ? (levelingCredentials.get(index).token || '') : '';
 });
 
+/**
+ * O que o preload deve digitar no formulário de autenticação da aba.
+ *
+ * Síncrono pelo mesmo motivo de `leveling:token:get`: o preload precisa da
+ * resposta antes de o bundle do jogo montar a tela, e esperar uma promessa
+ * perderia a corrida.
+ *
+ * `register` só sai quando a credencial está marcada como pendente de
+ * cadastro; nesse caso a conta ainda não existe e mostrar a aba de login seria
+ * um beco sem saída. Nos outros casos vai `login`, com a senha que o monitor
+ * já usa, para não obrigar a redigitar a cada volta do modo monitor.
+ *
+ * A senha atravessa o IPC aqui porque não há alternativa: é o próprio campo do
+ * formulário que precisa dela, e o preload é o único código do launcher que
+ * alcança aquele DOM. O destino é a partição da própria conta.
+ */
+ipcMain.on('leveling:signup:prefill', event => {
+  const index = accountIndexOf(event.sender.session);
+  if (index < 0) {
+    event.returnValue = null;
+    return;
+  }
+  const creds = levelingCredentials.get(index);
+  if (!creds.username || !creds.password) {
+    event.returnValue = null;
+    return;
+  }
+  event.returnValue = {
+    mode: creds.signup ? 'register' : 'login',
+    username: creds.username,
+    password: creds.password,
+    email: creds.email || '',
+    // A classe só interessa no cadastro: é ela que diz qual cartão marcar no
+    // modal que o jogo abre numa conta sem classe.
+    classId: creds.signup ? (creds.classId || '') : ''
+  };
+});
+
+/**
+ * O preload terminou os modais da conta nova: email dispensado, classe
+ * escolhida e confirmada, convite de visual recusado.
+ *
+ * A conta está pronta, então ela vai para o modo monitor — que é onde o
+ * launcher a quer. Fechar a janela antes de ligar o monitor não é um detalhe de
+ * ordem: as duas sessões se derrubam, e o servidor mantém uma por conta.
+ */
+ipcMain.on('leveling:signup:post-done', event => {
+  const index = accountIndexOf(event.sender.session);
+  if (index < 0) return;
+
+  const tab = signupTabs.get(index);
+  if (!tab || tab.isDestroyed() || tab.webContents !== event.sender) return;
+
+  levelingCredentials.clearSignupFlag(index);
+  signupTabs.delete(index);
+  try {
+    tab.close();
+  } catch { /* já fechando */ }
+
+  const creds = levelingCredentials.get(index);
+  if (!creds.username || !creds.password) return;
+
+  // Um tique depois: a sessão da janela precisa soltar o socket antes de o
+  // monitor abrir o dele, senão o servidor derruba um dos dois.
+  setTimeout(() => {
+    try {
+      // Pelo pool, como o `leveling:start`: a conta recém-cadastrada já tem
+      // rota atribuída, e `creds.proxy` é o campo legado que não serve ao monitor.
+      levelingHeadlessManager.start(index, { ...creds, proxy: accountProxyUrl(index) });
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('leveling:signup:monitor', { index });
+      }
+    } catch (e) {
+      logErro('signup-monitor', `conta${index + 1}: ${e.message}`);
+    }
+  }, 1500);
+});
+
 /** A página trocou o token (login manual, renovação): o monitor usa o novo. */
 ipcMain.on('leveling:token:set', (event, token) => {
   const index = accountIndexOf(event.sender.session);
   if (index < 0) return;
-  levelingCredentials.setToken(index, typeof token === 'string' ? token : '');
+  const valor = typeof token === 'string' ? token : '';
+  levelingCredentials.setToken(index, valor);
+
+  /*
+   * A janela de cadastro **não** fecha aqui, e isso é deliberado: o token chega
+   * no `auth_ok`, que é *antes* dos modais de email, classe e visual. Fechar
+   * agora mataria a janela no meio deles.
+   *
+   * Quem fecha é `leveling:signup:post-done`, que o preload manda quando os
+   * modais acabaram. O token guardado aqui já é o que a WebView do painel vai
+   * ler para subir logada.
+   */
 });
 
 app.whenReady().then(() => {
@@ -3104,6 +3905,9 @@ app.whenReady().then(() => {
   }
   createWindow();
   buildTray();
+  // Antes do monitor: uma conta sem rota atribuída não abre, e é aqui que ela
+  // ganha uma se houver proxy aprovado sobrando no pool.
+  reconcileProxyRoutes();
   startDedicatedSniperMarketAccount();
 });
 

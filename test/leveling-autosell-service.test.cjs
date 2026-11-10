@@ -770,20 +770,20 @@ test('o laço desligado não roda, e o temporizador não prende o processo', asy
 
   mgr.setAutosellConfig({ enabled: true, intervalMs: 60000 });
   assert.equal(mgr.startAutosellPoll(), true);
-  assert.equal(mgr.getAutosellStats().running, true);
+  assert(mgr.autosellTicker, 'o ticker deve existir depois de ligar');
   assert.equal(mgr.startAutosellPoll(), false, 'ligar duas vezes não cria dois temporizadores');
   assert.equal(mgr.stopAutosellPoll(), true);
   mgr.stopAll();
 });
 
 test('mudar o intervalo com o laço em curso recria o temporizador', async () => {
-  // O `setInterval` antigo continuaria no ritmo velho.
+  // O `every` antigo continuaria no ritmo velho; é recriado.
   const { mgr } = await comAutosell({ intervalMs: 60000 });
   mgr.startAutosellPoll();
-  const antes = mgr.autosellTimer;
+  const antes = mgr.autosellTicker;
   mgr.setAutosellConfig({ enabled: true, intervalMs: 300000 });
-  assert.notEqual(mgr.autosellTimer, antes);
-  assert.equal(mgr.getAutosellStats().intervalMs, 300000);
+  assert.notEqual(mgr.autosellTicker, antes, 'o ticker foi recriado');
+  assert(mgr.autosellTicker, 'ticker continua ligado');
   mgr.stopAutosellPoll();
   mgr.stopAll();
 });

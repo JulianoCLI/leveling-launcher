@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<!--
+  Janela do pool de proxies.
+
+  O proxy era um campo de texto dentro do cartão de cada conta, e isso escondia
+  o que ele realmente é: um recurso escasso e compartilhado. O servidor recusa
+  várias contas saindo do mesmo IP (`session.multi_account_ip`), então a conta
+  não "tem" um proxy — ela ocupa uma vaga num conjunto, e são duas vagas por
+  proxy.
+
+  Com o campo por conta não havia como ver o que importa: quantas vagas
+  sobraram, se dois proxies saem pelo mesmo IP (e portanto valem um só), ou se
+  algum parou de responder. Esta janela existe para mostrar isso de uma vez, e
+  é separada pelo mesmo motivo do mercado: dá para deixá-la ao lado enquanto se
+  liga os monitores.
+-->
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'">
+  <title>Proxies · Leveling Idle 2D</title>
+  <link rel="stylesheet" href="src/ui/shell.css">
+  <link rel="stylesheet" href="src/ui/leveling.css">
+</head>
+
+<body class="standalone">
+  <div id="proxyPage">
+    <header id="proxyHead">
+      <h1>Pool de proxies</h1>
+      <p id="proxySummary" class="proxyLead" role="status">Carregando…</p>
+    </header>
+
+    <section class="proxyCard" aria-labelledby="proxyImportTitle">
+      <h2 id="proxyImportTitle">Importar</h2>
+      <label class="proxyField">
+        <span class="proxyLabel">Um proxy por linha</span>
+        <textarea id="proxyInput" rows="6" spellcheck="false"
+          placeholder="host:porta&#10;host:porta:usuario:senha&#10;socks5://host:porta"></textarea>
+      </label>
+      <div class="proxyActions">
+        <button id="proxyImport" type="button" class="primary">Importar e testar</button>
+        <button id="proxyTestAll" type="button">Testar todos</button>
+      </div>
+      <p id="proxyStatus" class="proxyStatus" role="status"></p>
+    </section>
+
+    <section class="proxyCard" aria-labelledby="proxyListTitle">
+      <h2 id="proxyListTitle">No pool</h2>
+      <div id="proxyList" class="proxyList"></div>
+    </section>
+
+    <footer id="proxyFoot">
+      <button id="proxyClose" type="button">Fechar</button>
+    </footer>
+  </div>
+
+  <script src="src/ui/proxies-window.js"></script>
+</body>
+
+</html>

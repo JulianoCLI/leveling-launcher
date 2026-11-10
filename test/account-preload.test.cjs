@@ -33,11 +33,69 @@ function fakeStorage(initial = {}) {
  * Roda o preload num ambiente de mentira. Ele age no `require`, como faria no
  * renderer, então montar o cenário antes é parte do teste.
  */
-function run({ origin = 'https://levelingidle2d.com.br', token = '', storage = fakeStorage() } = {}) {
+/**
+ * Formulário de autenticação de mentira, com os ids que o bundle do jogo usa.
+ *
+ * Os campos registram cada evento que recebem porque é isso que importa no
+ * preenchimento: o jogo lê os valores de um estado próprio que só acompanha o
+ * evento `input`, então mexer em `.value` sem disparar não preenche nada.
+ *
+ * A aba de cadastro entra no cenário porque o bundle remonta o formulário a
+ * cada troca: email e confirmação só existem depois do clique em
+ * `#slAuthTab-register`. Aqui ela apenas registra o clique e passa a se
+ * declarar selecionada, que é o sinal que o preload consulta.
+ */
+function fakeForm(ids, { comAba = true } = {}) {
+  const campos = {};
+  for (const id of ids) {
+    campos[id] = { id, value: '', events: [], dispatchEvent(e) { this.events.push(e.type); return true; } };
+  }
+
+  const aba = comAba
+    ? {
+        id: 'slAuthTab-register',
+        selecionada: false,
+        cliques: 0,
+        getAttribute: name => (name === 'aria-selected' ? (aba.selecionada ? 'true' : 'false') : null),
+        click() { aba.cliques++; aba.selecionada = true; }
+      }
+    : null;
+
+  return {
+    campos,
+    aba,
+    document: {
+      readyState: 'complete',
+      getElementById: id => (aba && id === aba.id ? aba : campos[id] || null),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener() {},
+      documentElement: {}
+    }
+  };
+}
+
+/** Observador de mentira: o preload só o instancia, e aqui nada muta sozinho. */
+class FakeMutationObserver {
+  observe() {}
+  disconnect() {}
+}
+
+function run({
+  origin = 'https://levelingidle2d.com.br',
+  token = '',
+  storage = fakeStorage(),
+  prefill = null,
+  doc = null
+} = {}) {
   const sent = [];
   const electron = {
     ipcRenderer: {
-      sendSync: channel => (channel === 'leveling:token:get' ? token : undefined),
+      sendSync: channel => {
+        if (channel === 'leveling:token:get') return token;
+        if (channel === 'leveling:signup:prefill') return prefill;
+        return undefined;
+      },
       send: (channel, payload) => sent.push({ channel, payload })
     }
   };
@@ -48,8 +106,18 @@ function run({ origin = 'https://levelingidle2d.com.br', token = '', storage = f
 
   const savedWindow = global.window;
   const savedLocation = global.location;
+  const savedDocument = global.document;
+  const savedObserver = global.MutationObserver;
   global.window = { localStorage: storage };
   global.location = { origin };
+  if (doc) {
+    global.document = doc;
+    // O observador só existe nos cenários que o querem. Sem ele o preload sai
+    // pela guarda de `watchPostSignup` — e é o que os testes de preenchimento
+    // precisam: com observador, o teto de três minutos ficaria armado e
+    // prenderia o processo depois do teste passar.
+    global.MutationObserver = doc.comObservador ? FakeMutationObserver : undefined;
+  }
 
   delete require.cache[PRELOAD];
   try {
@@ -59,6 +127,8 @@ function run({ origin = 'https://levelingidle2d.com.br', token = '', storage = f
     else delete require.cache[electronPath];
     global.window = savedWindow;
     global.location = savedLocation;
+    global.document = savedDocument;
+    global.MutationObserver = savedObserver;
   }
 
   return { storage, sent };
@@ -117,6 +187,238 @@ test('escrever outras chaves não vira tráfego de IPC', () => {
   storage.removeItem('leveling.lite');
 
   assert.deepEqual(sent, [], 'o jogo grava muitas chaves; só a do token interessa');
+});
+
+/*
+ * Preenchimento do formulário. Existe porque o cadastro exige um token do
+ * Cloudflare Turnstile, apurado em `tools/signup-rules2-probe.js`: o launcher
+ * não consegue cadastrar sozinho, mas consegue deixar só o captcha para o
+ * usuário.
+ */
+
+const CAMPOS = ['slAuth-username', 'slAuth-password', 'slAuth-email', 'slAuth-confirm'];
+
+test('o cadastro pendente preenche nome, senha, email e confirmação', () => {
+  const { campos, document } = fakeForm(CAMPOS);
+  run({
+    doc: document,
+    prefill: {
+      mode: 'register', username: 'cacador1',
+      password: 'Abcdef1!', email: 'cacador1@exemplo.com'
+    }
+  });
+
+  assert.equal(campos['slAuth-username'].value, 'cacador1');
+  assert.equal(campos['slAuth-password'].value, 'Abcdef1!');
+  assert.equal(campos['slAuth-email'].value, 'cacador1@exemplo.com');
+  assert.equal(campos['slAuth-confirm'].value, 'Abcdef1!',
+    'a confirmação repete a senha; deixá-la vazia só faria o envio falhar');
+});
+
+test('preencher dispara input, senão o jogo não vê o valor', () => {
+  const { campos, document } = fakeForm(CAMPOS);
+  run({
+    doc: document,
+    prefill: { mode: 'register', username: 'u1', password: 'Abcdef1!', email: 'a@b.com' }
+  });
+
+  // O bundle guarda os campos num objeto atualizado no `input`. Sem o evento,
+  // o formulário sai em branco apesar de parecer cheio na tela.
+  for (const id of CAMPOS) {
+    assert.deepEqual(campos[id].events, ['input'], `${id} precisa do evento input`);
+  }
+});
+
+test('o preenchimento abre a aba de cadastro antes de procurar os campos', () => {
+  // O bundle remonta o formulário a cada troca de aba, e email e confirmação
+  // não existem na de login. Sem este clique o cadastro ficava só com o nome.
+  const { aba, document } = fakeForm(CAMPOS);
+  run({
+    doc: document,
+    prefill: { mode: 'register', username: 'u1', password: 'Abcdef1!', email: 'a@b.com' }
+  });
+
+  assert.equal(aba.cliques, 1, 'a aba de cadastro precisa ser escolhida');
+});
+
+test('no login a aba de cadastro fica em paz', () => {
+  const { aba, document } = fakeForm(['slAuth-username', 'slAuth-password']);
+  run({
+    doc: document,
+    prefill: { mode: 'login', username: 'conta', password: 'senha', email: '' }
+  });
+
+  assert.equal(aba.cliques, 0, 'trocar de aba jogaria o usuário para o cadastro');
+});
+
+test('no login só o nome e a senha são preenchidos', () => {
+  // A aba de login não tem email nem confirmação: os ids não existem, e pedir
+  // por eles não pode derrubar o preenchimento do resto.
+  const { campos, document } = fakeForm(['slAuth-username', 'slAuth-password']);
+  run({
+    doc: document,
+    prefill: { mode: 'login', username: 'conta', password: 'senha', email: '' }
+  });
+
+  assert.equal(campos['slAuth-username'].value, 'conta');
+  assert.equal(campos['slAuth-password'].value, 'senha');
+});
+
+test('sem credencial guardada o formulário fica intocado', () => {
+  // Um campo preenchido sozinho com dado de outra conta seria pior que vazio.
+  const { campos, document } = fakeForm(CAMPOS);
+  run({ doc: document, prefill: null });
+
+  assert.equal(campos['slAuth-username'].value, '');
+  assert.deepEqual(campos['slAuth-username'].events, []);
+});
+
+/*
+ * Os modais que o jogo abre numa conta recém-criada. A sequência foi lida no
+ * bundle: pedido de email (`ale`), escolha de classe (`Dse`), confirmação por
+ * `ui.confirm` e convite de visual (`Ose`). Cada um é resolvido por clique no
+ * DOM, então o teste encena o DOM e confere os cliques.
+ */
+function fakePostSignupDom({ classes = ['Guerreiro', 'Mago', 'Curandeiro'] } = {}) {
+  const cliques = [];
+  const aberto = { email: true, classe: true, confirmar: false, visual: true };
+  let escolhida = '';
+
+  const btn = (nome, ao) => ({
+    nome,
+    disabled: false,
+    click() { cliques.push(nome); if (ao) ao(); },
+    querySelector: () => null,
+    querySelectorAll: () => []
+  });
+
+  const emailBtn = btn('email-depois', () => { aberto.email = false; });
+  const confirmaBtn = btn('classe-confirmar', () => { aberto.confirmar = false; });
+  const visualBtn = btn('visual-pular', () => { aberto.visual = false; });
+
+  const tituloEmail = {
+    id: 'slEmailPrompt-title',
+    closest: sel => (sel === '.slModal' && aberto.email
+      ? { querySelector: s => (s === '.slModalActions .slBtn-secondary' ? emailBtn : null) }
+      : null)
+  };
+
+  const cards = classes.map(nome => ({
+    disabled: false,
+    click() { cliques.push('card:' + nome); escolhida = nome; },
+    querySelector: sel => (sel === '.slCharClsName' ? { textContent: nome } : null),
+    querySelectorAll: () => []
+  }));
+
+  // O primário do painel só habilita com um cartão marcado, e é ele que abre a
+  // confirmação — como no bundle.
+  const escolherBtn = btn('classe-escolher', () => {
+    if (!escolhida) return;
+    aberto.classe = false;
+    aberto.confirmar = true;
+  });
+
+  const painelClasse = {
+    querySelectorAll: sel => (sel === '.slCharClsCard' ? cards : []),
+    querySelector: sel => (sel === '.slHudClassPickActions button:not([disabled])' ? escolherBtn : null)
+  };
+
+  const visual = {
+    querySelector: sel => (sel === '.slHudClassPickActions button' ? visualBtn : null)
+  };
+
+  const modalConfirma = {
+    querySelectorAll: sel => (sel === '.slModalActions button'
+      ? [btn('classe-cancelar'), confirmaBtn]
+      : [])
+  };
+
+  // O formulário também existe nesta cena, preenchido sem drama: o que
+  // interessa aqui é o que vem depois dele, e um autofill que falhasse deixaria
+  // o observador dele esperando à toa.
+  const form = fakeForm(CAMPOS);
+
+  return {
+    cliques,
+    escolhida: () => escolhida,
+    document: {
+      readyState: 'complete',
+      documentElement: {},
+      comObservador: true,
+      addEventListener() {},
+      getElementById: id => {
+        if (id === 'slEmailPrompt-title') return aberto.email ? tituloEmail : null;
+        return form.document.getElementById(id);
+      },
+      querySelector: sel => {
+        if (sel === '.slHudClassPick:not([hidden])') return aberto.classe ? painelClasse : null;
+        if (sel === '.slModalFundo .slModal') return aberto.confirmar ? modalConfirma : null;
+        if (sel === '.slHudWelcomeLook') return aberto.visual ? visual : null;
+        return null;
+      },
+      querySelectorAll: () => []
+    }
+  };
+}
+
+test('depois do cadastro os quatro modais são resolvidos na ordem', () => {
+  const cena = fakePostSignupDom();
+  const { sent } = run({
+    doc: cena.document,
+    prefill: {
+      mode: 'register', username: 'u1', password: 'Abcdef1!',
+      email: 'a@b.com', classId: 'mago'
+    }
+  });
+
+  assert.deepEqual(cena.cliques,
+    ['email-depois', 'card:Mago', 'classe-escolher', 'classe-confirmar', 'visual-pular'],
+    'cada passo depende do anterior ter fechado seu modal');
+  assert.equal(cena.escolhida(), 'Mago', 'a classe do plano é a que entra');
+  assert.ok(sent.some(m => m.channel === 'leveling:signup:post-done'),
+    'sem este aviso a janela não fecha e o monitor nunca liga');
+});
+
+test('o id em português casa com o nome visível da classe', () => {
+  // O catálogo manda `healer`, e o cartão mostra "Curandeiro": casar por
+  // igualdade exata deixaria essa classe sem escolher.
+  const cena = fakePostSignupDom();
+  run({
+    doc: cena.document,
+    prefill: {
+      mode: 'register', username: 'u1', password: 'Abcdef1!',
+      email: 'a@b.com', classId: 'guerreiro'
+    }
+  });
+
+  assert.equal(cena.escolhida(), 'Guerreiro');
+});
+
+test('sem classe definida os outros modais ainda são dispensados', () => {
+  const cena = fakePostSignupDom();
+  const { sent } = run({
+    doc: cena.document,
+    prefill: {
+      mode: 'register', username: 'u1', password: 'Abcdef1!',
+      email: 'a@b.com', classId: ''
+    }
+  });
+
+  assert.deepEqual(cena.cliques, ['email-depois', 'visual-pular'],
+    'escolher classe por conta própria seria decidir pelo usuário');
+  assert.ok(sent.some(m => m.channel === 'leveling:signup:post-done'));
+});
+
+test('no login os modais pós-cadastro não são vigiados', () => {
+  // Numa conta que já existe eles não aparecem, e o observador custaria por
+  // cada repintura do jogo sem nada para fazer.
+  const cena = fakePostSignupDom();
+  run({
+    doc: cena.document,
+    prefill: { mode: 'login', username: 'u1', password: 'p', email: '' }
+  });
+
+  assert.deepEqual(cena.cliques, []);
 });
 
 test('origem estranha não recebe nem entrega token', () => {

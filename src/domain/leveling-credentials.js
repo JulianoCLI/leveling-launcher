@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { LevelingProxyPool } = require('./leveling-proxy-pool');
 
 let electronApp = null;
 let electronSafeStorage = null;
@@ -33,28 +34,60 @@ const FILE_NAME = 'leveling_creds.enc';
  * `proxy` fica aqui junto das credenciais porque é parte de como a conta entra:
  * o servidor recusa várias contas no mesmo IP (`session.multi_account_ip`), e
  * trocar o proxy sem trocar a conta não faz sentido.
+ *
+ * `email` e `signup` existem por causa do assistente de cadastro. O cadastro
+ * exige email, e o token do Cloudflare Turnstile só nasce dentro da WebView —
+ * então o launcher guarda a credencial *antes* de a conta existir e a WebView
+ * preenche o formulário com ela. `signup` marca justamente esse intervalo: uma
+ * credencial que ainda não passou pelo captcha não serve ao monitor, e sem a
+ * marca ele tentaria logar numa conta inexistente.
  */
 function emptyAccount() {
-  return { username: '', password: '', token: '', proxy: '' };
+  // `classId` acompanha `signup`: é a classe que o assistente escolheu, e a
+  // WebView a usa para marcar o cartão no modal que o jogo abre na conta nova.
+  return { username: '', password: '', token: '', proxy: '', email: '', signup: false, classId: '' };
 }
 
 /**
  * Aceita a forma curta que os provedores de proxy entregam (`host:porta` ou
  * `host:porta:usuario:senha`) e devolve uma URL, que é o que tanto o Chromium
  * quanto o `undici` esperam. Sem esquema, assume HTTP: é o caso comum.
+ *
+ * Devolve `''` para o que não dá para converter com segurança. Antes o ramo
+ * final era `'http://' + raw`, que transformava qualquer lixo numa string com
+ * cara de URL: `host:porta:usuario` virava `http://host:porta:usuario`, que
+ * passa por aqui sem reclamar e só estoura lá no fim, dentro do `undici`, como
+ * `Invalid URL` — longe de quem digitou e sem dizer o quê. Vazio é recusa
+ * honesta: `importText` já separa as linhas inválidas e as mostra ao usuário.
  */
 function normalizeProxy(input) {
   const raw = String(input || '').trim();
   if (!raw) return '';
-  if (/^[a-z0-9+.-]+:\/\//i.test(raw)) return raw;
 
-  const parts = raw.split(':');
-  if (parts.length === 2) return `http://${parts[0]}:${parts[1]}`;
-  if (parts.length === 4) {
-    const [host, port, user, pass] = parts;
-    return `http://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}`;
+  const comEsquema = /^[a-z0-9+.-]+:\/\//i.test(raw) ? raw : (() => {
+    const parts = raw.split(':');
+    if (parts.length === 2) return `http://${parts[0]}:${parts[1]}`;
+    if (parts.length === 4) {
+      const [host, port, user, pass] = parts;
+      return `http://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}`;
+    }
+    // Um pedaço só pode ser um host sem porta, que é uma rota utilizável.
+    if (parts.length === 1) return `http://${raw}`;
+    return '';
+  })();
+
+  if (!comEsquema) return '';
+
+  // A última palavra é do mesmo parser que vai consumir isto depois. Validar
+  // com outra regra significaria aprovar aqui o que falha adiante, que é
+  // precisamente o defeito que esta função existe para não ter.
+  try {
+    const url = new URL(comEsquema);
+    if (!url.hostname) return '';
+    return comEsquema;
+  } catch {
+    return '';
   }
-  return 'http://' + raw;
 }
 
 /**
@@ -127,6 +160,7 @@ class LevelingCredentialStore {
 
     const accounts = Array.from({ length: this.maxAccounts }, emptyAccount);
     const file = this.getFilePath();
+    let proxyPool = new LevelingProxyPool();
 
     try {
       if (fs.existsSync(file)) {
@@ -153,21 +187,58 @@ class LevelingCredentialStore {
               username: acc.username || '',
               password: acc.password || '',
               token: acc.token || '',
-              proxy: acc.proxy || ''
+              proxy: acc.proxy || '',
+              email: acc.email || '',
+              // Arquivo anterior ao assistente não tem o campo: a conta já
+              // existe, senão não teria sido gravada à mão.
+              signup: acc.signup === true,
+              classId: acc.classId || ''
             };
           });
+        }
+        // Carrega o pool de proxies do arquivo, ou migra proxies legados se houver.
+        if (parsed.proxyPool) {
+          proxyPool = LevelingProxyPool.fromJSON(parsed.proxyPool);
+        } else {
+          // Migração: se há proxies legados no formato antigo, importa para o pool.
+          this._migrateProxiesToPool(accounts, proxyPool);
         }
       }
     } catch {
       // Arquivo corrompido não deve impedir o launcher de abrir.
     }
 
-    this.cache = { accounts, sniper: emptyAccount() };
+    this.cache = { accounts, sniper: emptyAccount(), proxyPool };
     try {
       const parsed = JSON.parse(fs.readFileSync(file, this.canEncrypt() ? 'utf8' : 'utf8'));
       if (parsed.sniper) this.cache.sniper = { ...emptyAccount(), ...parsed.sniper };
     } catch {}
     return this.cache;
+  }
+
+  /** Migra proxies antigos (um por conta) para o novo pool (compartilhado). */
+  _migrateProxiesToPool(accounts, pool) {
+    const proxies = accounts
+      .map((acc, i) => acc.proxy)
+      .filter((p, i, arr) => p && arr.indexOf(p) === i); // Deduplica
+    
+    if (proxies.length > 0) {
+      pool.importText(proxies.join('\n'));
+      // Grava status ok por padrão (para não bloquear), virá testado depois.
+      for (const proxy of pool.proxies) {
+        proxy.status = 'pending';
+      }
+      // Atribui as contas aos proxies do pool.
+      for (let i = 0; i < accounts.length; i++) {
+        if (accounts[i].proxy) {
+          const proxyUrl = accounts[i].proxy;
+          const proxyEntry = pool.proxies.find(p => p.url === proxyUrl);
+          if (proxyEntry) {
+            pool.assignments.set(i, proxyEntry.id);
+          }
+        }
+      }
+    }
   }
 
   save(data) {
@@ -177,18 +248,26 @@ class LevelingCredentialStore {
         username: acc.username || '',
         password: acc.password || '',
         token: acc.token || '',
-        proxy: acc.proxy || ''
+        proxy: acc.proxy || '',
+        email: acc.email || '',
+        signup: acc.signup === true,
+        classId: acc.classId || ''
       };
     });
 
-    const json = JSON.stringify({ accounts, sniper: (data && data.sniper) || emptyAccount() });
+    const proxyPool = (data && data.proxyPool) || new LevelingProxyPool();
+    const json = JSON.stringify({
+      accounts,
+      sniper: (data && data.sniper) || emptyAccount(),
+      proxyPool: proxyPool.toJSON()
+    });
     const file = this.getFilePath();
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, this.canEncrypt()
         ? this.safeStorage.encryptString(json)
         : Buffer.from(json, 'utf-8'));
-       this.cache = { accounts, sniper: (data && data.sniper) || emptyAccount() };
+      this.cache = { accounts, sniper: (data && data.sniper) || emptyAccount(), proxyPool };
       return true;
     } catch {
       return false;
@@ -225,8 +304,49 @@ class LevelingCredentialStore {
       password: password || '',
       token: '',
       // O proxy descreve a rota, não a conta: trocar a senha não a muda.
-      proxy: acc.proxy || ''
+      proxy: acc.proxy || '',
+      email: acc.email || '',
+      // Gravar credencial à mão é o caso de uma conta que já existe; só o
+      // assistente de cadastro marca `signup`, e ele usa `setSignup`.
+      signup: false
     };
+    return this.save(data);
+  }
+
+  /**
+   * Grava uma credencial que o assistente de cadastro acabou de inventar, para
+   * uma conta que ainda **não existe** no servidor.
+   *
+   * Separado de `setCredentials` de propósito: lá a conta existe e a marca tem
+   * de cair; aqui ela tem de subir. Um parâmetro a mais no mesmo método faria
+   * o caso comum carregar a decisão do caso raro.
+   */
+  setPendingSignup(index, { username, password, email, classId }) {
+    if (index < 0 || index >= this.maxAccounts) return false;
+    const data = this.load();
+    const acc = data.accounts[index] || emptyAccount();
+    data.accounts[index] = {
+      username: username || '',
+      password: password || '',
+      token: '',
+      proxy: acc.proxy || '',
+      email: email || '',
+      signup: true,
+      classId: classId || ''
+    };
+    return this.save(data);
+  }
+
+  /**
+   * A conta saiu do limbo: o cadastro passou pelo captcha e ela existe.
+   * Chamado quando a WebView captura um login bem-sucedido com esse nome.
+   */
+  clearSignupFlag(index) {
+    if (index < 0 || index >= this.maxAccounts) return false;
+    const data = this.load();
+    const acc = data.accounts[index];
+    if (!acc || !acc.signup) return false;
+    data.accounts[index] = { ...acc, signup: false };
     return this.save(data);
   }
 
@@ -298,18 +418,32 @@ class LevelingCredentialStore {
 
   /** Visão sem segredos, segura para mandar ao renderizador. */
   getPublicStatus() {
-    const { accounts } = this.load();
+    const { accounts, proxyPool } = this.load();
+    const pool = proxyPool || new LevelingProxyPool();
     return {
       encrypted: this.canEncrypt(),
-      accounts: accounts.map(acc => ({
+      accounts: accounts.map((acc, i) => ({
         username: acc.username,
         hasPassword: !!acc.password,
         hasToken: !!acc.token,
         proxy: describeProxy(acc.proxy),
+        /*
+         * A rota pela qual esta conta sai, do pool. Vai para a tela ao lado do
+         * nome da conta: saber que a "Conta 3 desjunior" sai por tal IP é o que
+         * permite notar duas contas no mesmo endereço antes do servidor
+         * reclamar.
+         */
+        route: pool.describeRoute(i),
+        // A conta pode abrir? Só as duas primeiras saem pelo IP da máquina; as
+        // outras exigem um proxy que passou no teste.
+        canOpen: pool.canOpen(i),
         // Rota com usuário e sem senha: o proxy recusa a conexão antes de
         // qualquer login, e a falha chega como erro de WebSocket, sem código
         // que a explique. A tela avisa em vez de deixar o usuário procurar.
-        proxyIncomplete: proxyMissingPassword(acc.proxy)
+        proxyIncomplete: proxyMissingPassword(acc.proxy),
+        // A conta ainda não existe no servidor: o assistente reservou o nome,
+        // mas o cadastro só termina quando o captcha for resolvido na aba.
+        pendingSignup: acc.signup === true
       })),
       sniper: { username: this.getSniper().username, hasPassword: !!this.getSniper().password, proxy: describeProxy(this.getSniper().proxy) }
     };
@@ -326,5 +460,6 @@ module.exports = {
   describeProxy,
   proxyMissingPassword,
   isMaskedProxy,
-  PROXY_SECRET_MASK
+  PROXY_SECRET_MASK,
+  LevelingProxyPool
 };

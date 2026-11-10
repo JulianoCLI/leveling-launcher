@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'">
+  <title>Outros · Leveling Idle 2D</title>
+  <link rel="stylesheet" href="src/ui/shell.css">
+  <link rel="stylesheet" href="src/ui/leveling.css">
+</head>
+<body class="lv-auto-standalone">
+  <main class="lv-auto" id="othersApp" role="region" aria-labelledby="othersTitle">
+    <div class="lv-head"><h2 id="othersTitle">🧩 Outros</h2></div>
+    <p class="hint">Automatiza diárias prontas, usa o comando real <b>Montar melhor time</b> e recolhe o correio. Cada rodada registra horário, conta, resultado e erro.</p>
+    <div class="lv-warn">⚠️ O melhor time altera a equipe de sombras. Diárias e correio resgatam apenas o que o servidor confirmar como disponível.</div>
+    <div id="othersControls" class="lv-auto-controls"></div>
+    <h3 class="xp-section">Contas</h3>
+    <div id="othersAccounts" class="lv-auto-accounts"></div>
+    <h3 class="xp-section">Log</h3>
+    <div id="othersLog" class="lv-auto-log"></div>
+    <div class="lv-status-bar" id="othersStatus" role="status" aria-live="polite"></div>
+    <div class="modal-actions">
+      <button type="button" id="othersPoll" class="primary">Rodar agora</button>
+      <button type="button" id="othersClear">Limpar log</button>
+    </div>
+  </main>
+  <script src="src/ui/others-window.js"></script>
+</body>
+</html>

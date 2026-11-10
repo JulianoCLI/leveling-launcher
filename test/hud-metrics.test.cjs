@@ -59,7 +59,7 @@ test('Leveling declara as métricas da caçada, não as do PokeIdle', () => {
     assert.ok(!keys.includes(removida), `${removida} saiu do painel`);
   }
   assert.deepEqual(keys, [
-    'gold', 'diamonds', 'levelEta', 'time', 'kills', 'xph', 'goldph', 'bag',
+    'kills', 'time', 'xph', 'levelEta', 'gold', 'diamonds', 'bag',
     'statPoints', 'talentPoints', 'party'
   ]);
 
@@ -117,11 +117,61 @@ test('sem mapa conhecido o bloco de local não aparece', () => {
 test('pontos de talento separam as árvores em vez de somá-las', () => {
   const state = levelingState();
   state.points = { stat: 12, talent: 3, shadowTalent: 2, ambitionTalent: 1 };
-  const byKey = Object.fromEntries(metrics.resolve(state).columns.map(c => [c.key, c.value]));
+  const byKey = Object.fromEntries(metrics.resolve(state).columns.map(c => [c.key, c]));
 
-  assert.equal(byKey.statPoints, '12');
-  assert.equal(byKey.talentPoints, '3 (+2 sombra, 1 ambição)',
+  assert.equal(byKey.statPoints.value, '12');
+  assert.equal(byKey.talentPoints.value, '3');
+  assert.equal(byKey.talentPoints.hint, '2 sombra · 1 ambição',
     'somar esconderia em qual árvore os pontos podem ser gastos');
+  assert.equal(byKey.statPoints.tone, 'warn', 'ponto parado é poder não usado');
+});
+
+test('abates mostram o ritmo, não só o total', () => {
+  const kills = metrics.resolve(levelingState()).columns.find(c => c.key === 'kills');
+  assert.equal(kills.value, '248');
+  assert.equal(kills.hint, '248/h', 'o total sem o ritmo não compara um painel com outro');
+});
+
+test('mochila enchendo muda de tom antes de encher', () => {
+  const state = levelingState();
+  const tomDe = () => metrics.resolve(state).columns.find(c => c.key === 'bag').tone;
+
+  assert.equal(tomDe(), '', '42 de 120 não é assunto');
+  state.inventory = { usedSlots: 100, capacity: 120 };
+  assert.equal(tomDe(), 'warn');
+  state.inventory = { usedSlots: 119, capacity: 120 };
+  assert.equal(tomDe(), 'bad', 'com a bolsa cheia o drop é perdido');
+});
+
+test('colunas vêm agrupadas por assunto, sem bloco vazio', () => {
+  const state = levelingState();
+  // Sem capacidade a mochila some, e com ela sairia o único item do bloco.
+  state.inventory = { usedSlots: 0, capacity: 0 };
+  state.potions = {};
+
+  const groups = metrics.resolve(state).groups;
+  assert.deepEqual(groups.map(g => g.id), ['rendimento', 'carteira', 'conta'],
+    'um título sozinho sobre espaço em branco parece painel quebrado');
+  assert.deepEqual(
+    groups.find(g => g.id === 'rendimento').columns.map(c => c.key),
+    ['kills', 'time', 'xph', 'levelEta']
+  );
+});
+
+test('jogo sem blocos declarados vira um bloco só, sem título', () => {
+  const groups = metrics.resolve({ balls: 3 }).groups;
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].title, '');
+  assert.deepEqual(groups[0].columns.map(c => c.key), ['time', 'balls', 'xph', 'shinies']);
+});
+
+test('ouro da caçada mostra o que foi gasto nela', () => {
+  const state = levelingState();
+  state.hunt.gold = 2000000;
+  state.hunt.goldSpent = 1800000;
+  const col = metrics.resolve(state).columns.find(c => c.key === 'huntGold');
+  assert.equal(col.value, '2M');
+  assert.equal(col.hint, '−1.8M gasto', 'sem o gasto, "ganhei 2M" é meia verdade');
 });
 
 test('grupo mostra a lotação, e sozinho não vira "0 / 0"', () => {
@@ -140,6 +190,72 @@ test('coluna que devolve null é omitida', () => {
   state.inventory = { usedSlots: 0, capacity: 0 };
   const keys = metrics.resolve(state).columns.map(c => c.key);
   assert.ok(!keys.includes('bag'), 'sem capacidade conhecida, a mochila não aparece');
+});
+
+const lootState = () => {
+  const state = levelingState();
+  const t = Date.UTC(2024, 0, 1, 12, 0, 0);
+  state.loot = {
+    session: {
+      'essencia-extracao': {
+        defId: 'essencia-extracao', name: 'Essência', order: 1,
+        color: '#aaa', qty: 999, bag: 4200, lastAtMs: t + 500
+      },
+      'chave-portal-vermelho': {
+        defId: 'chave-portal-vermelho', name: 'Chave do Portal', order: 3,
+        color: '#ffd27a', key: true, qty: 2, bag: 2, lastAtMs: t
+      },
+      'po-arcano': {
+        defId: 'po-arcano', name: 'Pó Arcano', order: 2,
+        color: '#8cf', qty: 51, bag: 51, lastAtMs: t + 900
+      }
+    },
+    log: [
+      { defId: 'chave-portal-vermelho', name: 'Chave do Portal', color: '#ffd27a', key: true, qty: 1, bag: 2, reason: 'baú', atMs: t },
+      { defId: 'essencia-extracao', name: 'Essência', color: '#aaa', qty: 12, bag: 4200, reason: 'drop', atMs: t - 4000 }
+    ],
+    events: 1052,
+    startedAtMs: t - 60000
+  };
+  return state;
+};
+
+test('drops aparecem com chave na frente, e não por quantidade', () => {
+  const loot = metrics.resolve(lootState()).loot;
+
+  assert.equal(loot.title, 'Drops da caçada');
+  assert.deepEqual(loot.items.map(i => i.defId),
+    ['chave-portal-vermelho', 'po-arcano', 'essencia-extracao'],
+    'ordenar por quantidade poria mil essências na frente da chave');
+  assert.equal(loot.items[0].qty, '2');
+  assert.equal(loot.items[0].key, true);
+});
+
+test('saldo da bolsa só aparece quando difere do que caiu', () => {
+  const loot = metrics.resolve(lootState()).loot;
+  const porId = Object.fromEntries(loot.items.map(i => [i.defId, i]));
+
+  assert.equal(porId['essencia-extracao'].bag, '4.200 na bolsa');
+  assert.equal(porId['chave-portal-vermelho'].bag, '',
+    'repetir "2 · 2 na bolsa" gasta a linha sem dizer nada');
+});
+
+test('o registro traz horário com segundos e o motivo quando não é drop', () => {
+  const log = metrics.resolve(lootState()).loot.log;
+
+  assert.match(log[0].time, /^\d{2}:\d{2}:\d{2}$/,
+    'sem segundos, cinco linhas no mesmo minuto perdem a ordem');
+  assert.equal(log[0].reason, 'baú');
+  assert.equal(log[1].reason, '', 'dizer "drop" num log de drops é ruído');
+  assert.equal(log[1].qty, '12');
+});
+
+test('sem nada caído o bloco de drops não aparece', () => {
+  assert.equal(metrics.resolve(levelingState()).loot, null);
+
+  const vazio = levelingState();
+  vazio.loot = { session: {}, log: [] };
+  assert.equal(metrics.resolve(vazio).loot, null);
 });
 
 test('morte vira alerta de perigo, sem sugerir ação', () => {
@@ -194,12 +310,32 @@ test('adapter que lança não derruba o painel', () => {
       { key: 'ruim', label: 'Ruim', value: () => { throw new Error('boom'); } },
       { key: 'bom', label: 'Bom', value: () => 'ok' }
     ],
-    banner: () => { throw new Error('boom'); }
+    banner: () => { throw new Error('boom'); },
+    loot: () => { throw new Error('boom'); }
   });
 
   const resolved = metrics.resolve({ game: 'quebrado' });
   assert.deepEqual(resolved.columns.map(c => c.key), ['bom']);
   assert.equal(resolved.banner, null);
+  assert.equal(resolved.loot, null);
+});
+
+test('enfeite que quebra não leva junto o número', () => {
+  metrics.register({
+    id: 'enfeite-ruim',
+    metrics: [{
+      key: 'n',
+      label: 'N',
+      value: () => '42',
+      hint: () => { throw new Error('boom'); },
+      tone: () => { throw new Error('boom'); }
+    }]
+  });
+
+  const col = metrics.resolve({ game: 'enfeite-ruim' }).columns[0];
+  assert.equal(col.value, '42', 'o número é a razão da coluna existir');
+  assert.equal(col.hint, '');
+  assert.equal(col.tone, '');
 });
 
 test('jogo desconhecido não some com o painel', () => {

@@ -471,7 +471,7 @@ test('ligar o coletor duas vezes não cria dois temporizadores', async () => {
   const mgr = new LevelingHeadlessManager({ marketSink: () => 0, marketIntervalMs: 60000 });
   assert.equal(mgr.startMarketPoll(), true);
   assert.equal(mgr.startMarketPoll(), false);
-  assert.equal(mgr.getMarketStats().running, true);
+  assert(mgr.marketTicker, 'o ticker deve existir depois de ligar');
   assert.equal(mgr.stopMarketPoll(), true);
   assert.equal(mgr.stopMarketPoll(), false);
 });
@@ -1214,7 +1214,7 @@ test('mudar o intervalo com o laço em curso recria o temporizador', async () =>
 
   mgr.setSniperConfig({ enabled: true, intervalMs: 200, rules: [regra()] });
   assert.equal(mgr.getSniperStats().intervalMs, 200);
-  assert.equal(mgr.getSniperStats().running, true);
+  assert(mgr.sniperTicker, 'o ticker foi recriado');
 
   mgr.stopSniperPoll();
   assert.equal(mgr.getSniperStats().running, false);

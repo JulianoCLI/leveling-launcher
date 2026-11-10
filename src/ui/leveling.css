@@ -194,6 +194,22 @@
   margin-top: 6px;
 }
 
+/* A rota é texto, não campo: ela é decidida no pool, onde se vê quantas vagas
+   sobraram. Parecer um input convidaria a editar o que não se edita aqui. */
+#levelingModal .lv-route {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 6px 2px;
+  font-size: 12px;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--color-text-secondary);
+}
+
+#levelingModal .lv-route.is-warn {
+  color: var(--color-warning, #d9a441);
+}
+
 #levelingModal .lv-fields input {
   background: var(--color-bg-elevated);
   color: var(--color-text-primary);
@@ -2337,6 +2353,55 @@ body.lv-auto-standalone {
   flex: 0 0 auto;
 }
 
+.lv-auto .lv-auto-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.lv-auto .lv-auto-controls input[type="number"] {
+  width: 92px;
+  background: var(--color-bg-input, rgba(0, 0, 0, .25));
+  border: 1px solid var(--border-strong);
+  color: var(--color-text-primary);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+#othersAccounts .lv-account {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, .05));
+  font-size: 12px;
+}
+
+#othersAccounts .lv-account span:nth-child(2) {
+  color: var(--color-text-secondary);
+}
+
+.lv-auto-log-row {
+  display: grid;
+  grid-template-columns: auto auto auto auto 1fr;
+  gap: 9px;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, .05));
+  font-size: 12px;
+}
+
+.lv-auto-log-row small {
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .lv-auto .xp-master {
   display: flex;
   align-items: center;
@@ -2966,6 +3031,116 @@ body.lv-cambio-standalone {
   }
 }
 
+/* --------------------------------------------------------- janela auto-anunciar
+   O auto-anunciar tem mais controles que as outras automações e ainda possui o
+   picker de itens bloqueados. Sem limites próprios, essa combinação empurra as
+   contas, o relatório e os botões para fora da janela. */
+
+.lv-autosell-standalone .lv-auto {
+  min-height: 0;
+  padding: 14px 18px 10px;
+  overflow: hidden;
+}
+
+.lv-autosell-standalone .lv-auto>.hint,
+.lv-autosell-standalone .lv-auto>.lv-warn {
+  flex: 0 0 auto;
+}
+
+.lv-autosell-standalone .lv-auto-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  gap: 8px 18px;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 30vh;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.lv-autosell-standalone .lv-auto-controls .xp-master {
+  grid-column: 1 / -1;
+}
+
+.lv-autosell-standalone .lv-auto-controls .xp-interval {
+  min-width: 0;
+  margin-left: 0;
+  flex-wrap: wrap;
+}
+
+.lv-autosell-standalone .lv-auto-controls .xp-interval span {
+  min-width: 0;
+}
+
+.lv-autosell-standalone .lv-auto-controls input,
+.lv-autosell-standalone .lv-auto-controls select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.lv-autosell-standalone .lv-auto-blocked {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 20vh;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.lv-autosell-standalone .lv-auto-accounts {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 22vh;
+}
+
+.lv-autosell-standalone .lv-auto-log {
+  flex: 1 1 0;
+  min-height: 48px;
+}
+
+.lv-autosell-standalone .xp-line {
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.lv-autosell-standalone .xp-line-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lv-autosell-standalone .modal-actions {
+  position: relative;
+  z-index: 2;
+  flex-wrap: wrap;
+  padding: 10px 0 2px;
+  margin-top: 8px;
+  background: linear-gradient(to bottom, transparent, var(--color-bg-elevated) 12px);
+}
+
+.lv-autosell-standalone .modal-actions button {
+  min-height: 34px;
+}
+
+@media (max-width: 700px) {
+  .lv-autosell-standalone .lv-auto-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .lv-autosell-standalone .lv-auto-controls .xp-master {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .lv-autosell-standalone .lv-auto {
+    padding-inline: 12px;
+  }
+
+  .lv-autosell-standalone .modal-actions button {
+    flex: 1 1 180px;
+  }
+}
+
 @media (max-width: 760px) {
 
   /* Com a tela estreita o armazém sai primeiro: é informação de folga, não de
@@ -3060,4 +3235,288 @@ body.lv-cambio-standalone {
 
 .lv-auto .xp-line-text {
   white-space: normal;
+}
+
+/* ------------------------------------------------- proxies.html e cadastro.html
+
+   As duas janelas novas usam o mesmo esqueleto: cabeçalho, cartões empilhados e
+   um rodapé fixo. Compartilham estilo porque fazem o mesmo tipo de trabalho —
+   preparar algo antes de ligar os monitores — e porque uma delas leva o usuário
+   à outra: sem vaga de proxy não há conta nova que funcione. Parecerem a mesma
+   ferramenta é o ponto, não economia de CSS.
+
+   `body.standalone` rola na vertical, ao contrário do shell e do mercado: aqui o
+   conteúdo cresce com o número de proxies ou de contas na fila, e cortar a lista
+   no fim da tela esconderia justamente o que se veio conferir. */
+body.standalone {
+  margin: 0;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+}
+
+#proxyPage,
+#signupPage {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 20px 22px 76px;
+}
+
+#proxyHead h1,
+#signupHead h1 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.proxyLead,
+.signupLead {
+  margin: 0 0 4px;
+  color: var(--color-text-secondary);
+}
+
+.proxyCard,
+.signupCard {
+  margin-top: 18px;
+  padding: 14px 16px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.proxyCard h2,
+.signupCard h2 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-accent);
+}
+
+.proxyField,
+.signupField {
+  display: block;
+  margin-bottom: 10px;
+}
+
+.proxyField > span,
+.signupField > span {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--color-text-secondary);
+}
+
+.signupField small {
+  display: block;
+  margin-top: 4px;
+  color: var(--color-text-secondary);
+}
+
+#proxyInput,
+.signupField input,
+.signupField select {
+  width: 100%;
+  padding: 7px 9px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  font: inherit;
+}
+
+#proxyInput {
+  font-family: ui-monospace, Consolas, monospace;
+  resize: vertical;
+}
+
+#proxyInput:focus,
+.signupField input:focus,
+.signupField select:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+/* Duas colunas quando cabe. Os campos do plano são curtos e independentes, e
+   uma coluna só deixaria o formulário mais alto que a janela sem necessidade. */
+.signupGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0 18px;
+}
+
+.proxyActions,
+#proxyFoot,
+#signupFoot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+#proxyFoot,
+#signupFoot {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 12px 22px;
+  background: var(--color-bg-elevated);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.proxyActions {
+  margin-top: 10px;
+}
+
+#proxyPage button,
+#signupPage button {
+  padding: 7px 13px;
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  font: inherit;
+  cursor: pointer;
+}
+
+#proxyPage button:hover:not(:disabled),
+#signupPage button:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+}
+
+#proxyPage button:disabled,
+#signupPage button:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
+#proxyPage button.primary,
+#signupPage button.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #06281d;
+  font-weight: 600;
+}
+
+#proxyPage button.danger:hover:not(:disabled),
+#signupPage button.danger:hover:not(:disabled) {
+  background: rgba(248, 113, 113, .16);
+  border-color: #f87171;
+}
+
+.proxyStatus,
+#signupStatus,
+.signupSummary {
+  margin: 10px 0 0;
+  color: var(--color-text-secondary);
+}
+
+.proxyStatus.err,
+#signupStatus.err {
+  color: #f87171;
+}
+
+/* Uma linha por proxy ou por conta. Grade, e não tabela, porque as colunas têm
+   larguras bem diferentes e a última encolhe primeiro quando a janela aperta. */
+.proxyRow,
+.signupRow {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.proxyRow {
+  grid-template-columns: minmax(0, 1fr) 96px 120px 88px auto auto;
+}
+
+.signupRow {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 150px;
+}
+
+.proxyRow:first-child,
+.signupRow:first-child {
+  border-top: 0;
+}
+
+.proxyRowLabel,
+.proxyRowIp,
+.signupRowName,
+.signupRowMail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.signupRowName {
+  font-weight: 600;
+}
+
+.proxyRowSlots,
+.signupRowState,
+.proxyRowIp,
+.signupRowMail {
+  color: var(--color-text-secondary);
+}
+
+.proxyRowState {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.proxyRowState.is-ok {
+  color: var(--color-accent);
+}
+
+.proxyRowState.is-fail {
+  color: #f87171;
+}
+
+/* Âmbar, não vermelho: um IP repetido não está quebrado, só não acrescenta
+   vaga nenhuma — o servidor o vê como o mesmo IP do outro proxy. */
+.proxyRowState.is-duplicate {
+  color: #fbbf24;
+}
+
+.proxyRowErr {
+  grid-column: 1 / -1;
+  color: #f87171;
+}
+
+.proxyRowBtn {
+  padding: 4px 9px !important;
+  font-size: 11px;
+}
+
+.proxyEmpty,
+.signupEmpty {
+  margin: 0;
+  padding: 14px 0;
+  color: var(--color-text-secondary);
+}
+
+.signupProblems {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(248, 113, 113, .08);
+  border: 1px solid rgba(248, 113, 113, .3);
+  border-radius: 6px;
+}
+
+.signupProblem {
+  margin: 0 0 4px;
+}
+
+.signupProblem:last-child {
+  margin-bottom: 0;
+}
+
+.signupProblem strong {
+  font-family: ui-monospace, Consolas, monospace;
 }

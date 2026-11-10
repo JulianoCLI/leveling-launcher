@@ -332,6 +332,68 @@ body {
   min-width: 0;
 }
 
+/*
+ * A rota de saída da conta, ao lado do nome. `flex: 0` e o nome com `flex: 1`
+ * porque a rota tem largura previsível (um IP) e o nome não: encolher o nome
+ * primeiro mantém o IP legível, que é o dado que se vem checar aqui.
+ */
+.panel-route {
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  padding: 1px 6px;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* Saindo pelo IP da máquina: legítimo nas duas primeiras contas, e ainda assim
+   digno de nota, porque é o endereço que não é anônimo. */
+.panel-route.is-local {
+  border-style: dashed;
+}
+
+.panel-route.is-warn {
+  color: var(--color-danger, #e0574b);
+  border-color: currentColor;
+}
+
+/* Painel de conta sem rota: ocupa o lugar da WebView que não foi criada. */
+.panel-blocked {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  text-align: center;
+  background: var(--color-bg-base);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.panel-blocked strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.panel-blocked p {
+  margin: 0;
+  max-width: 340px;
+}
+
+.panel-blocked-hint {
+  opacity: 0.75;
+  font-size: 11px;
+}
+
 .panel-head button {
   background: var(--color-bg-elevated);
   border: 1px solid var(--border-subtle);
@@ -540,6 +602,47 @@ body {
   white-space: nowrap;
 }
 
+/* ------------------------------------------------------------------ blocos */
+
+/*
+ * A grade era uma fileira única de treze células iguais, em que "Ouro" tinha o
+ * mesmo peso de "Pontos de talento". Agora os números vêm agrupados por
+ * assunto, com um título fino por bloco: é o que deixa bater o olho e achar a
+ * resposta sem ler as treze.
+ */
+.lh-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lh-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lh-group-title {
+  margin: 0;
+  font-size: 9.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .7px;
+  color: var(--color-text-secondary);
+  opacity: .75;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* O filete depois do título separa os blocos sem gastar uma borda inteira. */
+.lh-group-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
 .lh-grid {
   display: grid;
   /* 128px cabe "Pontos de talento" e valores como "1.234 / 5.678" sem cortar. */
@@ -578,6 +681,191 @@ body {
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
   overflow-wrap: anywhere;
+}
+
+/*
+ * A segunda linha da célula: o ritmo ao lado do total, o gasto ao lado do
+ * ganho. Deliberadamente pequena e apagada — ela qualifica o número de cima,
+ * não compete com ele.
+ */
+.lh-hint[hidden] {
+  display: none;
+}
+
+.lh-hint {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  opacity: .85;
+}
+
+/*
+ * Tom da célula: só para o que pede ação (bolsa enchendo, poção acabando,
+ * ponto parado). Colorir por enfeite gastaria o sinal — se metade do painel
+ * está amarela, nada está.
+ */
+.lh-cell[data-tone="warn"] {
+  border-color: rgba(230, 170, 50, .34);
+  background: rgba(230, 170, 50, .07);
+}
+
+.lh-cell[data-tone="warn"] .lh-value {
+  color: #ffd27a;
+}
+
+.lh-cell[data-tone="bad"] {
+  border-color: rgba(224, 70, 54, .4);
+  background: rgba(224, 70, 54, .09);
+}
+
+.lh-cell[data-tone="bad"] .lh-value {
+  color: #ff9b89;
+}
+
+.lh-cell[data-tone="good"] .lh-value {
+  color: #7ee8c0;
+}
+
+/* -------------------------------------------------------------------- loot */
+
+.lh-loot[hidden] {
+  display: none;
+}
+
+.lh-loot {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  padding: 8px 9px;
+}
+
+.lh-loot-title {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+
+/* Acumulado da caçada: fichas, para caber muito item em pouca altura. */
+.lh-drops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.lh-drop {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--border-subtle);
+  font-size: 11px;
+  max-width: 100%;
+}
+
+/*
+ * Chave e bilhete ganham contorno próprio. Eles já vêm primeiro na ordem, mas
+ * numa fileira de vinte fichas a posição sozinha não é visível: a cor é o que
+ * faz a chave ser achada sem ler as outras dezenove.
+ */
+.lh-drop.is-key {
+  border-color: rgba(230, 190, 90, .45);
+  background: rgba(230, 190, 90, .12);
+}
+
+.lh-drop-qty {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+
+.lh-drop-name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lh-drop-bag {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lh-drop-bag:empty {
+  display: none;
+}
+
+/* Registro: linha por ganho, com horário. Fonte tabular para as colunas
+ * ficarem alinhadas sem desenhar tabela. */
+.lh-droplog {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 6px;
+}
+
+.lh-droplog-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 7px;
+  align-items: baseline;
+  font-size: 11px;
+  padding: 1px 2px;
+  border-radius: 4px;
+}
+
+.lh-droplog-row.is-key {
+  background: rgba(230, 190, 90, .1);
+}
+
+.lh-droplog-time {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  opacity: .8;
+}
+
+.lh-droplog-qty {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #9fe0b4;
+}
+
+.lh-droplog-name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lh-droplog-bag {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* De onde veio, quando não foi de matar monstro: baú, boss, correio. */
+.lh-droplog-reason {
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .3px;
 }
 
 /* ------------------------------------------------------------------- grupo */

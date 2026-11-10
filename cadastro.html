@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<!--
+  Assistente de cadastro.
+
+  O que esta janela faz, e principalmente o que ela NÃO faz.
+
+  O cadastro do jogo exige um token do Cloudflare Turnstile. Isso foi apurado
+  contra o servidor, não suposto: `tools/signup-rules2-probe.js` mostra que,
+  com nome, senha e email todos válidos, a resposta é `auth.captcha_failed`.
+  O token nasce de um desafio ligado ao domínio do jogo e só existe dentro de
+  um navegador de verdade, com o widget carregado.
+
+  Logo: NÃO existe cadastro em lote automático. Mandar `Register` pelo socket
+  nunca vai passar do captcha, por mais bem montado que esteja o pacote.
+
+  O que dá para automatizar é todo o resto, que é o chato: inventar nomes que
+  passem na regra de 3 a 16 minúsculas, inventar senha com maiúscula, dígito e
+  símbolo, montar o email, e guardar isso em lugar seguro para o monitor usar
+  depois. O cadastro em si continua sendo um clique por conta na aba do jogo —
+  mas com tudo preenchido e só o captcha a resolver.
+
+  Por isso a janela é um preparador de fila, não um robô. Ela mostra o plano,
+  valida contra as regras reais e entrega conta por conta para a WebView.
+-->
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'">
+  <title>Cadastro · Leveling Idle 2D</title>
+  <link rel="stylesheet" href="src/ui/shell.css">
+  <link rel="stylesheet" href="src/ui/leveling.css">
+</head>
+
+<body class="standalone">
+  <div id="signupPage">
+    <header id="signupHead">
+      <h1>Assistente de cadastro</h1>
+      <p class="signupLead">
+        Gera nomes e senhas que passam nas regras do jogo e guarda tudo cifrado.
+        O cadastro é concluído na aba do jogo, porque o captcha exige o navegador.
+      </p>
+    </header>
+
+    <section class="signupCard" aria-labelledby="signupPlanTitle">
+      <h2 id="signupPlanTitle">1. Montar o plano</h2>
+
+      <div class="signupGrid">
+        <label class="signupField">
+          <span>Prefixo do nome</span>
+          <input id="signupPrefix" type="text" value="cacador" maxlength="16" spellcheck="false">
+          <small>3 a 16 caracteres no total, só minúsculas, números, <code>_</code> e <code>-</code>.</small>
+        </label>
+
+        <label class="signupField">
+          <span>Quantidade</span>
+          <input id="signupCount" type="number" min="1" max="64" value="4">
+          <small>Uma vaga de proxy é consumida a cada conta.</small>
+        </label>
+
+        <label class="signupField">
+          <span>Começar em</span>
+          <input id="signupStart" type="number" min="0" value="1">
+          <small>Para continuar uma série já criada.</small>
+        </label>
+
+        <label class="signupField">
+          <span>Email</span>
+          <input id="signupEmail" type="text" value="{user}@gmail.com" spellcheck="false">
+          <small><code>{user}</code> virá o nome da conta. O email é obrigatório e o
+            provedor é filtrado pelo servidor: <code>gmail.com</code> passou na
+            sonda, e domínios de exemplo ou descartáveis são recusados.</small>
+        </label>
+
+        <label class="signupField">
+          <span>Gênero</span>
+          <select id="signupGender">
+            <option value="1">Masculino</option>
+            <option value="2">Feminino</option>
+          </select>
+        </label>
+
+        <label class="signupField">
+          <span>Classe</span>
+          <select id="signupClass"></select>
+          <small>A classe é escolhida depois do cadastro, na própria aba do jogo.</small>
+        </label>
+
+        <label class="signupField">
+          <span>Código de convite</span>
+          <input id="signupReferral" type="text" spellcheck="false" placeholder="opcional">
+        </label>
+      </div>
+
+      <div id="signupPlanSummary" class="signupSummary" role="status"></div>
+      <div id="signupPlanProblems" class="signupProblems" hidden></div>
+    </section>
+
+    <section class="signupCard" aria-labelledby="signupQueueTitle">
+      <h2 id="signupQueueTitle">2. A fila</h2>
+      <p class="signupLead">
+        Cada linha abre na aba do jogo com os campos preenchidos. Você resolve o
+        captcha e confirma; o launcher guarda a credencial quando o login passa.
+      </p>
+      <div id="signupQueue" class="signupQueue"></div>
+    </section>
+
+    <footer id="signupFoot">
+      <button id="signupSave" type="button" class="primary">Guardar plano</button>
+      <button id="signupClose" type="button">Fechar</button>
+      <span id="signupStatus" role="status"></span>
+    </footer>
+  </div>
+
+  <script src="src/ui/signup-window.js"></script>
+</body>
+
+</html>

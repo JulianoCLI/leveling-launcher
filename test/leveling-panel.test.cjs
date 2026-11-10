@@ -143,9 +143,11 @@ test('monta quatro contas e carrega os indicadores salvos', async () => {
 
   assert.equal(root.children.length, 4);
   assert.equal(field(card(0), 'user').value, 'desjunior');
-  assert.match(field(card(0), 'pass').placeholder, /Senha salva/);
+  // A credencial é capturada no login da aba do jogo; o placeholder diz de onde
+  // ela veio, em vez de pedir uma senha que o usuário já digitou lá.
+  assert.match(field(card(0), 'pass').placeholder, /Capturada no login/);
   assert.equal(field(card(1), 'user').value, '');
-  assert.equal(field(card(1), 'pass').placeholder, 'Senha');
+  assert.match(field(card(1), 'pass').placeholder, /faça login na aba/);
 });
 
 test('ativar exige credencial salva', async () => {
@@ -154,7 +156,81 @@ test('ativar exige credencial salva', async () => {
 
   assert.equal(field(card(0), 'toggle').disabled, false, 'conta 0 tem senha salva');
   assert.equal(field(card(1), 'toggle').disabled, true, 'conta 1 não tem senha');
-  assert.match(field(card(1), 'toggle').title, /Salve usuário e senha/);
+  assert.match(field(card(1), 'toggle').title, /login na aba/);
+});
+
+test('conta reservada pelo assistente não liga o monitor', async () => {
+  // O cadastro exige o captcha do Turnstile, que só existe na WebView. Até o
+  // usuário concluí-lo, a conta não existe no servidor: ligar o monitor daria
+  // erro de credencial, que não diz o que fazer.
+  const api = makeApi({
+    levelingGetCreds: async () => ({
+      encrypted: true,
+      accounts: [
+        { username: 'cacador1', hasPassword: true, hasToken: false, proxy: '', pendingSignup: true },
+        { username: '', hasPassword: false, hasToken: false, proxy: '' },
+        { username: '', hasPassword: false, hasToken: false, proxy: '' },
+        { username: '', hasPassword: false, hasToken: false, proxy: '' }
+      ]
+    })
+  });
+  const { card } = load(api);
+  await tick();
+
+  assert.equal(field(card(0), 'toggle').disabled, true, 'a conta ainda não existe');
+  assert.match(field(card(0), 'toggle').title, /cadastro na aba/);
+  assert.match(field(card(0), 'pass').placeholder, /Cadastre na aba/);
+});
+
+test('a rota é mostrada, não editada: o botão leva ao pool', async () => {
+  // O proxy virou recurso compartilhado, com duas contas por proxy. Um campo
+  // por conta deixava colar o mesmo proxy em quatro e descobrir o limite só
+  // quando o servidor respondia `session.multi_account_ip`.
+  let abriu = 0;
+  const api = makeApi({ proxiesWindow: async () => { abriu++; } });
+  const { card } = load(api);
+  await tick();
+
+  // Conta 2: sem proxy, mas dentro das duas que podem usar o IP da máquina.
+  assert.equal(field(card(1), 'proxy').textContent, 'meu IP · permitido nas 2 primeiras contas');
+
+  await field(card(1), 'saveProxy').onclick();
+  assert.equal(abriu, 1, 'o botão abre a janela do pool');
+});
+
+test('da terceira conta em diante, sem proxy a conta não abre', async () => {
+  // A regra que o usuário pediu: só as duas primeiras saem pelo IP da máquina.
+  // Sem isso, abrir a conta 3 custava um `session.multi_account_ip` — ou, pior,
+  // duas contas saindo do mesmo endereço sem ninguém notar.
+  const api = makeApi({
+    levelingGetCreds: async () => ({
+      encrypted: true,
+      accounts: [
+        { username: 'a', hasPassword: true, route: { kind: 'local', label: 'meu IP', ok: true }, canOpen: { ok: true, motivo: '' } },
+        { username: 'b', hasPassword: true, route: { kind: 'local', label: 'meu IP', ok: true }, canOpen: { ok: true, motivo: '' } },
+        {
+          username: 'c', hasPassword: true,
+          route: { kind: 'none', label: 'sem rota', ok: false },
+          canOpen: { ok: false, motivo: 'sem proxy funcional no pool' }
+        },
+        {
+          username: 'd', hasPassword: true,
+          route: { kind: 'proxy', label: 'http://203.0.113.7:8080', ip: '203.0.113.7', status: 'ok', ok: true },
+          canOpen: { ok: true, motivo: '' }
+        }
+      ]
+    })
+  });
+  const { card } = load(api);
+  await tick();
+
+  assert.equal(field(card(2), 'proxy').textContent, 'sem proxy · esta conta não abre');
+  assert.equal(field(card(2), 'toggle').disabled, true, 'o monitor não liga sem rota');
+  assert.match(field(card(2), 'toggle').title, /Sem rota de saída/);
+
+  // A conta com proxy aprovado mostra o IP, que é o que o servidor vê.
+  assert.equal(field(card(3), 'proxy').textContent, '203.0.113.7 · http://203.0.113.7:8080');
+  assert.equal(field(card(3), 'toggle').disabled, false, 'com rota, o monitor liga');
 });
 
 test('salvar envia usuário e senha e limpa o campo', async () => {

@@ -12,6 +12,13 @@
  *   - `banner(state)`: linha de alerta opcional (morte, portal vermelho...).
  *
  * `value` devolve a string já formatada, ou `null` para esconder a coluna.
+ *
+ * Uma coluna pode declarar:
+ *   - `group`: em qual bloco ela aparece (ver `GROUPS`);
+ *   - `hint(state)`: segunda linha, pequena, abaixo do número — o contexto que
+ *     transforma "1.073" em "1.073 · 4,3k/h";
+ *   - `tone(state)`: `'good'`, `'warn'` ou `'bad'`, para o valor mudar de cor
+ *     quando ele pede atenção.
  */
 
 (() => {
@@ -61,6 +68,28 @@
       .replace(/\b\p{Ll}/gu, c => c.toUpperCase());
   }
 
+  /**
+   * Horário de parede, `14:32:07`.
+   *
+   * Segundos incluídos de propósito: numa caçada boa cinco coisas caem dentro
+   * do mesmo minuto, e `14:32` em cinco linhas seguidas perde a ordem que o
+   * registro existe para mostrar.
+   */
+  function clock(ms) {
+    const t = +ms || 0;
+    if (!t) return '';
+    const d = new Date(t);
+    return [d.getHours(), d.getMinutes(), d.getSeconds()]
+      .map(n => String(n).padStart(2, '0')).join(':');
+  }
+
+  /** `12.345` → `12,3k`, para caber numa linha de dica sem virar coluna. */
+  function rate(n) {
+    n = Math.round(+n || 0);
+    if (!n) return null;
+    return compact(n) + '/h';
+  }
+
   /** PokeIdle: reproduz exatamente as quatro colunas que o HUD já mostrava. */
   const pokeidle = {
     id: 'pokeidle',
@@ -88,21 +117,60 @@
   };
 
   /**
+   * Os blocos do painel, em ordem de leitura.
+   *
+   * A grade antiga era uma fileira única de treze células iguais, e nela
+   * "Ouro" tinha o mesmo peso visual que "Pontos de talento". Com quatro
+   * painéis na tela isso não se lê de relance: tudo parece igualmente
+   * importante, então nada se destaca.
+   *
+   * A ordem aqui é a das perguntas que o usuário faz, nessa sequência:
+   * a caçada está rendendo? quanto juntei? falta alguma coisa? tem algo
+   * pendente na conta?
+   */
+  const GROUPS = [
+    { id: 'rendimento', title: 'Rendimento' },
+    { id: 'carteira', title: 'Carteira' },
+    { id: 'suprimentos', title: 'Suprimentos' },
+    { id: 'conta', title: 'Conta' }
+  ];
+
+  /** Abaixo disto, repor vira assunto; o auto-refill usa limiares próprios. */
+  const POCAO_BAIXA = 200;
+
+  /**
    * Leveling Idle 2D: monitor somente leitura da caçada em andamento.
    * Nada aqui envia comando — a automação é do servidor.
    */
   const levelingIdle = {
     id: 'leveling-idle',
-    /*
-     * Ordem é leitura: primeiro o que o usuário checa de relance (carteira e
-     * quanto falta para subir), depois o rendimento da caçada, depois o que
-     * pede ação dele (mochila, poções, pontos) e por fim o grupo.
-     */
+    groups: GROUPS,
     metrics: [
-      { key: 'gold', label: 'Ouro', value: s => compact(s.gold) },
-      { key: 'diamonds', label: 'Diamantes', value: s => compact(s.diamonds) },
+      {
+        key: 'kills',
+        group: 'rendimento',
+        label: 'Abates',
+        value: s => num((s.hunt || {}).kills),
+        // O total sozinho não diz nada sem saber há quanto tempo. A taxa é o
+        // número que compara um painel com o outro, e era o único dos três
+        // ritmos medidos (`xph`, `goldph`, `killsph`) que não aparecia.
+        hint: s => rate((s.a || {}).killsph)
+      },
+      {
+        key: 'time',
+        group: 'rendimento',
+        label: 'Tempo de caça',
+        value: s => duration((s.a || {}).seconds)
+      },
+      {
+        key: 'xph',
+        group: 'rendimento',
+        label: 'EXP / hora',
+        value: s => compact((s.a || {}).xph)
+      },
       {
         key: 'levelEta',
+        group: 'rendimento',
         label: 'Próximo nível',
         value: s => {
           const xpToNext = +s.xpToNext || 0;
@@ -111,32 +179,82 @@
           // Sem taxa medida ainda, o que dá para dizer é o quanto falta de XP.
           if (!xph) return `${compact(xpToNext)} xp`;
           return eta((xpToNext / xph) * 3600) || 'agora';
+        },
+        hint: s => {
+          const xpToNext = +s.xpToNext || 0;
+          const xph = +(s.a || {}).xph || 0;
+          // Com prazo na linha de cima, a dica mostra o xp cru; sem prazo o
+          // valor já é o xp cru e repeti-lo não acrescenta nada.
+          return xpToNext && xph ? `${compact(xpToNext)} xp` : null;
         }
       },
-      { key: 'time', label: 'Tempo de caça', value: s => duration((s.a || {}).seconds) },
-      { key: 'kills', label: 'Abates', value: s => num((s.hunt || {}).kills) },
-      { key: 'xph', label: 'EXP / hora', value: s => compact((s.a || {}).xph) },
-      { key: 'goldph', label: 'Ouro / hora', value: s => compact((s.a || {}).goldph) },
+      {
+        key: 'gold',
+        group: 'carteira',
+        label: 'Ouro',
+        value: s => compact(s.gold),
+        hint: s => rate((s.a || {}).goldph)
+      },
+      { key: 'diamonds', group: 'carteira', label: 'Diamantes', value: s => compact(s.diamonds) },
+      {
+        key: 'huntGold',
+        group: 'carteira',
+        label: 'Ouro na caçada',
+        value: s => {
+          const hunt = s.hunt || {};
+          if (!hunt.gold) return null;
+          return compact(hunt.gold);
+        },
+        // O gasto da caçada existe no estado desde sempre e nunca apareceu.
+        // Sem ele, "ganhei 2M" esconde que 1,8M voltaram para a loja.
+        hint: s => {
+          const gasto = +(s.hunt || {}).goldSpent || 0;
+          return gasto ? `−${compact(gasto)} gasto` : null;
+        }
+      },
       {
         key: 'bag',
+        group: 'suprimentos',
         label: 'Mochila',
         value: s => {
           const inv = s.inventory || {};
           if (!inv.capacity) return null;
           return `${num(inv.usedSlots)} / ${num(inv.capacity)}`;
+        },
+        hint: s => {
+          const inv = s.inventory || {};
+          if (!inv.capacity) return null;
+          return `${Math.round((inv.usedSlots / inv.capacity) * 100)}% cheia`;
+        },
+        // Bolsa cheia para a caçada: o drop é perdido e o auto-anunciar trava.
+        // É o aviso mais barato do painel e não existia.
+        tone: s => {
+          const inv = s.inventory || {};
+          if (!inv.capacity) return '';
+          const pct = inv.usedSlots / inv.capacity;
+          if (pct >= 0.95) return 'bad';
+          if (pct >= 0.8) return 'warn';
+          return '';
         }
       },
       {
         key: 'potions',
+        group: 'suprimentos',
         label: 'Poções HP · MP',
         value: s => {
           const p = s.potions || {};
           if (p.hp == null && p.mana == null) return null;
           return `${compact(p.hp)} · ${compact(p.mana)}`;
+        },
+        tone: s => {
+          const p = s.potions || {};
+          if (p.hp == null && p.mana == null) return '';
+          return Math.min(+p.hp || 0, +p.mana || 0) < POCAO_BAIXA ? 'warn' : '';
         }
       },
       {
         key: 'revives',
+        group: 'suprimentos',
         label: 'Reviver',
         value: s => {
           const p = s.potions || {};
@@ -145,23 +263,30 @@
       },
       {
         key: 'statPoints',
+        group: 'conta',
         label: 'Pontos de status',
-        value: s => num((s.points || {}).stat)
+        value: s => num((s.points || {}).stat),
+        // Ponto parado é poder que a conta já ganhou e não está usando.
+        tone: s => ((s.points || {}).stat > 0 ? 'warn' : '')
       },
       {
         key: 'talentPoints',
+        group: 'conta',
         label: 'Pontos de talento',
-        value: s => {
+        value: s => num((s.points || {}).talent),
+        hint: s => {
           const pt = s.points || {};
           // Sombra e ambição são árvores separadas: somar esconderia onde gastar.
           const extra = [];
           if (pt.shadowTalent) extra.push(`${num(pt.shadowTalent)} sombra`);
           if (pt.ambitionTalent) extra.push(`${num(pt.ambitionTalent)} ambição`);
-          return num(pt.talent) + (extra.length ? ` (+${extra.join(', ')})` : '');
-        }
+          return extra.length ? extra.join(' · ') : null;
+        },
+        tone: s => ((s.points || {}).talent > 0 ? 'warn' : '')
       },
       {
         key: 'party',
+        group: 'conta',
         label: 'Grupo',
         value: s => {
           const party = s.party || {};
@@ -217,6 +342,58 @@
       };
     },
 
+    /**
+     * O que caiu. Duas leituras do mesmo dado, porque são duas perguntas.
+     *
+     * `items` responde "o que esta caçada rendeu": acumulado por item, com o
+     * saldo em bolsa ao lado — é o número que decide se já dá para abrir as
+     * entradas ou se falta chave.
+     *
+     * `log` responde "o que caiu agora": os últimos ganhos em ordem, com
+     * horário. Um sem o outro não serve — o acumulado não diz se a caçada
+     * ainda está derrubando chave, e o registro não diz quantas há no total.
+     *
+     * Chaves e bilhetes vêm primeiro, depois por raridade, depois pelo que
+     * caiu mais recentemente. Ordenar por quantidade poria mil essências na
+     * frente da chave que caiu uma vez, que é o contrário da leitura.
+     */
+    loot: state => {
+      const data = state.loot || {};
+      const itens = Object.values(data.session || {});
+      const registro = data.log || [];
+      if (!itens.length && !registro.length) return null;
+
+      itens.sort((a, b) => (
+        (b.key ? 1 : 0) - (a.key ? 1 : 0)
+        || (b.order || 0) - (a.order || 0)
+        || (b.lastAtMs || 0) - (a.lastAtMs || 0)
+      ));
+
+      return {
+        title: 'Drops da caçada',
+        items: itens.slice(0, 12).map(it => ({
+          defId: it.defId,
+          name: it.name,
+          color: it.color || '',
+          key: !!it.key,
+          qty: num(it.qty),
+          // O saldo é o que o usuário realmente quer saber antes de agir, e
+          // só aparece quando difere do que caiu: repetir "3 · 3 na bolsa"
+          // gasta a linha para não dizer nada.
+          bag: it.bag && it.bag !== it.qty ? `${num(it.bag)} na bolsa` : ''
+        })),
+        log: registro.slice(0, 8).map(ev => ({
+          name: ev.name,
+          color: ev.color || '',
+          key: !!ev.key,
+          qty: num(ev.qty),
+          bag: ev.bag ? num(ev.bag) : '',
+          reason: ev.reason === 'drop' ? '' : ev.reason,
+          time: clock(ev.atMs)
+        }))
+      };
+    },
+
     /** Alertas que o usuário precisa ver sem abrir a WebView. */
     banner: state => {
       const death = state.death;
@@ -267,6 +444,18 @@
     resolve(state) {
       const adapter = this.forState(state);
       const safe = state || {};
+      // `hint` e `tone` são enfeite: um adapter que quebra neles não pode
+      // levar junto o número, que é a razão da coluna existir.
+      const opcional = (fn, fallback) => {
+        if (typeof fn !== 'function') return fallback;
+        try {
+          const out = fn(safe);
+          return out === null || out === undefined ? fallback : String(out);
+        } catch {
+          return fallback;
+        }
+      };
+
       const columns = [];
       for (const metric of adapter.metrics) {
         let value;
@@ -276,8 +465,37 @@
           value = null;
         }
         if (value === null || value === undefined) continue;
-        columns.push({ key: metric.key, label: metric.label, value: String(value) });
+        columns.push({
+          key: metric.key,
+          label: metric.label,
+          value: String(value),
+          group: metric.group || '',
+          hint: opcional(metric.hint, ''),
+          tone: opcional(metric.tone, '')
+        });
       }
+
+      /*
+       * Os blocos, já com as colunas dentro e sem os que ficaram vazios: uma
+       * coluna pode sumir (a mochila some sem capacidade conhecida) e um
+       * título sozinho sobre espaço em branco parece painel quebrado.
+       *
+       * Sem `groups` declarados, tudo vira um bloco só sem título — que é
+       * exatamente o HUD antigo, e é o que o PokeIdle continua sendo.
+       */
+      const declarados = Array.isArray(adapter.groups) ? adapter.groups : [];
+      const groups = [];
+      if (declarados.length) {
+        for (const g of declarados) {
+          const dentro = columns.filter(c => c.group === g.id);
+          if (dentro.length) groups.push({ id: g.id, title: g.title, columns: dentro });
+        }
+        const soltas = columns.filter(c => !declarados.some(g => g.id === c.group));
+        if (soltas.length) groups.push({ id: '', title: '', columns: soltas });
+      } else if (columns.length) {
+        groups.push({ id: '', title: '', columns });
+      }
+
       let banner = null;
       try {
         banner = adapter.banner ? adapter.banner(safe) : null;
@@ -296,10 +514,18 @@
       } catch {
         location = null;
       }
-      return { game: adapter.id, columns, banner, roster, location };
+      let loot = null;
+      try {
+        loot = adapter.loot ? adapter.loot(safe) : null;
+      } catch {
+        loot = null;
+      }
+      // `columns` continua na resposta junto com `groups`: é a lista achatada,
+      // e os testes e qualquer leitor que só queira os números dependem dela.
+      return { game: adapter.id, columns, groups, banner, roster, location, loot };
     },
 
-    format: { num, compact, duration, eta, titleize }
+    format: { num, compact, duration, eta, titleize, rate, clock }
   };
 
   if (typeof window !== 'undefined') window.PioHudMetrics = PioHudMetrics;

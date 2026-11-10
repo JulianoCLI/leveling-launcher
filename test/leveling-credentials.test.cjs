@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { LevelingCredentialStore } = require('../src/domain/leveling-credentials');
+const { LevelingCredentialStore, normalizeProxy } = require('../src/domain/leveling-credentials');
 
 function tmpFile() {
   return path.join(
@@ -23,10 +23,43 @@ const fakeSafeStorage = {
   }
 };
 
+test('normalizeProxy recusa o que não vira URL em vez de devolver lixo', () => {
+  /*
+   * O ramo final era `'http://' + raw`, e por isso `host:porta:usuario` saía
+   * daqui como `http://host:porta:usuario` — com cara de URL, aceito pelo
+   * armazenamento e recusado só no fim, dentro do `undici`, como `Invalid URL`.
+   * Era esse o caminho da conta que abria no modo normal e deixava o monitor
+   * reconectando para sempre.
+   */
+  assert.equal(normalizeProxy('1.2.3.4:8080:usuario'), '', 'três pedaços não são uma rota');
+  assert.equal(normalizeProxy('http://'), '', 'esquema sem host não é uma rota');
+  assert.equal(normalizeProxy('   '), '');
+  assert.equal(normalizeProxy(null), '');
+
+  // As formas que os provedores entregam continuam valendo.
+  assert.equal(normalizeProxy('1.2.3.4:8080'), 'http://1.2.3.4:8080');
+  assert.equal(normalizeProxy('1.2.3.4:8080:ana:s3nha'), 'http://ana:s3nha@1.2.3.4:8080');
+  assert.equal(normalizeProxy('socks5://h:1080'), 'socks5://h:1080');
+
+  /*
+   * E o que sai daqui tem de passar pelo parser que vai consumi-lo depois.
+   * Validar com outra regra seria aprovar aqui o que falha adiante, que é o
+   * defeito que esta função existe para não ter.
+   */
+  const { ProxyAgent } = require('undici');
+  for (const bruto of ['1.2.3.4:8080', '1.2.3.4:8080:ana:s3nha', '1.2.3.4', 'http://a:b@h:1']) {
+    const url = normalizeProxy(bruto);
+    assert.ok(url, `${bruto} deveria normalizar`);
+    assert.doesNotThrow(() => new ProxyAgent(url), `undici recusou ${url}`);
+  }
+});
+
 test('grava e lê credenciais pelas quatro contas', () => {
   const store = new LevelingCredentialStore({ filePath: tmpFile(), safeStorage: fakeSafeStorage });
 
-  assert.deepEqual(store.get(0), { username: '', password: '', token: '', proxy: '' });
+  assert.deepEqual(store.get(0), {
+    username: '', password: '', token: '', proxy: '', email: '', signup: false, classId: ''
+  });
 
   store.setCredentials(0, 'desjunior', 'segredo');
   store.setCredentials(3, 'outro', 'senha2');
@@ -83,12 +116,112 @@ test('o status público não expõe segredos', () => {
   assert.ok(!serializado.includes('tok-secreto'), 'token não pode sair do processo principal');
 });
 
+test('credencial de cadastro nasce pendente e sai do limbo ao logar', () => {
+  // O cadastro exige o captcha do Turnstile, que só existe na WebView. Então a
+  // credencial é guardada antes de a conta existir, e a marca `signup` é o que
+  // impede o monitor de tentar logar numa conta que ainda não foi criada.
+  const store = new LevelingCredentialStore({ filePath: tmpFile(), safeStorage: fakeSafeStorage });
+
+  store.setPendingSignup(0, {
+    username: 'cacador1', password: 'Abcdef1!', email: 'cacador1@exemplo.com'
+  });
+
+  assert.equal(store.get(0).signup, true);
+  assert.equal(store.get(0).email, 'cacador1@exemplo.com');
+
+  store.clearSignupFlag(0);
+  assert.equal(store.get(0).signup, false);
+  // Limpar a marca não mexe no resto: a credencial é a mesma, só deixou de ser
+  // uma promessa.
+  assert.equal(store.get(0).username, 'cacador1');
+  assert.equal(store.get(0).email, 'cacador1@exemplo.com');
+});
+
+test('um plano de duas contas guarda as duas, não só a primeira', () => {
+  /*
+   * A regressão que fazia o cadastro assistido criar só a primeira conta.
+   *
+   * `setPendingSignup` substitui o cache interno a cada chamada. Quem lia o
+   * `data` antes do laço e salvava depois reescrevia um retrato velho, apagando
+   * tudo menos a primeira conta — e a segunda janela abria sem credencial para
+   * preencher. A gravação precisa ser uma só, com o `data` montado inteiro.
+   */
+  const store = new LevelingCredentialStore({ filePath: tmpFile(), safeStorage: fakeSafeStorage });
+  const plano = [
+    { username: 'conta_a', password: 'Abcdef1!', email: 'a@gmail.com', classId: 'mago' },
+    { username: 'conta_b', password: 'Abcdef2!', email: 'b@gmail.com', classId: 'healer' }
+  ];
+
+  const data = store.load();
+  plano.forEach((item, i) => {
+    data.accounts[i] = {
+      username: item.username, password: item.password, token: '',
+      proxy: '', email: item.email, signup: true, classId: item.classId
+    };
+  });
+  store.save(data);
+
+  const relido = new LevelingCredentialStore({
+    filePath: store.getFilePath(), safeStorage: fakeSafeStorage
+  });
+  assert.equal(relido.get(0).username, 'conta_a');
+  assert.equal(relido.get(1).username, 'conta_b', 'a segunda conta do plano não pode sumir');
+  assert.equal(relido.get(1).classId, 'healer', 'cada conta mantém a sua classe');
+  assert.equal(relido.get(1).signup, true);
+});
+
+test('o status público diz por onde cada conta sai', () => {
+  // É o dado que a tela mostra ao lado do nome da conta: sem ele não há como
+  // notar duas contas no mesmo IP antes do servidor recusar.
+  const store = new LevelingCredentialStore({ filePath: tmpFile(), safeStorage: fakeSafeStorage });
+  const data = store.load();
+  data.proxyPool.importText('203.0.113.7:8080');
+  data.proxyPool.proxies[0].status = 'ok';
+  data.proxyPool.proxies[0].ip = '203.0.113.7';
+  data.proxyPool.assign(2);
+  store.save(data);
+
+  const { accounts } = store.getPublicStatus();
+
+  assert.equal(accounts[0].route.kind, 'local', 'a conta 1 sai pelo IP da máquina');
+  assert.equal(accounts[0].canOpen.ok, true);
+
+  assert.equal(accounts[2].route.kind, 'proxy');
+  assert.equal(accounts[2].route.ip, '203.0.113.7');
+  assert.equal(accounts[2].canOpen.ok, true);
+
+  // A conta 4 não tem proxy e não é uma das duas primeiras: está bloqueada.
+  assert.equal(accounts[3].route.kind, 'none');
+  assert.equal(accounts[3].canOpen.ok, false);
+});
+
+test('gravar credencial à mão não deixa a conta marcada como pendente', () => {
+  const store = new LevelingCredentialStore({ filePath: tmpFile(), safeStorage: fakeSafeStorage });
+  store.setPendingSignup(0, { username: 'a1', password: 'Abcdef1!', email: 'a@b.com' });
+
+  // Quem digita usuário e senha está falando de uma conta que já existe.
+  store.setCredentials(0, 'conta-real', 'outra');
+  assert.equal(store.get(0).signup, false);
+});
+
+test('o proxy sobrevive à gravação da credencial de cadastro', () => {
+  // O proxy descreve a rota, não a conta: reservar um nome novo não deve
+  // devolver a conta ao IP local e furar o limite de duas por proxy.
+  const store = new LevelingCredentialStore({ filePath: tmpFile(), safeStorage: fakeSafeStorage });
+  store.setProxy(0, 'http://1.2.3.4:8080');
+  store.setPendingSignup(0, { username: 'a1', password: 'Abcdef1!', email: 'a@b.com' });
+
+  assert.equal(store.get(0).proxy, 'http://1.2.3.4:8080');
+});
+
 test('arquivo corrompido não derruba o launcher', () => {
   const file = tmpFile();
   fs.writeFileSync(file, Buffer.from('lixo que não é json nem cifra'));
   const store = new LevelingCredentialStore({ filePath: file, safeStorage: fakeSafeStorage });
 
-  assert.deepEqual(store.get(0), { username: '', password: '', token: '', proxy: '' });
+  assert.deepEqual(store.get(0), {
+    username: '', password: '', token: '', proxy: '', email: '', signup: false, classId: ''
+  });
   assert.equal(store.getPublicStatus().accounts.length, 4);
 });
 
@@ -135,8 +268,10 @@ test('limpar a conta apaga a credencial e mantém a rota', () => {
 
   // O proxy descreve por onde o slot sai, não quem usa: trocar de conta no
   // mesmo slot normalmente mantém a rota.
-  assert.deepEqual(store.get(2),
-    { username: '', password: '', token: '', proxy: 'http://10.0.0.1:8080' });
+  assert.deepEqual(store.get(2), {
+    username: '', password: '', token: '', proxy: 'http://10.0.0.1:8080',
+    email: '', signup: false, classId: ''
+  });
 });
 
 test('o proxy aceita as formas curtas que os provedores entregam', () => {

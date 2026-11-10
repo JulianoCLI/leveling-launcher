@@ -96,7 +96,11 @@ const autoForge = require('./leveling-forge');
 // `listing` por anúncio, e um módulo sombreado ali seria um erro silencioso.
 const listingRules = require('./leveling-listing');
 const autosell = require('./leveling-autosell');
+const loot = require('./leveling-loot');
 const cambio = require('./leveling-cambio');
+const others = require('./leveling-others');
+const pace = require('./leveling-pace');
+const rateLimiter = require('./leveling-rate-limiter');
 
 const WS_URL = 'wss://game.levelingidle2d.com.br:8443/ws';
 const ORIGIN = 'https://levelingidle2d.com.br';
@@ -375,6 +379,8 @@ const CAMBIO_MAIL_MS = 120000;
 /** Varredura automática completa do correio, independente do câmbio. */
 const MAIL_POLL_MS = 10 * 60 * 1000;
 
+const SHADOW_TEAM_ACTION_BEST = 5;
+
 /**
  * Pushes que o painel não mostra. `shadow_delta` e `content_catalog` entram
  * aqui por volume: o catálogo passa de 1 MB e a lista de sombras é grande,
@@ -494,6 +500,28 @@ const FUSE_GAP_MS = 250;
 /** Máximo de lotes encadeados na mesma rodada. */
 const FORGE_MAX_PASSES = 2;
 
+/**
+ * A rota num texto que pode ir para a tela e para o log, sem a senha.
+ *
+ * Trabalha por corte de texto e não por `new URL`, de propósito: quem chama
+ * isto está justamente no caminho em que a URL **não** se deixa parsear, e um
+ * segundo parser falhando aqui devolveria a string crua — com a senha dentro.
+ */
+function maskProxy(proxyUrl) {
+  const raw = String(proxyUrl || '');
+  const corte = raw.lastIndexOf('@');
+  if (corte < 0) return raw;
+
+  const credenciais = raw.slice(0, corte);
+  const resto = raw.slice(corte);
+  // `http://usuario:senha` → `http://usuario:•••`. Sem `:` não há senha a
+  // esconder, e o usuário sozinho não é segredo.
+  const sep = credenciais.lastIndexOf(':');
+  const esquema = credenciais.indexOf('://');
+  if (sep < 0 || (esquema >= 0 && sep < esquema + 3)) return credenciais + resto;
+  return credenciais.slice(0, sep) + ':\u2022\u2022\u2022' + resto;
+}
+
 function proxyDispatcher(proxyUrl) {
   if (!proxyUrl) return null;
   if (dispatchers.has(proxyUrl)) return dispatchers.get(proxyUrl);
@@ -508,7 +536,15 @@ function proxyDispatcher(proxyUrl) {
   } catch (err) {
     // Guardar o nulo evitaria tentar de novo, mas aqui a falha é de
     // configuração: vale repetir quando o usuário corrigir a URL.
-    throw new Error('proxy inválido: ' + err.message);
+    //
+    // `Invalid URL` do undici não diz qual URL, e com quatro contas na tela
+    // isso é metade do problema. O texto mostra a rota com a senha mascarada,
+    // que é o bastante para achar a linha errada sem vazar segredo no log.
+    const erro = new Error(`proxy inválido (${maskProxy(proxyUrl)}): ${err.message}`);
+    // A marca separa "a rota não existe" de "a rede caiu": a primeira não se
+    // resolve esperando, e quem chama precisa saber disso para não insistir.
+    erro.proxyConfig = true;
+    throw erro;
   }
 
   dispatchers.set(proxyUrl, dispatcher);
@@ -726,6 +762,17 @@ class LevelingHeadlessClient extends EventEmitter {
      */
     this.partyInvites = new Map();
 
+    /**
+     * Tamanho da última pilha vista de cada `uid` na bolsa.
+     *
+     * `InventoryDelta.updated` traz a pilha depois do ganho e não o ganho:
+     * sem a leitura anterior não há como saber se 12 essências viraram 13 ou
+     * se o usuário acabou de comprar doze. Fora de `state` de propósito — é
+     * memória de leitura, não informação de painel, e o estado inteiro é
+     * clonado e vai por IPC a cada segundo.
+     */
+    this.lootStacks = new Map();
+
     this.sessionStartTime = 0;
     this.state = this.initialState(options);
   }
@@ -830,6 +877,12 @@ class LevelingHeadlessClient extends EventEmitter {
       /** Extração de sombras (ARISE), que roda automática no servidor. */
       shadows: { attempts: 0, captured: 0, awakened: 0, newSpecies: 0, lastMonsterId: '' },
       inventory: { usedSlots: 0, capacity: 0 },
+      /**
+       * O que caiu: acumulado da caçada e o registro dos últimos ganhos, lidos
+       * de `inventory_delta` por `leveling-loot`. Equipamento não entra — ver
+       * o cabeçalho daquele módulo.
+       */
+      loot: loot.initialLoot(),
       a: { seconds: 0, xph: 0, goldph: 0, killsph: 0 }
     };
   }
@@ -859,6 +912,22 @@ class LevelingHeadlessClient extends EventEmitter {
       if (dispatcher) init.dispatcher = dispatcher;
       ws = new WS(this.wsUrl, init);
     } catch (err) {
+      /*
+       * Rota impossível de montar. Pela mesma lógica de `FATAL_AUTH_CODES`:
+       * nenhuma espera conserta uma URL malformada, e tentar de novo a cada
+       * poucos segundos só produz o "Reconectando" eterno que não diz ao
+       * usuário que o problema é a configuração, não a rede.
+       *
+       * O cliente para e explica. `endedReason` impede que `connect` volte
+       * sozinho; religar o monitor depois de corrigir o proxy monta um cliente
+       * novo, e aí o dispatcher é construído de novo.
+       */
+      if (err && err.proxyConfig) {
+        this.endedReason = 'proxy.invalid';
+        this.autoReconnect = false;
+        this.fail(err.message);
+        return;
+      }
       this.fail(err.message);
       this.scheduleReconnect();
       return;
@@ -969,6 +1038,10 @@ class LevelingHeadlessClient extends EventEmitter {
     if (auth.username) this.state.name = auth.username;
 
     this.sessionStartTime = Date.now();
+    // Pilhas vistas antes da queda não valem mais: a bolsa pode ter mudado na
+    // WebView enquanto o monitor estava fora, e medir contra um tamanho velho
+    // inventaria um drop de trinta essências no primeiro delta.
+    this.lootStacks.clear();
     this.reconnectDelay = RECONNECT_MIN_MS;
     this.setStatus('connected');
     this.startTimers();
@@ -1015,25 +1088,24 @@ class LevelingHeadlessClient extends EventEmitter {
   }
 
   startTimers() {
-    clearInterval(this.pingTimer);
+    if (this.pingTicker) this.pingTicker.off();
     // Um ping imediato preenche `online` sem esperar o primeiro intervalo.
     this.ping();
-    this.pingTimer = setInterval(() => this.ping(), this.pingIntervalMs);
+    // Ping com jitter: 15s ±25%
+    this.pingTicker = pace.every(
+      () => this.ping(),
+      this.pingIntervalMs,
+      { pct: 0.25, unref: true }
+    );
 
-    clearInterval(this.tickTimer);
-    this.tickTimer = setInterval(() => {
+    if (this.tickTicker) this.tickTicker.off();
+    // Tick com jitter: 2s ±20%
+    this.tickTicker = pace.every(() => {
       if (this.status !== 'connected') return;
       // Só avisa se algum número de fato mudou: com a caçada parada, o tick não
       // custa IPC nem repintura.
       if (this.recomputeRates()) this.emitUpdate();
-    }, this.tickIntervalMs);
-
-    // `unref` nos dois, como no coletor e no sniper: manter o elo vivo e
-    // recontar taxas acompanham uma conexão, não são motivo para o processo
-    // continuar de pé. Sem isto um monitor que ninguém desligou deixa o Node
-    // rodando para sempre — é o que prendia a suíte depois do último teste.
-    if (this.pingTimer.unref) this.pingTimer.unref();
-    if (this.tickTimer.unref) this.tickTimer.unref();
+    }, this.tickIntervalMs, { pct: 0.20, unref: true });
   }
 
   /**
@@ -1071,32 +1143,42 @@ class LevelingHeadlessClient extends EventEmitter {
 
   request(caseName, value = {}) {
     if (!this.isOpen()) return Promise.reject(new Error('socket fechado'));
-    const id = this.nextRequestId;
-    this.nextRequestId = this.nextRequestId >= 0xffffffff ? 1 : this.nextRequestId + 1;
 
-    let payload;
-    try {
-      payload = this.codec.encode(id, caseName, value);
-    } catch (err) {
-      return Promise.reject(err);
-    }
+    // Aguarda o orçamento global do manager. O sniper é isento, outros não.
+    const classname = caseName && caseName.startsWith('market_request') && this.index === -1
+      ? 'sniper'
+      : 'normal';
+    const manager = this.manager || {};
+    const wait = manager.limiter ? manager.limiter.wait(classname) : Promise.resolve();
 
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`timeout em ${caseName}`));
-      }, this.requestTimeoutMs);
-      this.pending.set(id, {
-        resolve: res => { clearTimeout(timer); resolve(res); },
-        reject: err => { clearTimeout(timer); reject(err); }
-      });
+    return wait.then(() => {
+      const id = this.nextRequestId;
+      this.nextRequestId = this.nextRequestId >= 0xffffffff ? 1 : this.nextRequestId + 1;
+
+      let payload;
       try {
-        this.ws.send(payload);
+        payload = this.codec.encode(id, caseName, value);
       } catch (err) {
-        clearTimeout(timer);
-        this.pending.delete(id);
-        reject(err);
+        return Promise.reject(err);
       }
+
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.pending.delete(id);
+          reject(new Error(`timeout em ${caseName}`));
+        }, this.requestTimeoutMs);
+        this.pending.set(id, {
+          resolve: res => { clearTimeout(timer); resolve(res); },
+          reject: err => { clearTimeout(timer); reject(err); }
+        });
+        try {
+          this.ws.send(payload);
+        } catch (err) {
+          clearTimeout(timer);
+          this.pending.delete(id);
+          reject(err);
+        }
+      });
     });
   }
 
@@ -1192,8 +1274,11 @@ class LevelingHeadlessClient extends EventEmitter {
   }
 
   /** Envio sem resposta: `travel`, `move_to` e `interact` não respondem. */
-  emitPacket(caseName, value) {
+  async emitPacket(caseName, value) {
     if (!this.isOpen()) throw new Error('socket fechado');
+    // Aguarda o orçamento global do manager, não isenta ninguém
+    const manager = this.manager || {};
+    if (manager.limiter) await manager.limiter.wait('normal');
     const id = this.nextRequestId;
     this.nextRequestId = this.nextRequestId >= 0xffffffff ? 1 : this.nextRequestId + 1;
     this.ws.send(this.codec.encode(id, caseName, value));
@@ -1583,6 +1668,10 @@ class LevelingHeadlessClient extends EventEmitter {
     if (startedAtMs && startedAtMs !== hunt.startedAtMs) {
       const bestStreak = hunt.bestStreak;
       Object.assign(hunt, this.initialState().hunt, { startedAtMs, bestStreak });
+      // O acumulado de drops é da caçada e zera com ela; o registro dos
+      // últimos ganhos não, porque o que caiu há dois minutos continua sendo
+      // a resposta de "o que caiu agora" logo depois de trocar de portal.
+      loot.resetSession(this.state.loot, startedAtMs);
       changed = true;
     }
 
@@ -1689,7 +1778,13 @@ class LevelingHeadlessClient extends EventEmitter {
   }
 
   /**
-   * Só a ocupação da mochila interessa: itens em si ficam na WebView.
+   * Ocupação da mochila e o que caiu.
+   *
+   * Durante muito tempo este método jogava fora `added`/`updated`/`removed`
+   * com o argumento de que "os itens ficam na WebView". Vale para equipamento,
+   * que cai às dezenas por minuto e não se lê de relance; não vale para chave,
+   * baú e material, que são poucos, são esperados e eram justamente o motivo
+   * de abrir a WebView. A separação é feita por `leveling-loot`.
    *
    * É também o gatilho da auto-forja, pela mesma razão que o `character_patch`
    * é o do auto-status: este é o pacote que anuncia material novo, e um
@@ -1707,6 +1802,12 @@ class LevelingHeadlessClient extends EventEmitter {
       inv.capacity = capacity;
       changed = true;
     }
+
+    changed = loot.apply(this.state.loot, value, {
+      stacks: this.lootStacks,
+      catalog: this.marketCatalogStore.value
+    }) || changed;
+
     this.maybeForge();
     return changed;
   }
@@ -3776,6 +3877,8 @@ class LevelingHeadlessClient extends EventEmitter {
           }
         }
         if (!value.has_next) break;
+        // Pausa entre páginas: 80-250 ms sorteado
+        await pace.gap(80, 250);
       }
     }
 
@@ -3829,6 +3932,8 @@ class LevelingHeadlessClient extends EventEmitter {
           });
         }
         if (!value.has_next) break;
+        // Pausa entre páginas: 80-250 ms sorteado
+        await pace.gap(80, 250);
       }
     }
 
@@ -4030,6 +4135,7 @@ class LevelingHeadlessClient extends EventEmitter {
     if (this.status !== 'connected') return { errorCode: 'mail.offline', claimed: [] };
 
     const recolhidos = [];
+    const failures = [];
     let gold = 0;
     let items = 0;
     let bagFull = false;
@@ -4040,7 +4146,10 @@ class LevelingHeadlessClient extends EventEmitter {
     for (const id of lista) {
       const res = await this.request('mail_request', { claim: { id } })
         .catch(e => ({ caseName: 'error', value: { code: e.message } }));
-      if (res.caseName === 'error') continue;
+      if (res.caseName === 'error') {
+        failures.push({ id: String(id), error: (res.value && res.value.code) || 'mail.claimFailed' });
+        continue;
+      }
       const v = (res.value && res.value.claimed) || {};
       for (const c of v.claimed || []) recolhidos.push(String(c));
       gold += Number(v.gold) || 0;
@@ -4053,7 +4162,7 @@ class LevelingHeadlessClient extends EventEmitter {
         break;
       }
     }
-    return { claimed: recolhidos, gold, items, bagFull, unclaimed };
+    return { claimed: recolhidos, gold, items, bagFull, unclaimed, failures };
   }
 
   /**
@@ -4069,7 +4178,7 @@ class LevelingHeadlessClient extends EventEmitter {
     const ids = [];
     for (let page = 0; page < 100; page++) {
       const caixa = await this.mailList(page);
-      if (caixa.errorCode) return { errorCode: caixa.errorCode, claimed: [] };
+      if (caixa.errorCode) return { errorCode: caixa.errorCode, claimed: [], failures: [] };
       for (const entry of caixa.entries) {
         if (!entry.claimed && entry.id) ids.push(entry.id);
       }
@@ -4080,7 +4189,75 @@ class LevelingHeadlessClient extends EventEmitter {
         || (total > 0 && lidas >= total)) break;
     }
 
-    return this.mailClaim(ids);
+    const result = await this.mailClaim(ids);
+    if (result.failures && result.failures.length) {
+      result.errorCode = result.failures[0].error;
+    }
+    return result;
+  }
+
+  /** Estado atual das missões diárias, confirmado pelo servidor. */
+  async missionsState() {
+    const res = await this.request('missions_request', { state: true })
+      .catch(e => ({ caseName: 'error', value: { code: e.message } }));
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'missions.failed' };
+    }
+    if (res.caseName !== 'missions_response' || !res.value || !res.value.state) {
+      return { errorCode: 'missions.unexpectedResponse' };
+    }
+    return { state: (res.value && res.value.state) || {} };
+  }
+
+  /** Resgata uma diária e devolve a resposta que confirma o resgate. */
+  async claimDaily(id) {
+    const value = String(id || '');
+    if (!value) return { errorCode: 'missions.noId' };
+    if (this.status !== 'connected') return { errorCode: 'missions.offline' };
+    const res = await this.request('missions_request', { claim_daily: value })
+      .catch(e => ({ caseName: 'error', value: { code: e.message } }));
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'missions.claimFailed' };
+    }
+    if (res.caseName !== 'missions_response' || !res.value || !res.value.claimed) {
+      return { errorCode: 'missions.unexpectedResponse' };
+    }
+    return { claimed: (res.value && res.value.claimed) || {} };
+  }
+
+  /** Resgata apenas diárias prontas; nunca tenta uma missão já marcada. */
+  async claimDailyAll() {
+    const leitura = await this.missionsState();
+    if (leitura.errorCode) return { errorCode: leitura.errorCode, claimed: [], attempted: 0 };
+    const daily = Array.isArray(leitura.state.daily) ? leitura.state.daily : [];
+    const ready = daily.filter(item => !item.claimed
+      && Number(item.amount || 0) > 0
+      && Number(item.progress || 0) >= Number(item.amount || 0)
+      && item.id);
+    const claimed = [];
+    const failures = [];
+    for (const item of ready) {
+      const result = await this.claimDaily(item.id);
+      if (result.errorCode) failures.push({ id: String(item.id), error: result.errorCode });
+      else claimed.push({ id: String(item.id), reward: result.claimed });
+    }
+    return {
+      claimed,
+      attempted: ready.length,
+      failures,
+      ready: ready.map(item => String(item.id))
+    };
+  }
+
+  /** Aciona o mesmo comando do botão "Montar melhor time". */
+  async shadowSetBest() {
+    if (this.status !== 'connected') return { errorCode: 'shadows.offline' };
+    const res = await this.request('shadow_set_team', { action: SHADOW_TEAM_ACTION_BEST })
+      .catch(e => ({ caseName: 'error', value: { code: e.message } }));
+    if (res.caseName === 'error') {
+      return { errorCode: (res.value && res.value.code) || 'shadows.bestFailed' };
+    }
+    return { team: (res.value && res.value.shadow_set_team_result || res.value || {}).team || null };
   }
 
   /** A caçada lida na entrada, ou `null` se a conta não estava caçando. */
@@ -4335,10 +4512,12 @@ class LevelingHeadlessClient extends EventEmitter {
       ? delay
       : Math.min(RECONNECT_MAX_MS, Math.round(delay * 1.8));
     this.setStatus('reconnecting');
+    // Backoff com jitter: ±20% para evitar tempestade sincronizada
+    const delayWithJitter = pace.jitter(delay, 0.20);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
-    }, delay);
+    }, delayWithJitter);
   }
 
   clearReconnect() {
@@ -4349,9 +4528,9 @@ class LevelingHeadlessClient extends EventEmitter {
   }
 
   teardown() {
-    clearInterval(this.pingTimer);
-    this.pingTimer = null;
-    clearInterval(this.tickTimer);
+    if (this.pingTicker) this.pingTicker.off();
+    this.pingTicker = null;
+    if (this.tickTicker) this.tickTicker.off();
     this.tickTimer = null;
     // Sem socket não há painel para ler; `authenticate` religa o relógio.
     clearInterval(this.expeditionTimer);
@@ -4513,6 +4692,13 @@ class LevelingHeadlessManager extends EventEmitter {
     this.mailBusy = false;
     this.mailIntervalMs = Number(options.mailIntervalMs) || MAIL_POLL_MS;
     this.mailStats = { polls: 0, claimed: 0, gold: 0, items: 0, lastAtMs: 0, lastError: '' };
+    this.othersConfig = others.normalizeConfig(options.othersConfig);
+    this.othersTimer = null;
+    this.othersTimerIntervalMs = 0;
+    this.othersBusy = false;
+    this.othersLogSink = typeof options.othersLogSink === 'function' ? options.othersLogSink : null;
+    this.othersLog = [];
+    this.othersStats = { runs: 0, processed: 0, succeeded: 0, failed: 0, lastAtMs: 0, lastError: '' };
     /**
      * Banco, para o enriquecedor de nível. Ele precisa da fila de vendas sem
      * nível, que só o banco conhece — `marketSink` é de mão única.
@@ -4520,6 +4706,15 @@ class LevelingHeadlessManager extends EventEmitter {
     this.marketDb = null;
     this.levelBusy = false;
     this.levelStats = { consultas: 0, achados: 0, falhas: 0, lastAtMs: 0, lastError: '' };
+
+    /**
+     * Limitador global de tráfego. Protege contra rajadas de qualquer origem.
+     * Sniper é isento para preservar o comportamento atual.
+     */
+    this.limiter = rateLimiter.create({
+      tokensPerSecond: Number(options.tokensPerSecond) || 20,
+      sniperExempt: true
+    });
 
     /**
      * Sniper de mercado: compra o que entrar abaixo do teto configurado.
@@ -4709,19 +4904,25 @@ class LevelingHeadlessManager extends EventEmitter {
    * motivo de o processo continuar vivo.
    */
   startMarketPoll() {
-    if (this.marketTimer || !this.marketSink) return false;
-    this.marketTimer = setInterval(() => { this.pollMarket(); }, this.marketIntervalMs);
-    if (this.marketTimer.unref) this.marketTimer.unref();
-    // Uma leitura imediata: esperar o primeiro minuto perderia vendas à toa
-    // quando o usuário acabou de ligar o monitor.
-    this.pollMarket();
+    if (this.marketTicker || !this.marketSink) return false;
+    // Primeira leitura atrasada de 1-10s para não acumular com outros laços no boot
+    const initialDelay = pace.phase(10000);
+    setTimeout(() => {
+      if (this.marketTicker) this.pollMarket();
+    }, initialDelay);
+    // Market com jitter: 60s ±30%
+    this.marketTicker = pace.every(
+      () => this.pollMarket(),
+      this.marketIntervalMs,
+      { pct: 0.30, unref: true }
+    );
     return true;
   }
 
   stopMarketPoll() {
-    if (!this.marketTimer) return false;
-    clearInterval(this.marketTimer);
-    this.marketTimer = null;
+    if (!this.marketTicker) return false;
+    this.marketTicker.off();
+    this.marketTicker = null;
     return true;
   }
 
@@ -4743,9 +4944,18 @@ class LevelingHeadlessManager extends EventEmitter {
 
     this.mailBusy = true;
     try {
-      const resultados = await Promise.all(clients.map(client =>
-        client.mailClaimAll().catch(error => ({ errorCode: error && error.message || 'mail.failed', claimed: [] }))
-      ));
+      const resultados = await Promise.all(clients.map(async client => {
+        const resultado = await client.mailClaimAll().catch(error => ({
+          errorCode: error && error.message || 'mail.failed', claimed: []
+        }));
+        this.pushOthersLog({
+          atMs: Date.now(), operation: 'correio', index: client.index,
+          ok: !resultado.errorCode, claimed: (resultado.claimed || []).length,
+          gold: Number(resultado.gold) || 0, items: Number(resultado.items) || 0,
+          error: resultado.errorCode || ''
+        });
+        return resultado;
+      }));
       this.mailStats.polls++;
       this.mailStats.lastAtMs = Date.now();
       this.mailStats.lastError = '';
@@ -4755,6 +4965,14 @@ class LevelingHeadlessManager extends EventEmitter {
         this.mailStats.items += Number(resultado.items) || 0;
         if (resultado.errorCode) this.mailStats.lastError = resultado.errorCode;
       }
+      this.pushOthersLog({
+        atMs: this.mailStats.lastAtMs, operation: 'correio-resumo',
+        accounts: clients.length,
+        succeeded: resultados.filter(r => !r.errorCode).length,
+        failed: resultados.filter(r => !!r.errorCode).length,
+        claimed: resultados.reduce((n, r) => n + (r.claimed || []).length, 0),
+        error: this.mailStats.lastError
+      });
       return this.mailStats;
     } catch (error) {
       this.mailStats.lastError = error && error.message || String(error);
@@ -4765,22 +4983,164 @@ class LevelingHeadlessManager extends EventEmitter {
   }
 
   startMailPoll() {
-    if (this.mailTimer) return false;
-    this.mailTimer = setInterval(() => { this.pollMail(); }, this.mailIntervalMs);
-    if (this.mailTimer.unref) this.mailTimer.unref();
-    this.pollMail();
+    if (this.mailTicker) return false;
+    // Primeira leitura atrasada de 1-10s
+    const initialDelay = pace.phase(10000);
+    setTimeout(() => {
+      if (this.mailTicker) this.pollMail();
+    }, initialDelay);
+    // Mail com jitter: 600s ±30% + stagger entre contas
+    this.mailTicker = pace.every(
+      () => this.pollMail(),
+      this.mailIntervalMs,
+      { pct: 0.30, unref: true }
+    );
     return true;
   }
 
   stopMailPoll() {
-    if (!this.mailTimer) return false;
-    clearInterval(this.mailTimer);
-    this.mailTimer = null;
+    if (!this.mailTicker) return false;
+    this.mailTicker.off();
+    this.mailTicker = null;
     return true;
   }
 
   getMailStats() {
     return { ...this.mailStats, running: !!this.mailTimer, busy: this.mailBusy };
+  }
+
+  setOthersConfig(config) {
+    this.othersConfig = others.normalizeConfig(config);
+    this.syncOthersTimer();
+    return this.othersConfig;
+  }
+
+  getOthersConfig() {
+    return { ...this.othersConfig, disabled: [...this.othersConfig.disabled] };
+  }
+
+  syncOthersTimer() {
+    if (!this.othersConfig.enabled) {
+      this.stopOthersPoll();
+      return;
+    }
+    if (this.othersTimer && this.othersTimerIntervalMs !== this.othersConfig.intervalMs) {
+      clearInterval(this.othersTimer);
+      this.othersTimer = null;
+    }
+    if (!this.othersTimer) {
+      this.othersTimer = setInterval(() => { this.pollOthers({ automatic: true }); }, this.othersConfig.intervalMs);
+      this.othersTimerIntervalMs = this.othersConfig.intervalMs;
+      if (this.othersTimer.unref) this.othersTimer.unref();
+    }
+  }
+
+  startOthersPoll() {
+    if (this.othersTimer) return false;
+    this.syncOthersTimer();
+    if (this.othersTimer) this.pollOthers({ automatic: true });
+    return !!this.othersTimer;
+  }
+
+  stopOthersPoll() {
+    if (!this.othersTimer) return false;
+    clearInterval(this.othersTimer);
+    this.othersTimer = null;
+    this.othersTimerIntervalMs = 0;
+    return true;
+  }
+
+  pushOthersLog(entry) {
+    this.othersLog.unshift({ ...entry });
+    if (this.othersLog.length > others.LOG_MAX) this.othersLog.length = others.LOG_MAX;
+    if (this.othersLogSink) {
+      try { this.othersLogSink(this.othersLog); } catch {}
+    }
+    this.emit('others', { ...entry });
+  }
+
+  getOthersLog() {
+    return this.othersLog.map(entry => ({ ...entry }));
+  }
+
+  setOthersLog(entries) {
+    this.othersLog = (Array.isArray(entries) ? entries : [])
+      .slice(0, others.LOG_MAX).map(entry => ({ ...entry }));
+    return this.othersLog.length;
+  }
+
+  clearOthersLog() {
+    this.othersLog = [];
+    if (this.othersLogSink) {
+      try { this.othersLogSink(this.othersLog); } catch {}
+    }
+  }
+
+  async pollOthers(options = {}) {
+    if (this.othersBusy) return this.getOthersStats();
+    const run = this.getOthersConfig();
+    const clients = [...this.clients.values()]
+      .filter(client => client && client.index >= 0 && client.status === 'connected'
+        && others.accountEnabled(run, client.index));
+    if (!clients.length) {
+      this.othersStats.lastError = 'others.noneActive';
+      return this.getOthersStats();
+    }
+    this.othersBusy = true;
+    const startedAt = Date.now();
+    try {
+      const results = await Promise.all(clients.map(async client => {
+        const result = { index: client.index, daily: null, bestTeam: null, ok: true, errors: [] };
+        try {
+          if (run.mail) result.mail = await client.mailClaimAll();
+          if (run.daily) result.daily = await client.claimDailyAll();
+          if (run.bestTeam) result.bestTeam = await client.shadowSetBest();
+          for (const part of [result.mail, result.daily, result.bestTeam]) {
+            if (part && part.errorCode) result.errors.push(part.errorCode);
+            if (part && Array.isArray(part.failures)) result.errors.push(...part.failures.map(f => f.error));
+          }
+          result.ok = result.errors.length === 0;
+        } catch (error) {
+          result.ok = false;
+          result.errors.push(error && error.message || String(error));
+        }
+        this.pushOthersLog({
+          atMs: Date.now(), operation: 'outros', index: client.index, ok: result.ok,
+          mail: result.mail && result.mail.claimed ? result.mail.claimed.length : 0,
+          daily: result.daily && result.daily.claimed ? result.daily.claimed.length : 0,
+          bestTeam: !!(result.bestTeam && !result.bestTeam.errorCode),
+          error: result.errors.join(', ')
+        });
+        return result;
+      }));
+      const summary = {
+        atMs: Date.now(), operation: 'outros-resumo', accounts: clients.length,
+        processed: clients.length,
+        succeeded: results.filter(r => r.ok).length,
+        failed: results.filter(r => !r.ok).length,
+        durationMs: Date.now() - startedAt,
+        error: results.filter(r => !r.ok).flatMap(r => r.errors).join(', ')
+      };
+      this.othersStats.runs++;
+      this.othersStats.processed += clients.length;
+      this.othersStats.succeeded += summary.succeeded;
+      this.othersStats.failed += summary.failed;
+      this.othersStats.lastAtMs = summary.atMs;
+      this.othersStats.lastError = summary.error;
+      this.pushOthersLog(summary);
+      return { ...this.getOthersStats(), results };
+    } finally {
+      this.othersBusy = false;
+    }
+  }
+
+  getOthersStats() {
+    return {
+      ...this.othersStats,
+      running: !!this.othersTimer,
+      busy: this.othersBusy,
+      config: this.getOthersConfig()
+    };
   }
 
   getMarketStats() {
@@ -4810,11 +5170,11 @@ class LevelingHeadlessManager extends EventEmitter {
    * já ganha da chegada — o resto do orçamento serve para recuperar o
    * atraso, que num banco com meses de uso são milhares de vendas.
    *
-   * 40 por minuto, medido: ~45 ms por pergunta, logo ~1,8 s de tráfego em
-   * cada 60 s. Em série de propósito. Disparar o lote em paralelo seria
-   * rápido e também seria uma rajada de dezenas de pedidos simultâneos por
-   * dados que ninguém está olhando — o tipo de tráfego que faz um servidor
-   * começar a recusar.
+   * 40 por minuto, com pausa entre elas: ~150-600 ms cada, logo ~6-24 s de
+   * tráfego distribuído em cada 60 s. Em série de propósito. Disparar o lote
+   * em paralelo seria rápido e também seria uma rajada de dezenas de pedidos
+   * simultâneos por dados que ninguém está olhando — o tipo de tráfego que
+   * faz um servidor começar a recusar.
    */
   async enrichLevels(limite = 40, listingIds = null) {
     if (!this.marketDb || this.levelBusy) return 0;
@@ -4845,6 +5205,8 @@ class LevelingHeadlessManager extends EventEmitter {
           slot: typeof l.slot === 'string' ? l.slot : ''
         });
         if (Number(l.level) > 0) this.levelStats.achados++;
+        // Pausa entre pedidos: 150-600 ms sorteado
+        await pace.gap(150, 600);
       }
 
       gravadas = this.marketDb.setLevels(linhas);
@@ -4883,7 +5245,9 @@ class LevelingHeadlessManager extends EventEmitter {
     const anteriores = new Map(
       (this.sniperConfig && this.sniperConfig.rules || []).map(r => [r.id, r])
     );
+    const antesIntervalMs = this.sniperIntervalMs;
     this.sniperConfig = sniper.normalizeConfig(config);
+    this.sniperIntervalMs = this.sniperConfig.intervalMs;
     const zerar = new Set();
     for (const bruta of Array.isArray(config && config.rules) ? config.rules : []) {
       if (!bruta || !bruta.resetBought) continue;
@@ -4898,6 +5262,11 @@ class LevelingHeadlessManager extends EventEmitter {
       // pode subir.
       if (zerar.has(rule.id)) { rule.bought = 0; continue; }
       rule.bought = Math.max(Number(rule.bought) || 0, Number(antiga.bought) || 0);
+    }
+    // Se o intervalo mudou e o laço está rodando, reconfigura
+    if (this.sniperTicker && antesIntervalMs !== this.sniperIntervalMs) {
+      this.stopSniperPoll();
+      this.startSniperPoll();
     }
     this.sniperIntervalMs = this.sniperConfig.intervalMs;
     // Intervalo novo só vale no tique seguinte se o temporizador não for
@@ -5196,18 +5565,26 @@ class LevelingHeadlessManager extends EventEmitter {
    * continuar vivo.
    */
   startSniperPoll() {
-    if (this.sniperTimer) return false;
+    if (this.sniperTicker) return false;
     if (!sniper.isConfigured(this.sniperConfig)) return false;
-    this.sniperTimer = setInterval(() => { this.pollSniper(); }, this.sniperIntervalMs);
-    if (this.sniperTimer.unref) this.sniperTimer.unref();
-    this.pollSniper();
+    // Primeira leitura atrasada de 1-10s
+    const initialDelay = pace.phase(10000);
+    setTimeout(() => {
+      if (this.sniperTicker) this.pollSniper();
+    }, initialDelay);
+    // Sniper com jitter: intervalo ±30%, sem limite — via classe isenta em Camada 5
+    this.sniperTicker = pace.every(
+      () => this.pollSniper(),
+      this.sniperIntervalMs,
+      { pct: 0.30, unref: true }
+    );
     return true;
   }
 
   stopSniperPoll() {
-    if (!this.sniperTimer) return false;
-    clearInterval(this.sniperTimer);
-    this.sniperTimer = null;
+    if (!this.sniperTicker) return false;
+    this.sniperTicker.off();
+    this.sniperTicker = null;
     return true;
   }
 
@@ -5720,18 +6097,26 @@ class LevelingHeadlessManager extends EventEmitter {
 
   /** Liga o laço. `unref` como nos outros: não prende o processo vivo. */
   startAutosellPoll() {
-    if (this.autosellTimer) return false;
+    if (this.autosellTicker) return false;
     if (!autosell.isConfigured(this.autosellConfig)) return false;
-    this.autosellTimer = setInterval(() => { this.pollAutosell(); }, this.autosellIntervalMs);
-    if (this.autosellTimer.unref) this.autosellTimer.unref();
-    this.pollAutosell();
+    // Primeira leitura atrasada de 1-10s
+    const initialDelay = pace.phase(10000);
+    setTimeout(() => {
+      if (this.autosellTicker) this.pollAutosell();
+    }, initialDelay);
+    // Autosell com jitter: ±25%
+    this.autosellTicker = pace.every(
+      () => this.pollAutosell(),
+      this.autosellIntervalMs,
+      { pct: 0.25, unref: true }
+    );
     return true;
   }
 
   stopAutosellPoll() {
-    if (!this.autosellTimer) return false;
-    clearInterval(this.autosellTimer);
-    this.autosellTimer = null;
+    if (!this.autosellTicker) return false;
+    this.autosellTicker.off();
+    this.autosellTicker = null;
     return true;
   }
 
@@ -6342,6 +6727,7 @@ class LevelingHeadlessManager extends EventEmitter {
       // Mesma razão para a forja: uma conta cujo monitor sobe depois já nasce
       // participando, com o mesmo alvo das outras.
       forgeConfig: this.forgeConfig,
+      othersConfig: this.othersConfig,
       // O catálogo de caçadas é do jogo, não da conta: a primeira conta a logar
       // o preenche e as outras já nascem com a lista pronta.
       huntStore: this.huntStore,
@@ -6352,6 +6738,8 @@ class LevelingHeadlessManager extends EventEmitter {
       classStore: this.classStore,
       ...options
     });
+    // Referência do manager para o limitador global
+    client.manager = this;
     this.clients.set(accountIndex, client);
 
     // `stats-log` não entra: o log do status é do manager, e repassar a linha
@@ -6392,6 +6780,7 @@ class LevelingHeadlessManager extends EventEmitter {
     this.stopSniperPoll();
     this.stopAutosellPoll();
     this.stopCambioPoll();
+    this.stopOthersPoll();
   }
 
   getClient(accountIndex) {
@@ -7179,6 +7568,7 @@ module.exports = {
   WS_URL,
   ORIGIN,
   proxyDispatcher,
+  maskProxy,
   isHandoff,
   REPLACED_CODES,
   IGNORED_CASES,

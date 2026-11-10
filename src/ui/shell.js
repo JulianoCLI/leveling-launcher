@@ -87,7 +87,11 @@
       // escondida, sem HUD pintado.
       entry = {
         status: 'disconnected', error: '', pending: null, name: '',
-        level: 0, hunt: null, party: null
+        level: 0, hunt: null, party: null,
+        // A rota de saída da conta, vinda do pool de proxies. Fica aqui porque
+        // decide se a WebView pode abrir, e a decisão não pode esperar o painel
+        // estar visível.
+        route: null, canOpen: null
       };
       accountState.set(index, entry);
     }
@@ -115,6 +119,7 @@
         <div class="panel-head">
           <span class="panel-title" data-role="title">Conta ${i + 1}</span>
           <span class="panel-who" data-role="who"></span>
+          <span class="panel-route" data-role="route"></span>
           <button type="button" data-role="focus" title="Deixar este painel grande, com os demais ao lado">▣</button>
           <button type="button" data-role="solo" title="Deixar este painel em tela cheia">⛶</button>
           <button type="button" data-role="reload" title="Recarregar o jogo neste painel">⟳</button>
@@ -138,6 +143,7 @@
         view: null,
         title: root.querySelector('[data-role="title"]'),
         who: root.querySelector('[data-role="who"]'),
+        route: root.querySelector('[data-role="route"]'),
         toggle: root.querySelector('[data-role="headless"]'),
         hud: window.PioLevelingHud.create(root.querySelector('[data-role="hud"]'))
       };
@@ -194,6 +200,7 @@
       const entry = stateOf(panel.account);
       panel.who.textContent = entry.name;
       panel.hud.clear();
+      paintRoute(panel.account);
       paintPanel(panel.account);
       // Um monitor que já estava rodando tem o quadro inteiro guardado.
       if (entry.pending) renderState(panel.account, entry.pending);
@@ -210,16 +217,50 @@
     if (window.PioLeveling && window.PioLeveling.setTab) window.PioLeveling.setTab(activeTab);
   }
 
-  async function setTabCount(next) {
+  /**
+   * Muda o número de abas.
+   *
+   * `confirmar` só vale para remoção, e só vem do botão: remover apaga a
+   * credencial e a sessão das contas que saem, e isso é destrutivo o bastante
+   * para exigir um "sim". As chamadas internas (abrir espaço para um plano de
+   * cadastro) só crescem, e nunca passam por aqui.
+   */
+  async function setTabCount(next, confirmar) {
     const target = Math.min(MAX_TABS, Math.max(1, next));
+    if (target === tabs) return;
 
-    // Remover uma aba esconderia um monitor que continua rodando, sem botão
-    // para desligá-lo. Desligar antes é o que mantém a barra fiel ao que existe.
     if (target < tabs) {
-      for (let i = target * PER_TAB; i < tabs * PER_TAB; i++) {
-        if (!ACTIVE.has(stateOf(i).status)) continue;
-        await api.levelingStop(i).catch(e => report('leveling:stop', e));
+      const primeira = target * PER_TAB;
+      if (confirmar) {
+        const comDados = [];
+        for (let i = primeira; i < tabs * PER_TAB; i++) {
+          const entry = accountState.get(i);
+          if (entry && entry.name) comDados.push(`Conta ${i + 1}: ${entry.name}`);
+        }
+        const aviso = [
+          `Remover ${tabs - target} aba(s) apaga as contas ${primeira + 1} a ${tabs * PER_TAB}.`,
+          'Os dados serão apagados: usuário, senha, token de sessão e o login guardado no navegador.',
+          comDados.length ? 'Contas com login agora:\n' + comDados.join('\n') : '',
+          'A conta 1 nunca é apagada. Confirmar?'
+        ].filter(Boolean).join('\n\n');
+        if (!window.confirm(aviso)) return;
+      }
+
+      // Desligar antes de apagar: um monitor rodando com credencial que já não
+      // existe ficaria tentando reconectar sem nada para usar.
+      for (let i = primeira; i < tabs * PER_TAB; i++) {
+        if (ACTIVE.has(stateOf(i).status)) {
+          await api.levelingStop(i).catch(e => report('leveling:stop', e));
+        }
         accountState.delete(i);
+      }
+
+      if (confirmar && api.levelingClearCredsFrom) {
+        // `Math.max(1, ...)` é redundante com a guarda do principal, e está
+        // aqui porque a regra "a conta 1 fica" não deve depender de um lado só.
+        await api.levelingClearCredsFrom(Math.max(1, primeira))
+          .catch(e => report('creds:clear-from', e));
+        if (window.PioLeveling) window.PioLeveling.refreshCreds?.();
       }
     }
 
@@ -235,6 +276,92 @@
     }
   }
 
+  /**
+   * A rota de saída, ao lado do nome da conta.
+   *
+   * Existe para a pergunta "por qual IP esta conta está saindo?" ter resposta
+   * na tela, e não só no pool: é com ela que se nota duas contas no mesmo
+   * endereço antes de o servidor recusar com `session.multi_account_ip`.
+   */
+  function paintRoute(index) {
+    const panel = panelOf(index);
+    if (!panel || !panel.route) return;
+    const rota = stateOf(index).route;
+
+    if (!rota) {
+      panel.route.textContent = '';
+      panel.route.className = 'panel-route';
+      panel.route.title = '';
+      return;
+    }
+
+    // O IP é o que importa quando existe: é ele que o servidor vê. O rótulo do
+    // proxy é o host, útil para achar a linha no pool.
+    const texto = rota.kind === 'proxy'
+      ? (rota.ip ? `${rota.ip} · ${rota.label}` : rota.label)
+      : rota.label;
+
+    panel.route.textContent = texto;
+    panel.route.className = 'panel-route'
+      + (rota.kind === 'local' ? ' is-local' : '')
+      + (rota.ok ? '' : ' is-warn');
+    panel.route.title = rota.kind === 'proxy'
+      ? (rota.ok
+        ? `Esta conta sai pelo proxy ${rota.label}${rota.ip ? ` (IP ${rota.ip})` : ''}.`
+        : `O proxy ${rota.label} está com status "${rota.status}": teste-o no pool.`)
+      : rota.kind === 'local'
+        ? 'Esta conta sai pelo IP da máquina. Só as duas primeiras contas podem.'
+        : 'Sem proxy atribuído: esta conta não abre até o pool ter um proxy funcional.';
+  }
+
+  /**
+   * O painel de uma conta que não pode abrir. Diz o que falta, no lugar onde a
+   * WebView estaria — um painel vazio deixaria o usuário recarregando à toa.
+   */
+  function paintBlocked(index, motivo) {
+    const panel = panelOf(index);
+    if (!panel) return;
+    unloadGame(index);
+
+    let aviso = panel.body.querySelector('[data-role="blocked"]');
+    if (!aviso) {
+      aviso = document.createElement('div');
+      aviso.dataset.role = 'blocked';
+      aviso.className = 'panel-blocked';
+      panel.body.appendChild(aviso);
+    }
+    aviso.textContent = '';
+
+    const titulo = document.createElement('strong');
+    titulo.textContent = `Conta ${index + 1} bloqueada`;
+    const texto = document.createElement('p');
+    texto.textContent = motivo || 'sem rota de saída.';
+    const dica = document.createElement('p');
+    dica.className = 'panel-blocked-hint';
+    dica.textContent = 'Importe e teste um proxy no pool: cada proxy aprovado abre duas contas.';
+
+    const botao = document.createElement('button');
+    botao.type = 'button';
+    botao.textContent = 'Gerenciar proxies';
+    botao.onclick = () => {
+      try {
+        const r = api.proxiesWindow && api.proxiesWindow();
+        if (r && typeof r.catch === 'function') r.catch(e => report('proxies:window', e));
+      } catch (e) {
+        report('proxies:window', e);
+      }
+    };
+
+    aviso.append(titulo, texto, dica, botao);
+  }
+
+  /** Tira o aviso de bloqueio, quando a conta ganha rota. */
+  function clearBlocked(index) {
+    const panel = panelOf(index);
+    const aviso = panel && panel.body.querySelector('[data-role="blocked"]');
+    if (aviso) aviso.remove();
+  }
+
   // --------------------------------------------------------------- webview
 
   /**
@@ -245,6 +372,22 @@
     const panel = panelOf(index);
     if (!panel || ACTIVE.has(stateOf(index).status) || panel.root.hidden) return;
     if (panel.view) return;
+
+    /*
+     * Sem rota, sem jogo. Só as duas primeiras contas saem pelo IP da máquina;
+     * as outras só abrem com um proxy que passou no teste.
+     *
+     * A WebView é o caminho silencioso: ela carregava o jogo pelo IP local sem
+     * pedir nada a ninguém, e o servidor respondia `session.multi_account_ip` —
+     * ou pior, aceitava e deixava duas contas no mesmo endereço. O painel passa
+     * a explicar o que falta em vez de carregar.
+     */
+    const porta = stateOf(index).canOpen;
+    if (porta && porta.ok === false) {
+      paintBlocked(index, porta.motivo);
+      return;
+    }
+
     try {
       const view = document.createElement('webview');
       view.dataset.role = 'view';
@@ -498,7 +641,69 @@
       api.onLevelingPartyStep(step => setPartyStatus(partyText(step), true));
     }
 
+    if (api.onSignupReady) {
+      api.onSignupReady(saved => openSignupTabs(saved).catch(e => report('signup:ready', e)));
+    }
+
+    if (api.onSignupMonitor) api.onSignupMonitor(data => onSignupMonitor(data || {}));
+
     if (api.onWindowVisible) api.onWindowVisible(onVisibilityChange);
+  }
+
+  /**
+   * Abre uma janela de cadastro por conta reservada.
+   *
+   * A janela roda na partição da própria conta, então ela já sai pelo proxy
+   * dela e o login que o cadastro gravar fica exatamente onde a WebView do
+   * painel vai procurar. Terminado o cadastro, o principal fecha a janela e
+   * avisa por `onSignupDone`, e o painel recarrega já logado.
+   *
+   * Por isso aqui não se troca de aba nem se mexe em painel: a conta não
+   * precisa estar visível para ser cadastrada. O painel só é tocado no fim,
+   * quando há sessão para mostrar.
+   */
+  async function openSignupTabs(saved) {
+    const lista = Array.isArray(saved) ? saved.filter(s => s && s.index >= 0) : [];
+    if (!lista.length) return;
+
+    // A barra acompanha a capacidade que o principal abriu, senão a conta
+    // existe em credencial e não tem painel onde aparecer depois.
+    const precisa = Math.floor(Math.max(...lista.map(s => s.index)) / PER_TAB) + 1;
+    if (precisa > tabs) await setTabCount(precisa);
+
+    for (const s of lista) {
+      const r = await api.levelingSignupTab?.(s.index).catch(e => {
+        report('signup:tab', e);
+        return null;
+      });
+      if (r && r.ok === false) {
+        window.alert(`Não foi possível abrir o cadastro da conta ${s.index + 1}: ${r.error || 'erro'}`);
+      }
+    }
+
+    const semProxy = lista.filter(s => !s.proxy).map(s => s.username);
+    if (semProxy.length) {
+      window.alert(
+        `Sem proxy livre no pool para: ${semProxy.join(', ')}.\n\n`
+        + 'Essas contas vão sair pelo IP da máquina, e o servidor recusa duas contas no mesmo IP. '
+        + 'Importe proxies antes de concluir o cadastro.'
+      );
+    }
+  }
+
+  /**
+   * O cadastro terminou e o processo principal já ligou o monitor da conta.
+   *
+   * A WebView **não** é recriada: ela brigaria com o monitor pela única sessão
+   * que o servidor permite por conta. Só o HUD é pintado, e o painel passa a
+   * mostrar a caçada em vez do jogo.
+   */
+  function onSignupMonitor({ index }) {
+    const entry = stateOf(index);
+    entry.status = 'connecting';
+    entry.error = '';
+    unloadGame(index);
+    paintPanel(index);
   }
 
   // --------------------------------------------------------------- modal/barra
@@ -818,6 +1023,13 @@
 
     const marketBtn = document.getElementById('marketBtn');
     if (marketBtn) marketBtn.onclick = () => openMarket();
+
+    // Proxies e Cadastro
+    const proxiesBtn = document.getElementById('proxiesBtn');
+    if (proxiesBtn) proxiesBtn.onclick = () => api.proxiesWindow?.().catch(e => report('proxies', e));
+    const signupBtn = document.getElementById('signupBtn');
+    if (signupBtn) signupBtn.onclick = () => api.signupWindow?.().catch(e => report('signup', e));
+
     const sniperBtn = document.getElementById('sniperBtn');
     if (sniperBtn) sniperBtn.onclick = () => openSniper();
     const expeditionBtn = document.getElementById('expeditionBtn');
@@ -834,6 +1046,8 @@
     if (statsBtn) statsBtn.onclick = () => openStats();
     const forgeBtn = document.getElementById('forgeBtn');
     if (forgeBtn) forgeBtn.onclick = () => openForge();
+    const othersBtn = document.getElementById('othersBtn');
+    if (othersBtn) othersBtn.onclick = () => api.othersWindow && api.othersWindow();
 
     const automationBtn = document.getElementById('automationBtn');
     const automationItems = document.getElementById('automationItems');
@@ -903,10 +1117,11 @@
     const add = document.getElementById('tabAdd');
     if (add) add.onclick = () => setTabCount(tabs + 1).catch(e => report('tabs', e));
 
-    // Remover a aba não apaga credencial nem derruba monitor: ela some da
-    // barra e volta igual se for recriada.
+    // Remover a aba **apaga** as credenciais e a sessão das contas que saem,
+    // então passa por confirmação. Sem isso, recriar a aba traria de volta um
+    // login que o usuário achava que tinha ido embora.
     const remove = document.getElementById('tabRemove');
-    if (remove) remove.onclick = () => setTabCount(tabs - 1).catch(e => report('tabs', e));
+    if (remove) remove.onclick = () => setTabCount(tabs - 1, true).catch(e => report('tabs', e));
 
     // Abrir já em monitor: nenhum renderer do jogo é criado no boot. Vale para
     // o launcher inteiro — por aba, o botão gravava só na aba visível, e as
@@ -1002,9 +1217,39 @@
     }
   }
 
+  /**
+   * Recebe as rotas do pool e decide o que cada painel mostra.
+   *
+   * O shell é quem cria as WebViews, então é aqui que a regra "sem proxy, sem
+   * view" tem efeito: uma conta que perdeu a rota tem a view descartada na
+   * hora, e não na próxima vez que alguém trocar de aba.
+   */
+  function applyRoutes(contas) {
+    const lista = Array.isArray(contas) ? contas : [];
+    lista.forEach((conta, index) => {
+      if (!conta) return;
+      const entry = stateOf(index);
+      entry.route = conta.route || null;
+      entry.canOpen = conta.canOpen || null;
+      paintRoute(index);
+
+      const bloqueada = entry.canOpen && entry.canOpen.ok === false;
+      if (bloqueada) {
+        // Nem monitor nem WebView: a rota é condição das duas, e deixar a view
+        // viva seria manter a conta saindo pelo IP errado.
+        if (!ACTIVE.has(entry.status)) paintBlocked(index, entry.canOpen.motivo);
+      } else {
+        clearBlocked(index);
+        // Ganhou rota: a view volta, se a conta não está no monitor.
+        if (!ACTIVE.has(entry.status)) loadGame(index);
+      }
+    });
+  }
+
   window.PioShell = {
     panels,
     accountState,
+    applyRoutes,
     get tabs() { return tabs; },
     get activeTab() { return activeTab; },
     get prefs() { return prefs; },
@@ -1022,6 +1267,8 @@
     openSniper,
     toggleHeadless,
     startMonitors,
+    openSignupTabs,
+    onSignupMonitor,
     assembleParty,
     loadGame,
     unloadGame

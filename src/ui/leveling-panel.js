@@ -21,6 +21,16 @@
   /** Contas por aba. O modal mostra exatamente um grupo destes. */
   const ACCOUNTS = 4;
 
+  /**
+   * Quantas contas podem sair pelo IP da máquina.
+   *
+   * O servidor recusa mais de duas contas no mesmo endereço, e o IP local é um
+   * endereço como outro qualquer. Duplicado de `LevelingProxyPool` porque o
+   * renderer não tem `require`; o valor que vale é o do processo principal, que
+   * chega em `canOpen`. Aqui ele só cobre o status que vier sem o campo.
+   */
+  const LOCAL_IP_CAPACITY = 2;
+
   const STATUS_TEXT = {
     disconnected: 'Desligado',
     connecting: 'Conectando',
@@ -72,6 +82,8 @@
       proxy: '',
       /** A rota tem usuário e nenhuma senha? O proxy recusaria a conexão. */
       proxyIncomplete: false,
+      /** O assistente reservou o nome, mas a conta ainda não passou pelo captcha. */
+      pendingSignup: false,
       status: 'disconnected',
       error: '',
       ended: '',
@@ -219,8 +231,16 @@
         acc.hasToken = !!entry.hasToken;
         acc.proxy = entry.proxy || '';
         acc.proxyIncomplete = !!entry.proxyIncomplete;
+        acc.pendingSignup = !!entry.pendingSignup;
+        acc.route = entry.route || null;
+        acc.canOpen = entry.canOpen || null;
       });
       for (let i = 0; i < this.accounts.length; i++) this.paint(i);
+      // A barra de abas também mostra a rota de cada conta, e ela vive no
+      // shell: sem o aviso, o painel e o cabeçalho discordariam.
+      if (window.PioShell && window.PioShell.applyRoutes) {
+        window.PioShell.applyRoutes(status.accounts || []);
+      }
       if (!this.encrypted) {
         this.say('Atenção: o armazenamento seguro do sistema não está disponível; as senhas ficam em texto no disco.');
       }
@@ -266,10 +286,8 @@
             <button type="button" data-role="toggle" class="primary">Ativar monitor</button>
           </div>
           <div class="lv-fields lv-fields-proxy">
-            <input type="text" data-role="proxy" autocomplete="off" spellcheck="false"
-              placeholder="Proxy (vazio = meu IP)"
-              title="host:porta, host:porta:usuario:senha ou uma URL completa (http://, socks5://)">
-            <button type="button" data-role="saveProxy">Aplicar rota</button>
+            <span class="lv-route" data-role="proxy"></span>
+            <button type="button" data-role="saveProxy">Gerenciar proxies</button>
           </div>
           <div class="lv-account-meta" data-role="meta"></div>
         </div>
@@ -281,10 +299,7 @@
         const card = this.card(i);
         if (!card) continue;
         card.querySelector('[data-role="save"]').onclick = () => this.save(i);
-        card.querySelector('[data-role="saveProxy"]').onclick = () => this.saveProxy(i);
-        card.querySelector('[data-role="proxy"]').onkeydown = e => {
-          if (e.key === 'Enter') this.saveProxy(i);
-        };
+        card.querySelector('[data-role="saveProxy"]').onclick = () => this.openProxies();
         card.querySelector('[data-role="toggle"]').onclick = () => this.toggle(i);
         // Enter no campo de senha salva, que é o fluxo esperado.
         card.querySelector('[data-role="pass"]').onkeydown = e => {
@@ -314,30 +329,80 @@
       if (document.activeElement !== user) user.value = acc.username;
       user.disabled = active;
 
+      /*
+       * O formulário deixou de ser a via normal de preencher a credencial: ela
+       * é capturada quando o usuário faz login ou cadastro na própria aba do
+       * jogo. O placeholder conta isso, em vez de pedir uma senha que o usuário
+       * já digitou do outro lado.
+       */
       const pass = card.querySelector('[data-role="pass"]');
       pass.disabled = active;
-      pass.placeholder = acc.hasPassword ? 'Senha salva (deixe em branco)' : 'Senha';
+      pass.placeholder = acc.pendingSignup
+        ? 'Cadastre na aba do jogo'
+        : acc.hasPassword
+          ? 'Capturada no login da aba'
+          : 'Senha (ou faça login na aba)';
 
       card.querySelector('[data-role="save"]').disabled = active;
 
+      /*
+       * A rota é mostrada, não editada. O proxy virou um recurso do pool:
+       * são duas contas por proxy, e a atribuição é feita lá, onde dá para ver
+       * quantas vagas sobraram. Um campo de texto por conta escondia justamente
+       * isso — deixava colar o mesmo proxy em quatro contas e descobrir o
+       * limite só quando o servidor respondia `session.multi_account_ip`.
+       */
       const proxy = card.querySelector('[data-role="proxy"]');
-      // A senha volta mascarada, não apagada: reenviar o campo sem tocar nele
-      // preserva a senha salva, e uma rota sem senha fica visivelmente
-      // diferente de uma rota completa.
-      if (document.activeElement !== proxy) proxy.value = acc.proxy;
-      // Usuário sem senha: o proxy recusa a conexão antes do login, e o erro
-      // chega como falha de WebSocket, sem dizer o motivo.
-      proxy.classList.toggle('is-warn', !!acc.proxyIncomplete);
+      const rota = acc.route;
+      const porta = acc.canOpen;
+
+      /*
+       * O texto diz o IP quando há um: é o endereço que o servidor vê, e é por
+       * ele que se descobre duas contas saindo do mesmo lugar. O rótulo do
+       * proxy vem junto para achar a linha certa no pool.
+       */
+      if (rota && rota.kind === 'proxy') {
+        proxy.textContent = rota.ip ? `${rota.ip} · ${rota.label}` : rota.label;
+      } else if (rota ? rota.kind === 'local' : index < LOCAL_IP_CAPACITY) {
+        // Sem `route` no status — versão antiga do processo principal — o índice
+        // decide. Tratar a conta 1 como bloqueada por falta de um campo seria
+        // alarme falso no caso mais comum que existe.
+        proxy.textContent = 'meu IP · permitido nas 2 primeiras contas';
+      } else {
+        proxy.textContent = 'sem proxy · esta conta não abre';
+      }
+
+      // Avisa quando a rota não serve: proxy reprovado, rota sem senha, ou
+      // conta sem proxy além das duas que podem usar o IP da máquina.
+      const ruim = !!acc.proxyIncomplete || (rota && !rota.ok) || !!(porta && porta.ok === false);
+      proxy.classList.toggle('is-warn', ruim);
       proxy.title = acc.proxyIncomplete
-        ? 'Esta rota tem usuário mas não tem senha: o proxy vai recusar a conexão. Cole host:porta:usuario:senha.'
-        : 'host:porta, host:porta:usuario:senha ou uma URL completa (http://, socks5://)';
+        ? 'Esta rota tem usuário mas não tem senha: o proxy vai recusar a conexão.'
+        : porta && porta.ok === false
+          ? `Esta conta está bloqueada: ${porta.motivo}.`
+          : rota && rota.kind === 'local'
+            ? 'Sai pelo IP da máquina. O servidor recusa mais de duas contas no mesmo endereço.'
+            : 'A rota vem do pool de proxies, que limita duas contas por proxy.';
 
       const toggle = card.querySelector('[data-role="toggle"]');
       toggle.textContent = active ? 'Desligar monitor' : 'Ativar monitor';
       toggle.classList.toggle('is-on', active);
       toggle.classList.toggle('primary', !active);
-      toggle.disabled = !active && !acc.hasPassword;
-      toggle.title = toggle.disabled ? 'Salve usuário e senha antes de ativar.' : '';
+      /*
+       * Conta pendente de cadastro não liga o monitor: ela ainda não existe no
+       * servidor, e tentar logar só daria erro de credencial — que não diz ao
+       * usuário o que ele precisa fazer.
+       */
+      const semRota = !!(porta && porta.ok === false);
+      toggle.disabled = !active && (!acc.hasPassword || acc.pendingSignup || semRota);
+      toggle.title = !toggle.disabled ? ''
+        : semRota
+          // A rota vem antes da credencial: conectar sem proxy é o que o
+          // servidor pune, e ele pune a conta, não a tentativa.
+          ? `Sem rota de saída: ${porta.motivo}.`
+          : acc.pendingSignup
+            ? 'Esta conta ainda não foi criada: conclua o cadastro na aba do jogo.'
+            : 'Faça login na aba do jogo, ou salve usuário e senha aqui.';
 
       this.paintMeta(index);
     },
@@ -415,42 +480,16 @@
     },
 
     /**
-     * A rota vale para os dois modos: o principal reaponta a partição da
-     * WebView e o monitor passa a discar pelo mesmo proxy. Um monitor em curso
-     * cai, porque ele está conectado pela rota antiga.
+     * Abre a janela do pool, que é onde a rota se decide.
+     *
+     * O card não atribui proxy porque a decisão não é local: ela depende de
+     * quantas vagas o pool tem e de quais proxies respondem. Mandar o usuário
+     * para lá é mais honesto que oferecer um campo que não sabe disso.
      */
-    async saveProxy(index) {
+    openProxies() {
       const api = this.api;
-      const card = this.card(index);
-      if (!api || !card || typeof api.levelingSetProxy !== 'function') return;
-
-      const value = card.querySelector('[data-role="proxy"]').value.trim();
-      try {
-        const result = await api.levelingSetProxy(index, value);
-        if (result && result.status) this.applyCreds(result.status);
-        if (!result || result.ok === false) {
-          this.say(`Conta ${index + 1}: não foi possível salvar a rota.`);
-          return;
-        }
-        const acc = this.accounts[index];
-        if (acc) {
-          acc.status = 'disconnected';
-          acc.error = '';
-          acc.state = null;
-          this.paint(index);
-        }
-        // Rota com usuário e sem senha é quase sempre colagem incompleta, e o
-        // sintoma dela não se parece com a causa: o proxy recusa o CONNECT e o
-        // monitor mostra "erro de conexão no WebSocket", sem falar em proxy.
-        if (acc && acc.proxyIncomplete) {
-          this.say(`Conta ${index + 1}: a rota tem usuário mas não tem senha — o proxy vai recusar a conexão. Cole host:porta:usuario:senha.`);
-          return;
-        }
-        const onde = value ? `saindo por ${(acc && acc.proxy) || value}` : 'saindo pelo IP local';
-        this.say(`Conta ${index + 1}: ${onde}. Recarregue o painel para a WebView usar a rota nova.`);
-      } catch (err) {
-        this.say(`Conta ${index + 1}: ${err.message}`);
-      }
+      if (!api || typeof api.proxiesWindow !== 'function') return;
+      api.proxiesWindow().catch(err => this.say(`Proxies: ${err.message}`));
     },
 
     async toggle(index) {

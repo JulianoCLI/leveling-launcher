@@ -23,7 +23,36 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   levelingGetCreds: () => ipcRenderer.invoke('leveling:creds:get'),
   levelingSetCreds: (index, username, password) => ipcRenderer.invoke('leveling:creds:set', index, username, password),
   levelingClearCreds: (index) => ipcRenderer.invoke('leveling:creds:clear', index),
-  levelingSetProxy: (index, proxy) => ipcRenderer.invoke('leveling:proxy:set', index, proxy),
+  
+  // Pool de proxies
+  levelingProxyImport: (text) => ipcRenderer.invoke('leveling:proxy:import', text),
+  levelingProxyPool: () => ipcRenderer.invoke('leveling:proxy:pool'),
+  levelingProxyTest: (proxyId) => ipcRenderer.invoke('leveling:proxy:test', proxyId),
+  levelingProxyRemove: (proxyId) => ipcRenderer.invoke('leveling:proxy:remove', proxyId),
+
+  // Assistente de cadastro. Monta e guarda o plano; o cadastro em si acontece
+  // na aba do jogo, porque o captcha exige o navegador.
+  levelingSignupClasses: () => ipcRenderer.invoke('leveling:signup:classes'),
+  levelingSignupPlan: (opts) => ipcRenderer.invoke('leveling:signup:plan', opts),
+  levelingSignupSave: () => ipcRenderer.invoke('leveling:signup:save'),
+  // Janela de cadastro da conta: roda na partição dela, logo já sai pelo proxy
+  // da conta e o login fica guardado onde a WebView do painel vai ler.
+  levelingSignupTab: (index) => ipcRenderer.invoke('leveling:signup:tab', index),
+  // A conta nova entrou em modo monitor sozinha, depois dos modais.
+  onSignupMonitor: (cb) => ipcRenderer.on('leveling:signup:monitor', (_e, data) => cb(data)),
+  // Apaga credencial e sessão das contas a partir de um slot. Usado ao remover
+  // abas: a conta 1 nunca é apagada.
+  levelingClearCredsFrom: (from) => ipcRenderer.invoke('leveling:creds:clear-from', from),
+  // As duas janelas novas fecham pelo mesmo handler do mercado: ele fecha a
+  // janela do remetente, não a do mercado especificamente.
+  signupWindowClose: () => ipcRenderer.invoke('leveling:market:window-close'),
+  proxiesWindowClose: () => ipcRenderer.invoke('leveling:market:window-close'),
+  
+  // Evento quando credencial é capturada pela WebView
+  onCredsCaptured: (cb) => ipcRenderer.on('leveling:creds:captured', (_e, data) => cb(data)),
+  // O assistente guardou um plano: o launcher abre as abas das contas
+  // reservadas, cada uma já na sua rota e com o formulário preenchido.
+  onSignupReady: (cb) => ipcRenderer.on('leveling:signup:ready', (_e, data) => cb(data)),
 
   // Grupo: monta uma PT com as contas da aba que já estão em modo monitor.
   levelingAssembleParty: (indexes) => ipcRenderer.invoke('leveling:party:assemble', indexes),
@@ -81,6 +110,12 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   // Avisa que entraram vendas novas; a aba aberta se atualiza sozinha.
   onMarket: (cb) => ipcRenderer.on('leveling:market', (_e, data) => cb(data)),
   onMarketSold: (cb) => ipcRenderer.on('leveling:market-sold', (_e, data) => cb(data)),
+
+  // Proxies: gerenciar pool de proxies em janela separada
+  proxiesWindow: () => ipcRenderer.invoke('leveling:proxies:window'),
+
+  // Cadastro assistido: criar contas em lote
+  signupWindow: () => ipcRenderer.invoke('leveling:signup:window'),
 
   // Sniper: compra sozinho o item que entrar abaixo do teto. A configuração
   // inteira vai e volta junta — o interruptor é um campo dela, não um canal
@@ -151,6 +186,13 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   // Cada anúncio ou resgate empurra uma linha: a janela aberta acompanha sem
   // perguntar.
   onAutosell: (cb) => ipcRenderer.on('leveling:autosell', (_e, data) => cb(data)),
+
+  othersGet: () => ipcRenderer.invoke('leveling:others:get'),
+  othersSet: (config) => ipcRenderer.invoke('leveling:others:set', config),
+  othersPoll: () => ipcRenderer.invoke('leveling:others:poll'),
+  othersLogClear: () => ipcRenderer.invoke('leveling:others:log-clear'),
+  othersWindow: () => ipcRenderer.invoke('leveling:others:window'),
+  onOthers: (cb) => ipcRenderer.on('leveling:others', (_e, data) => cb(data)),
 
   // Câmbio: desce o ouro de todas as contas pela cadeia até a que concentra
   // tudo, uma troca por vez. A configuração inteira vai e volta junta, como nas
