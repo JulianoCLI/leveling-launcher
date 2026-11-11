@@ -288,6 +288,7 @@
           <div class="lv-fields lv-fields-proxy">
             <span class="lv-route" data-role="proxy"></span>
             <button type="button" data-role="saveProxy">Gerenciar proxies</button>
+            <button type="button" data-role="wipe" class="danger">Apagar conta</button>
           </div>
           <div class="lv-account-meta" data-role="meta"></div>
         </div>
@@ -301,6 +302,7 @@
         card.querySelector('[data-role="save"]').onclick = () => this.save(i);
         card.querySelector('[data-role="saveProxy"]').onclick = () => this.openProxies();
         card.querySelector('[data-role="toggle"]').onclick = () => this.toggle(i);
+        card.querySelector('[data-role="wipe"]').onclick = () => this.wipe(i);
         // Enter no campo de senha salva, que é o fluxo esperado.
         card.querySelector('[data-role="pass"]').onkeydown = e => {
           if (e.key === 'Enter') this.save(i);
@@ -344,6 +346,10 @@
           : 'Senha (ou faça login na aba)';
 
       card.querySelector('[data-role="save"]').disabled = active;
+
+      // Apagar uma conta com o monitor rodando deixaria o socket falando por
+      // uma credencial que já não existe. Desligue primeiro.
+      card.querySelector('[data-role="wipe"]').disabled = active;
 
       /*
        * A rota é mostrada, não editada. O proxy virou um recurso do pool:
@@ -474,6 +480,40 @@
         this.say(result && result.ok
           ? `Conta ${index + 1}: credenciais salvas.`
           : `Conta ${index + 1}: não foi possível salvar.`);
+      } catch (err) {
+        this.say(`Conta ${index + 1}: ${err.message}`);
+      }
+    },
+
+    /**
+     * Apaga a conta do slot, de verdade e sem desfazer.
+     *
+     * A confirmação lista o que sai porque o botão não tem volta: o histórico
+     * de vendas daquela conta só existe neste computador, e o servidor não
+     * devolve o que o banco apagar. O slot fica no lugar, vazio — é ele que
+     * mantém os números das outras contas onde estão.
+     */
+    async wipe(index) {
+      const api = this.api;
+      if (!api || typeof api.levelingWipeAccount !== 'function') return;
+
+      const acc = this.accounts[index] || {};
+      const quem = acc.username ? ` (${acc.username})` : '';
+      const confirmado = window.confirm(
+        `Apagar a Conta ${index + 1}${quem}?\n\n`
+        + 'Isso remove do computador: usuário e senha, o token de sessão, o '
+        + 'login salvo na aba do jogo, a rota de proxy, as vendas registradas '
+        + 'desta conta e as preferências dela nas automações.\n\n'
+        + 'A conta continua existindo no servidor. Esta ação não tem desfazer.'
+      );
+      if (!confirmado) return;
+
+      try {
+        const result = await api.levelingWipeAccount(index);
+        if (result && result.status) this.applyCreds(result.status);
+        this.say(result && result.ok
+          ? `Conta ${index + 1}: apagada deste computador.`
+          : `Conta ${index + 1}: ${(result && result.error) || 'não foi possível apagar.'}`);
       } catch (err) {
         this.say(`Conta ${index + 1}: ${err.message}`);
       }

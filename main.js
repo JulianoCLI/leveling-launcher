@@ -323,6 +323,74 @@ function writePrefs(patch) {
   return next;
 }
 
+/**
+ * Tira o índice de uma conta de todas as configurações por conta.
+ *
+ * Existe porque apagar a credencial não apagava nada disso: a conta saía do
+ * disco e continuava excluída da expedição, com build de status salva e com
+ * regras do sniper pagando por ela. O slot volta a ser usado mais tarde — a
+ * partição é persistente — e a conta nova herdava as decisões da anterior.
+ *
+ * **Remove, não reindexa.** Os índices das outras contas não mudam: o slot
+ * continua existindo, vazio. Reindexar faria a conta 4 herdar as preferências
+ * da 5, que é um estrago silencioso e maior que o que se quis arrumar.
+ *
+ * `cambio.destino` é a exceção que exige cuidado: é **1-based** (ver
+ * `leveling-cambio.js`, `destinoIdx = cfg.destino - 1`), enquanto todo o resto
+ * é 0-based. Se a conta apagada era o destino, o destino volta ao padrão — um
+ * câmbio apontando para slot morto moveria ouro para uma conta que não existe,
+ * e isso é a única coisa aqui sem desfazer.
+ *
+ * @returns {object} Um patch para `writePrefs`, só com o que mudou de dono.
+ */
+function limparPrefsDaConta(prefs, index) {
+  const i = Number(index);
+  if (!prefs || !Number.isInteger(i) || i < 0) return {};
+
+  const semConta = lista => (Array.isArray(lista) ? lista.filter(n => Number(n) !== i) : []);
+  const patch = {};
+
+  // As listas de "não faça nesta conta", iguais em todas as automações.
+  for (const chave of ['expedition', 'boss', 'forge', 'cambio', 'others', 'stats']) {
+    const cfg = prefs[chave];
+    if (!cfg || typeof cfg !== 'object') continue;
+    patch[chave] = { ...cfg, disabled: semConta(cfg.disabled) };
+  }
+
+  // O auto-anunciar chama a dele de `excluded`, mas o sentido é o mesmo.
+  if (prefs.autosell && typeof prefs.autosell === 'object') {
+    patch.autosell = { ...prefs.autosell, excluded: semConta(prefs.autosell.excluded) };
+  }
+
+  // A build de status é por conta, com o índice como chave de texto.
+  if (prefs.stats && prefs.stats.porConta && typeof prefs.stats.porConta === 'object') {
+    const porConta = { ...prefs.stats.porConta };
+    delete porConta[String(i)];
+    patch.stats = { ...(patch.stats || prefs.stats), porConta };
+  }
+
+  // Cada regra do sniper diz qual conta paga. A conta apagada não paga mais
+  // nada: a regra volta para a conta 1, que é o padrão de `int(source.account)`.
+  if (prefs.sniper && Array.isArray(prefs.sniper.rules)) {
+    patch.sniper = {
+      ...prefs.sniper,
+      rules: prefs.sniper.rules.map(r =>
+        (r && Number(r.account) === i ? { ...r, account: 0 } : r))
+    };
+  }
+
+  // `destino` é 1-based: a conta `i` é o destino `i + 1`.
+  if (prefs.cambio && Number(prefs.cambio.destino) === i + 1) {
+    const padrao = levelingCambio.defaultConfig().destino;
+    patch.cambio = { ...(patch.cambio || prefs.cambio), destino: padrao };
+    // Sem destino de verdade o câmbio não deve rodar: o padrão é a conta 1, e
+    // mandar o ouro para lá por conta própria seria decidir pelo usuário.
+    if (padrao === i + 1) patch.cambio.enabled = false;
+  }
+
+  return patch;
+}
+
 // ----------------------------------------------------------------------- sessões
 
 /**
@@ -1377,34 +1445,104 @@ ipcMain.handle('leveling:signup:save', event => {
  * A vaga no pool de proxies é devolvida: ela está presa a um índice de conta
  * que não existe mais, e sem liberar o pool esgotaria com contas fantasmas.
  */
-ipcMain.handle('leveling:creds:clear-from', async (event, from) => {
-  launcherOnly(event);
-  const inicio = Math.max(1, +from || 1); // A conta 1 nunca entra.
+/**
+ * Apaga de verdade as contas de uma lista de índices.
+ *
+ * Uma só rotina para os dois caminhos — "apagar conta" e "remover aba" —
+ * porque a diferença entre eles era justamente o defeito: remover a aba
+ * limpava credencial, sessão e proxy, e deixava para trás as preferências por
+ * conta e o histórico de vendas. Recriar a aba trazia de volta a conta
+ * "apagada" nas listas de exclusão, na build de status e nos anúncios.
+ *
+ * O que sai, por conta: monitor, atualização pendente, vaga no pool,
+ * credencial inteira (`wipe`, não `clear`), armazenamento da partição,
+ * credenciais de proxy em memória, vendas carimbadas no banco do mercado e as
+ * preferências por conta.
+ *
+ * O que **não** sai: a capacidade. `accountCount` e `maxAccounts` não
+ * encolhem — a partição é persistente e os índices das outras contas apontam
+ * para slots que precisam continuar onde estão.
+ */
+async function apagarContas(indices) {
   const data = levelingCredentials.load();
   const pool = data.proxyPool || new LevelingProxyPool();
   const apagados = [];
 
-  for (let i = inicio; i < data.accounts.length; i++) {
+  for (const i of indices) {
     const acc = data.accounts[i];
     const tinha = acc && (acc.username || acc.password || acc.token);
+    // Parar primeiro: o monitor ficaria rodando com credencial que já não existe.
     levelingHeadlessManager.stop(i);
+    // Sem isso, o lote seguinte entregaria um estado de uma conta já desligada.
+    pendingUpdates.delete(i);
     pool.release(i);
-    data.accounts[i] = { username: '', password: '', token: '', proxy: '', email: '', signup: false };
+    data.accounts[i] = {
+      username: '', password: '', token: '', proxy: '', email: '',
+      signup: false, classId: ''
+    };
     if (tinha) apagados.push(i);
   }
 
   data.proxyPool = pool;
   levelingCredentials.save(data);
 
-  for (const i of apagados) {
+  for (const i of indices) {
     try {
       await session.fromPartition('persist:conta' + (i + 1)).clearStorageData();
+      // A senha do proxy vive em memória, indexada pelo número da conta.
+      proxyAuth.delete(i + 1);
       applyAccountProxy(i);
     } catch (e) {
-      logErro('creds-clear', `conta${i + 1}: ${e.message}`);
+      logErro('creds-wipe', `conta${i + 1}: ${e.message}`);
+    }
+    try {
+      market().deleteBySeller(i);
+    } catch (e) {
+      logErro('creds-wipe', `mercado conta${i + 1}: ${e.message}`);
     }
   }
 
+  // Um `writePrefs` só para todas as contas: cada chamada reescreve o arquivo.
+  try {
+    let prefs = readPrefs();
+    let patch = {};
+    for (const i of indices) {
+      patch = { ...patch, ...limparPrefsDaConta({ ...prefs, ...patch }, i) };
+    }
+    if (Object.keys(patch).length) writePrefs(patch);
+  } catch (e) {
+    logErro('creds-wipe', 'prefs: ' + e.message);
+  }
+
+  return apagados;
+}
+
+ipcMain.handle('leveling:creds:clear-from', async (event, from) => {
+  launcherOnly(event);
+  const inicio = Math.max(1, +from || 1); // A conta 1 nunca entra.
+  const total = levelingCredentials.load().accounts.length;
+  const indices = [];
+  for (let i = inicio; i < total; i++) indices.push(i);
+
+  const apagados = await apagarContas(indices);
+  return { ok: true, cleared: apagados, status: levelingCredentials.getPublicStatus() };
+});
+
+/**
+ * Apaga uma conta só, a pedido do botão "Apagar conta" do card.
+ *
+ * O slot fica vazio no lugar: encolher a lista moveria as contas seguintes
+ * para partições que não são as delas.
+ */
+ipcMain.handle('leveling:creds:wipe', async (event, index) => {
+  launcherOnly(event);
+  const i = Number(index);
+  const total = levelingCredentials.load().accounts.length;
+  if (!Number.isInteger(i) || i < 0 || i >= total) {
+    return { ok: false, error: 'Conta inválida.', status: levelingCredentials.getPublicStatus() };
+  }
+
+  const apagados = await apagarContas([i]);
   return { ok: true, cleared: apagados, status: levelingCredentials.getPublicStatus() };
 });
 

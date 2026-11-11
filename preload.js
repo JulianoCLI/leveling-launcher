@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   levelingGetCreds: () => ipcRenderer.invoke('leveling:creds:get'),
   levelingSetCreds: (index, username, password) => ipcRenderer.invoke('leveling:creds:set', index, username, password),
   levelingClearCreds: (index) => ipcRenderer.invoke('leveling:creds:clear', index),
+  // Apaga a conta inteira: credencial, sessão, proxy, vendas e preferências.
+  levelingWipeAccount: (index) => ipcRenderer.invoke('leveling:creds:wipe', index),
   
   // Pool de proxies
   levelingProxyImport: (text) => ipcRenderer.invoke('leveling:proxy:import', text),

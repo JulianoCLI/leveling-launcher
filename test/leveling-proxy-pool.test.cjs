@@ -31,7 +31,7 @@ test('proxy-pool: import ignora linhas vazias e comentários', async () => {
 
 test('proxy-pool: import deduplica por URL normalizada', async () => {
   const pool = new LevelingProxyPool();
-  const result = pool.importText('127.0.0.1:8080\nhttp://127.0.0.1:8080\n127.0.0.1:8080');
+  const result = pool.importText('127.0.0.1:8080\nhttp://127.0.0.1:8080/\n127.0.0.1:8080');
   assert.equal(result.added.length, 1, 'deve adicionar apenas uma vez');
   assert.equal(result.duplicates.length, 2, 'deve reportar 2 duplicatas');
   assert.equal(pool.proxies.length, 1);
@@ -44,6 +44,70 @@ test('proxy-pool: import com credenciais', async () => {
   assert.equal(pool.proxies.length, 2);
   assert.ok(pool.proxies[0].url.includes('user'));
   assert.ok(pool.proxies[1].url.startsWith('socks5://'));
+});
+
+test('proxy-pool: proxy rotativo não colapsa num id só', async () => {
+  /*
+   * O caso real: dez linhas do mesmo gateway, mesmo usuário, sessão codificada
+   * na senha. A chave de dedupe omitia a senha, então as dez viravam o mesmo
+   * id — um importado e nove "duplicatas".
+   */
+  const pool = new LevelingProxyPool();
+  const texto = Array.from({ length: 10 }, (_, i) => `gw.proxy.com:8000:user:sess${i}`).join('\n');
+
+  const r = pool.importText(texto);
+
+  assert.equal(r.added.length, 10, 'senha diferente é proxy diferente');
+  assert.equal(r.duplicates.length, 0);
+  assert.equal(pool.proxies.length, 10);
+  assert.equal(new Set(pool.proxies.map(p => p.id)).size, 10, 'ids distintos');
+});
+
+test('proxy-pool: added devolve as entradas completas, não só os ids', async () => {
+  // A tela faz `r.added.map(p => p.id)` para testar o que entrou. Com strings
+  // em `added` isso virava `undefined` e os proxies ficavam `pending` para
+  // sempre, o que mantinha toda conta de índice >= 2 sem rota.
+  const pool = new LevelingProxyPool();
+  const r = pool.importText('127.0.0.1:8080\n10.0.0.1:3128');
+
+  assert.equal(r.added.length, 2);
+  for (const entrada of r.added) {
+    assert.equal(typeof entrada, 'object');
+    assert.ok(entrada.id, '.id tem de estar definido');
+    assert.ok(entrada.url);
+    assert.ok(entrada.label);
+    assert.equal(entrada.status, 'pending');
+  }
+  assert.deepEqual(r.added.map(p => p.id), pool.proxies.map(p => p.id));
+});
+
+test('proxy-pool: import aceita vírgula, ponto-e-vírgula, espaço e CRLF', async () => {
+  // Quem copia de um painel raramente cola uma linha por proxy. Antes a
+  // colagem inteira virava uma única entrada inválida.
+  const pool = new LevelingProxyPool();
+  const r = pool.importText('10.0.0.1:8080,10.0.0.2:8080;10.0.0.3:8080 10.0.0.4:8080\r\n10.0.0.5:8080');
+
+  assert.equal(r.invalid.length, 0);
+  assert.equal(r.added.length, 5);
+  assert.equal(pool.proxies.length, 5);
+});
+
+test('proxy-pool: separadores não quebram host:porta:usuario:senha', async () => {
+  const pool = new LevelingProxyPool();
+  const r = pool.importText('gw.proxy.com:8000:user:senha1, gw.proxy.com:8000:user:senha2');
+
+  assert.equal(r.invalid.length, 0);
+  assert.equal(r.added.length, 2);
+  assert.ok(pool.proxies[0].url.includes('user'));
+});
+
+test('proxy-pool: linha idêntica repetida continua sendo duplicata', async () => {
+  const pool = new LevelingProxyPool();
+  const r = pool.importText('gw.proxy.com:8000:user:sess1\ngw.proxy.com:8000:user:sess1');
+
+  assert.equal(r.added.length, 1);
+  assert.equal(r.duplicates.length, 1, 'a senha igual mantém o id igual');
+  assert.equal(pool.proxies.length, 1);
 });
 
 test('proxy-pool: assign atribui conta ao proxy com vaga', async () => {

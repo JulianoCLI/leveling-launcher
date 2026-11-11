@@ -782,6 +782,72 @@ class MarketDatabase {
   }
 
   /**
+   * Apaga as vendas carimbadas com uma conta do launcher.
+   *
+   * É a única exclusão do módulo, e existe só para o "apagar conta": o banco
+   * não apaga nada por idade porque é o único lugar onde o histórico existe.
+   * Aqui o pedido é explícito e do usuário, e deixar as vendas dele no disco
+   * depois de remover a conta significaria que a remoção não aconteceu.
+   *
+   * O recorte é estreito de propósito: `seller_index = ?` só pega o que o push
+   * `market_push` carimbou. O feed global (`seller_index IS NULL`) é quase todo
+   * o banco e não é venda de ninguém daqui — nada dele sai.
+   *
+   * @returns {number} Quantas linhas saíram.
+   */
+  deleteBySeller(index) {
+    if (!this.open() || !Number.isInteger(index) || index < 0) return 0;
+    let apagadas = 0;
+    this.db.exec('BEGIN');
+    try {
+      const r = this.db
+        .prepare('DELETE FROM sales WHERE seller_index = ?')
+        .run(index);
+      apagadas = (r && Number(r.changes)) || 0;
+      this.db.exec('COMMIT');
+    } catch (err) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      this.error = err && err.message || String(err);
+      return 0;
+    }
+    if (apagadas) this.invalidate();
+    return apagadas;
+  }
+
+  /**
+   * Apaga as vendas carimbadas com uma conta do launcher.
+   *
+   * É a única exclusão do módulo, e existe só para o "apagar conta": o banco
+   * não apaga nada por idade porque é o único lugar onde o histórico existe.
+   * Aqui o pedido é explícito e do usuário, e deixar as vendas dele no disco
+   * depois de remover a conta significaria que a remoção não aconteceu.
+   *
+   * O recorte é estreito de propósito: `seller_index = ?` só pega o que o push
+   * `market_push` carimbou. O feed global (`seller_index IS NULL`) é quase todo
+   * o banco e não é venda de ninguém daqui — nada dele sai.
+   *
+   * @returns {number} Quantas linhas saíram.
+   */
+  deleteBySeller(index) {
+    if (!this.open() || !Number.isInteger(index) || index < 0) return 0;
+    let apagadas = 0;
+    this.db.exec('BEGIN');
+    try {
+      const r = this.db
+        .prepare('DELETE FROM sales WHERE seller_index = ?')
+        .run(index);
+      apagadas = (r && Number(r.changes)) || 0;
+      this.db.exec('COMMIT');
+    } catch (err) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      this.error = err && err.message || String(err);
+      return 0;
+    }
+    if (apagadas) this.invalidate();
+    return apagadas;
+  }
+
+  /**
    * As últimas vendas de um item, para o preço automático do anúncio.
    *
    * Separado de `recent` porque a pergunta é outra: ali é "o que acabou de

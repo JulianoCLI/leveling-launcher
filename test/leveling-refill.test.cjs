@@ -8,6 +8,8 @@ const {
   plan,
   readCatalog
 } = require('../src/domain/leveling-refill');
+const { getCodec } = require('../src/domain/leveling-codec');
+const { LevelingHeadlessClient } = require('../src/domain/leveling-headless-service');
 
 /** Catálogo mínimo: preço de cada tier mais a oferta de essência. */
 const catalog = {
@@ -381,4 +383,289 @@ test('catálogo sem oferta de essência não inventa preço', () => {
     catalog: extracted
   });
   assert.deepEqual(result.skipped, [{ key: 'essence', reason: 'sem-preco' }]);
+});
+
+// ------------------------------------------------ regressão do ciclo de compra
+//
+// O planejamento acima é puro; o que segue cobre a execução, que é onde o
+// ciclo travava. Dois modos de travamento, medidos contra o servidor real:
+// `shop.npcRequired` quando o personagem é tirado do balcão no meio das duas
+// passagens de compra, e o HUD preso em "Comprando na cidade…" quando o leg de
+// volta nunca responde e a limpeza do estado não roda.
+
+const codec = getCodec();
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/** Socket de mentira que fala o mesmo protobuf binário do servidor real. */
+class MockWebSocket {
+  constructor(url, options) {
+    this.url = url;
+    this.options = options;
+    this.readyState = 0;
+    this.sent = [];
+    this.replied = new Set();
+    MockWebSocket.last = this;
+    setTimeout(() => {
+      this.readyState = 1;
+      if (this.onopen) this.onopen();
+    }, 1);
+  }
+
+  send(data) {
+    this.sent.push(codec.ClientMessage.decode(data).toJSON());
+  }
+
+  close(code) {
+    this.readyState = 3;
+    if (this.onclose) this.onclose({ code: code || 1000 });
+  }
+
+  push(caseName, value, requestId = 0) {
+    const payload = { [caseName]: value };
+    if (requestId) payload.request_id = requestId;
+    const buf = codec.ServerMessage.encode(codec.ServerMessage.create(payload)).finish();
+    if (this.onmessage) this.onmessage({ data: Buffer.from(buf) });
+  }
+
+  /** Responde o primeiro request ainda pendente daquele case. */
+  reply(clientCase, caseName, value) {
+    const match = this.sent.find(m => m[clientCase] !== undefined && !this.replied.has(m.request_id));
+    assert.ok(match, `nenhum request de ${clientCase} pendente de resposta`);
+    this.replied.add(match.request_id);
+    this.push(caseName, value, Number(match.request_id));
+  }
+}
+
+const HUNT = { gate_id: 'castelo-demonios', tier_min: 36, difficulty: 'normal' };
+
+const SHOP_NPC = {
+  entity: 2,
+  npc_id: 'comerciante',
+  name: 'Brok, o Comerciante',
+  pos: { x: 13330, y: 15500 },
+  service: 2 // NPC_SERVICE_SHOP
+};
+
+const catalogPush = {
+  version: 'test',
+  consumables: [{ kind: 1, tier: 1, price: 10 }],
+  shop: [],
+  rules: { city_scene_id: 'cidade-seul' }
+};
+
+const refillOn = items => ({ enabled: true, reserveGold: 0, items });
+
+const sentCount = (ws, caseName) => ws.sent.filter(m => m[caseName] !== undefined).length;
+
+/** Espera o cliente enviar um pacote, sem prazo fixo no caso de teste. */
+async function waitSent(ws, caseName, afterCount = 0) {
+  for (let i = 0; i < 200; i++) {
+    if (sentCount(ws, caseName) > afterCount) return ws.sent.filter(m => m[caseName] !== undefined).pop();
+    await sleep(5);
+  }
+  return null;
+}
+
+function makeClient(options = {}) {
+  return new LevelingHeadlessClient(0, {
+    WebSocket: MockWebSocket,
+    username: 'cacador',
+    password: 'segredo',
+    autoReconnect: false,
+    requestTimeoutMs: 200,
+    ...options
+  });
+}
+
+/** Conecta, autentica, entrega o catálogo e põe a conta na caçada. */
+async function bootRefill(client) {
+  client.connect();
+  await sleep(10);
+  const ws = MockWebSocket.last;
+  ws.reply('login', 'auth_ok', { token: 't', account_id: 1 });
+  await sleep(5);
+  ws.push('content_catalog', catalogPush);
+  ws.push('scene_enter', {
+    scene_id: 'castelo-demonios',
+    kind: 2, // SCENE_KIND_HUNT
+    your_entity: 7,
+    hunt: HUNT
+  });
+  await sleep(5);
+  return ws;
+}
+
+/** Faz o papel do servidor na viagem: travel → cena → move_to → chegada → interact. */
+async function serveTripToShop(ws, { npc = SHOP_NPC, cityPush } = {}) {
+  assert.ok(await waitSent(ws, 'travel'), 'o refill precisa viajar para comprar');
+  ws.push('scene_enter', cityPush || {
+    scene_id: 'cidade-seul',
+    kind: 1, // SCENE_KIND_CITY
+    your_entity: 7,
+    npcs: npc ? [npc] : []
+  });
+  await sleep(5);
+
+  const antes = sentCount(ws, 'move_to') - 1;
+  assert.ok(await waitSent(ws, 'move_to', antes), 'sem andar o servidor ignora o interact');
+  ws.push('world_snapshot', { entities: [{ id: 7, x: npc.pos.x, y: npc.pos.y }] });
+  await sleep(5);
+
+  const antesI = sentCount(ws, 'interact') - 1;
+  assert.ok(await waitSent(ws, 'interact', antesI), 'a loja abre pelo interact no NPC');
+  ws.push('npc_interaction', { entity: npc.entity, npc_id: npc.npc_id, service: 2 });
+  await sleep(5);
+}
+
+test('a loja também é achada em SceneEnter.interactions', async () => {
+  // Medido no proto: `SceneInteraction` traz o mesmo `service` do NPC. Em cenas
+  // em que a loja só chega por ali, o ciclo morria em `refill.noShopNpc`.
+  const client = makeClient({
+    refillConfig: refillOn({ hpPequena: { min: 20, target: 21 } }),
+    refillBackoffMs: 60000
+  });
+  const ws = await bootRefill(client);
+
+  ws.push('character_state', {
+    progress: { level: 40 },
+    wallet: { gold: 100000 },
+    consumables: { hp_potions: { pequena: 5 } }
+  });
+
+  await serveTripToShop(ws, {
+    cityPush: {
+      scene_id: 'cidade-seul',
+      kind: 1,
+      your_entity: 7,
+      npcs: [],
+      interactions: [{ entity: 2, interaction_id: 'loja', pos: SHOP_NPC.pos, radius: 100, service: 2 }]
+    }
+  });
+
+  assert.deepEqual(client.sceneInteractions.length, 1, 'as interações da cena são lidas');
+  assert.ok(await waitSent(ws, 'buy_consumable'), 'a loja das interações serve para comprar');
+  client.disconnect();
+});
+
+test('scene_enter no meio da compra não colhe shop.npcRequired e limpa o estado', async () => {
+  // Um puxão de grupo ou troca de canal invalida a cena e zera `trip.pos`.
+  // Antes o ciclo seguia comprando às cegas e o servidor respondia
+  // `shop.npcRequired`; agora ele reafirma o balcão antes de cada compra.
+  const client = makeClient({
+    refillConfig: refillOn({ hpPequena: { min: 20, target: 50 } }),
+    refillBackoffMs: 60000
+  });
+  const ws = await bootRefill(client);
+
+  const events = [];
+  client.on('refill', e => events.push(e));
+
+  ws.push('character_state', {
+    progress: { level: 40 },
+    wallet: { gold: 100000 },
+    consumables: { hp_potions: { pequena: 5 } }
+  });
+
+  await serveTripToShop(ws);
+
+  // Sonda: uma unidade, para aprender o preço real.
+  assert.ok(await waitSent(ws, 'buy_consumable'));
+
+  // O puxão chega antes da resposta da sonda: é exatamente o caso real, em que
+  // o `scene_enter` de outra cena cai no meio das duas passagens de compra.
+  ws.push('scene_enter', { scene_id: 'outra-cacada', kind: 2, your_entity: 7, hunt: HUNT });
+  ws.reply('buy_consumable', 'buy_consumable_result', { qty: 1, gold_cost: 11, owned: 6 });
+  await sleep(30);
+
+  // Fora da cidade não há balcão para reencontrar: o ciclo desiste com nome
+  // próprio em vez de insistir e colher o erro do servidor.
+  assert.equal(sentCount(ws, 'buy_consumable'), 1, 'nenhuma compra sai fora do balcão');
+
+  const volta = await waitSent(ws, 'start_hunt');
+  assert.ok(volta, 'a conta volta à caçada mesmo assim');
+  ws.reply('start_hunt', 'start_hunt_result', { ...HUNT, scene_id: 'castelo-demonios' });
+  await sleep(5);
+  ws.push('scene_enter', { scene_id: 'castelo-demonios', kind: 2, your_entity: 7, hunt: HUNT });
+  await sleep(20);
+
+  const erros = events.filter(e => !e.ok).map(e => e.error);
+  assert.ok(!erros.includes('shop.npcRequired'), `não pode colher npcRequired: ${erros}`);
+  assert.ok(erros.includes('refill.leftShop'), `erro nomeado esperado, veio ${erros}`);
+
+  assert.equal(client.trip, null, 'a viagem encerrou');
+  assert.equal(client.state.refillTrip, false, 'o HUD para de avisar a compra');
+  assert.equal(client.refillBusy, false, 'e o próximo refill pode partir');
+  client.disconnect();
+});
+
+test('falha no leg de volta ainda limpa refillBusy e refillTrip', async () => {
+  // O pior travamento: o `start_hunt` da volta não responde, e sem prazo
+  // próprio as linhas de limpeza nunca rodavam — o HUD ficava em "Comprando na
+  // cidade…" para sempre, sem viagem nenhuma em curso.
+  const client = makeClient({
+    refillConfig: refillOn({ hpPequena: { min: 20, target: 21 } }),
+    refillBackoffMs: 60000,
+    requestTimeoutMs: 100
+  });
+  const ws = await bootRefill(client);
+
+  const events = [];
+  client.on('refill', e => events.push(e));
+
+  ws.push('character_state', {
+    progress: { level: 40 },
+    wallet: { gold: 100000 },
+    consumables: { hp_potions: { pequena: 5 } }
+  });
+
+  await serveTripToShop(ws);
+  assert.ok(await waitSent(ws, 'buy_consumable'));
+  ws.reply('buy_consumable', 'buy_consumable_result', { qty: 1, gold_cost: 11, owned: 21 });
+
+  // O `start_hunt` da volta sai e fica sem resposta de propósito.
+  assert.ok(await waitSent(ws, 'start_hunt'), 'a volta é tentada');
+  for (let i = 0; i < 100 && client.refillBusy; i++) await sleep(10);
+
+  assert.equal(client.refillBusy, false, 'o ciclo não pode ficar preso');
+  assert.equal(client.state.refillTrip, false, 'nem o aviso de compra no HUD');
+  assert.equal(client.trip, null);
+  const erros = events.filter(e => !e.ok).map(e => e.error);
+  assert.ok(erros.some(e => /volta falhou/.test(e)), `a falha da volta precisa aparecer: ${erros}`);
+  client.disconnect();
+});
+
+test('rejeição dentro de runRefill não deixa o HUD preso na cidade', async () => {
+  // Sem o `.catch()` em `maybeRefill` a rejeição era engolida pelo runtime e
+  // `refillTrip` ficava ligado para sempre.
+  const client = makeClient({ refillConfig: refillOn({ hpPequena: { min: 20, target: 50 } }) });
+  const ws = await bootRefill(client);
+
+  const events = [];
+  client.on('refill', e => events.push(e));
+
+  // Rejeita antes de qualquer `try` interno: é a rejeição que ninguém tratava.
+  client.runRefill = async () => { throw new Error('plano explodiu'); };
+  client.state.refillTrip = true;
+  client.trip = { pos: null, startedAt: Date.now() };
+
+  // Estoque abaixo do mínimo: é o que faz o refill partir.
+  ws.push('character_state', {
+    progress: { level: 40 },
+    wallet: { gold: 100000 },
+    consumables: { hp_potions: { pequena: 5 } }
+  });
+  await sleep(30);
+
+  assert.equal(client.refillBusy, false);
+  assert.equal(client.state.refillTrip, false, 'o estado de viagem é zerado defensivamente');
+  assert.equal(client.trip, null);
+  assert.ok(events.some(e => !e.ok && /plano explodiu/.test(e.error)), 'o erro precisa aparecer');
+  assert.equal(sentCount(ws, 'travel'), 0);
+  client.disconnect();
+});
+
+test('NPC_REACH tem margem sobre o limite medido de 700', async () => {
+  const { NPC_REACH } = require('../src/domain/leveling-headless-service');
+  assert.ok(NPC_REACH < 700, '700 cru não deixa margem para uma snapshot atrasada');
+  assert.ok(NPC_REACH >= 500, 'margem exagerada obrigaria a andar sem necessidade');
 });

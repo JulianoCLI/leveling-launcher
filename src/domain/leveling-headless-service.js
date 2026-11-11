@@ -150,8 +150,19 @@ const REFILL_BACKOFF_MS = 300000;
  */
 const TRIP_TIMEOUT_MS = 45000;
 
-/** Distância em que o servidor aceita `interact` no NPC. Medido ≤700. */
-const NPC_REACH = 700;
+/**
+ * Teto só do leg de volta (`start_hunt` + `scene_enter`). Ele roda no `finally`
+ * do ciclo, fora do `TRIP_TIMEOUT_MS`, e sem prazo próprio uma resposta que
+ * nunca chega travava a limpeza do estado de viagem para sempre.
+ */
+const RETURN_TIMEOUT_MS = 30000;
+
+/**
+ * Distância em que o servidor aceita `interact` no NPC. Medido: ≤700 é o
+ * limite exato em que ele responde. 700 cru não deixa margem — uma snapshot
+ * um passo atrasada já estoura — então a viagem trabalha com 600.
+ */
+const NPC_REACH = 600;
 
 /**
  * Intervalo do coletor do mercado. Medido: `market_request{history}` devolve
@@ -727,6 +738,8 @@ class LevelingHeadlessClient extends EventEmitter {
     this.ownEntity = 0;
     /** NPCs da cena corrente; o de loja é achado por `NPC_SERVICE_SHOP`. */
     this.sceneNpcs = [];
+    /** Interações da cena corrente; a loja também pode vir por aqui. */
+    this.sceneInteractions = [];
     /** Viagem que não chegou ao `start_hunt`; o próximo login resgata. */
     this.tripInterrupted = false;
     /**
@@ -1149,7 +1162,14 @@ class LevelingHeadlessClient extends EventEmitter {
       ? 'sniper'
       : 'normal';
     const manager = this.manager || {};
-    const wait = manager.limiter ? manager.limiter.wait(classname) : Promise.resolve();
+    // O prazo conta desde já, não desde a saída do limitador: um limitador
+    // travado prendia a chamada para sempre, porque o timeout só era armado
+    // depois do `wait`. O orçamento total continua sendo `requestTimeoutMs`.
+    const prazoFinal = Date.now() + this.requestTimeoutMs;
+    const wait = manager.limiter
+      ? this.withTimeout(manager.limiter.wait(classname), this.requestTimeoutMs)
+          .catch(() => { throw new Error(`timeout em ${caseName}`); })
+      : Promise.resolve();
 
     return wait.then(() => {
       const id = this.nextRequestId;
@@ -1163,10 +1183,12 @@ class LevelingHeadlessClient extends EventEmitter {
       }
 
       return new Promise((resolve, reject) => {
+        // O que restou do prazo depois da espera no limitador.
+        const restante = Math.max(1, prazoFinal - Date.now());
         const timer = setTimeout(() => {
           this.pending.delete(id);
           reject(new Error(`timeout em ${caseName}`));
-        }, this.requestTimeoutMs);
+        }, restante);
         this.pending.set(id, {
           resolve: res => { clearTimeout(timer); resolve(res); },
           reject: err => { clearTimeout(timer); reject(err); }
@@ -1736,6 +1758,9 @@ class LevelingHeadlessClient extends EventEmitter {
     // o balcão, e só valem para a cena que acabou de chegar.
     this.ownEntity = Number(value.your_entity) || 0;
     this.sceneNpcs = Array.isArray(value.npcs) ? value.npcs : [];
+    // `SceneInteraction` traz o mesmo `service` do NPC, e em algumas cenas a
+    // loja só chega por aqui — sem ler isto o refill morria em `noShopNpc`.
+    this.sceneInteractions = Array.isArray(value.interactions) ? value.interactions : [];
     if (this.trip) this.trip.pos = null;
 
     // Arrasto durante um hop de câmbio. Medido na sonda: o líder do grupo troca
@@ -1999,7 +2024,19 @@ class LevelingHeadlessClient extends EventEmitter {
 
     this.refillBusy = true;
     this.refillAt = Date.now() + this.refillIntervalMs;
-    this.runRefill().finally(() => { this.refillBusy = false; });
+    // Sem o `catch` uma rejeição aqui era engolida pelo runtime e deixava
+    // `refillTrip` ligado para sempre: o HUD ficava em "Comprando na cidade…"
+    // sem nenhuma viagem em curso, e o próximo refill nem partia.
+    this.runRefill()
+      .catch(err => {
+        const erro = (err && err.message) || String(err);
+        this.lastError = erro;
+        this.trip = null;
+        this.state.refillTrip = false;
+        this.emit('refill', { index: this.index, ok: false, error: erro, items: [] });
+        this.emitUpdate();
+      })
+      .finally(() => { this.refillBusy = false; });
   }
 
   /**
@@ -2073,8 +2110,14 @@ class LevelingHeadlessClient extends EventEmitter {
       // em curso sem motivo e zerar os contadores da sessão.
       if (this.isOpen() && this.state.scene.id !== cenaOrigem) {
         try {
-          await this.request('start_hunt', ticket);
-          await this.waitFor('scene_enter', 15000);
+          // Teto próprio para a volta. Era o único trecho obrigatório do ciclo
+          // sem prazo global: se o `start_hunt` ou o `scene_enter` nunca
+          // voltassem, as linhas de limpeza abaixo nunca rodavam e a conta
+          // ficava marcada como em viagem para sempre.
+          await this.withTimeout((async () => {
+            await this.request('start_hunt', ticket);
+            await this.waitFor('scene_enter', 15000);
+          })(), RETURN_TIMEOUT_MS);
         } catch (err) {
           // Falhar aqui deixa a conta na cidade: é o pior caso e precisa
           // aparecer, não ser engolido.
@@ -2119,28 +2162,29 @@ class LevelingHeadlessClient extends EventEmitter {
     const bought = [];
 
     // ------------------------------------------------------------- 1. viagem
-    this.emitPacket('travel', { scene_id: cidade });
+    // `await` nos envios: eles passam pelo limitador e podem falhar com o
+    // socket fechado. Sem `await` a rejeição sumia e o ciclo seguia esperando
+    // um pacote que nunca foi pedido.
+    try {
+      await this.emitPacket('travel', { scene_id: cidade });
+    } catch {
+      return { bought, error: 'refill.travelSendFailed' };
+    }
     const chegou = await this.waitFor('scene_enter', 15000);
     if (!chegou || chegou.scene_id !== cidade) {
       return { bought, error: 'refill.travelFailed' };
     }
 
     // -------------------------------------------------------- 2. achar a loja
-    const loja = this.sceneNpcs.find(n => n && n.service === 'NPC_SERVICE_SHOP' && n.pos);
+    const loja = this.acharLoja();
     if (!loja) return { bought, error: 'refill.noShopNpc' };
 
     // --------------------------------------------------------- 3. ir ao balcão
     // Medido: sem andar, o servidor ignora o `interact` em silêncio e a compra
     // responde `shop.npcRequired`. A caminhada é simulada no servidor e leva
     // ~3 s; o fim dela é observado nas snapshots, não esperado por prazo.
-    this.emitPacket('move_to', { x: loja.pos.x, y: loja.pos.y });
-    const chegouAoBalcao = await this.walkTo(loja.pos);
-    if (!chegouAoBalcao) return { bought, error: 'refill.walkFailed' };
-
-    // --------------------------------------------------------- 4. abrir a loja
-    this.emitPacket('interact', { entity: loja.entity });
-    const abriu = await this.waitFor('npc_interaction', 5000);
-    if (!abriu) return { bought, error: 'refill.shopNotOpen' };
+    const noBalcao = await this.irAoBalcao(cidade, loja);
+    if (noBalcao.error) return { bought, error: noBalcao.error };
 
     // ------------------------------------------------------------- 5. comprar
     // Em série, nunca em paralelo: em paralelo os pedidos dividiriam o mesmo
@@ -2151,12 +2195,20 @@ class LevelingHeadlessClient extends EventEmitter {
     // a primeira sonda uma unidade de cada item e aprende o `gold_cost`, a
     // segunda compra o lote restante com o preço real. Já estando no balcão,
     // isso não custa viagem nenhuma.
+    //
+    // Antes de cada compra a presença no balcão é reafirmada: um `scene_enter`
+    // no meio (puxão de grupo, troca de canal) invalida a cena e zera
+    // `trip.pos`, e aí o servidor responde `shop.npcRequired`. Validar só uma
+    // vez na chegada não bastava.
     for (let passagem = 0; passagem < 2; passagem++) {
       const plano = this.planRefill();
       if (!plano.orders.length) break;
 
       for (const order of plano.orders) {
         if (!this.isOpen()) return { bought, error: 'refill.disconnected' };
+
+        const ainda = await this.assegurarBalcao(cidade, loja);
+        if (ainda.error) return { bought, error: ainda.error };
 
         let response;
         try {
@@ -2182,6 +2234,74 @@ class LevelingHeadlessClient extends EventEmitter {
     }
 
     return { bought, error: '' };
+  }
+
+  /**
+   * O NPC de loja da cena atual. Olha primeiro os NPCs e depois as
+   * `interactions` do `scene_enter`: medido no proto, `SceneInteraction` traz
+   * `service` igual ao do NPC, e em algumas cenas a loja chega só por ali —
+   * sem isso o ciclo morria em `refill.noShopNpc` sem motivo real.
+   */
+  acharLoja() {
+    const porServico = n => n && n.service === 'NPC_SERVICE_SHOP' && n.pos;
+    const npc = this.sceneNpcs.find(porServico);
+    if (npc) return npc;
+    const inter = (this.sceneInteractions || []).find(porServico);
+    return inter || null;
+  }
+
+  /** Distância até o balcão, ou `null` se a posição própria é desconhecida. */
+  distanciaAoBalcao(loja) {
+    const pos = this.trip && this.trip.pos;
+    if (!pos || !loja || !loja.pos) return null;
+    return Math.hypot(pos.x - loja.pos.x, pos.y - loja.pos.y);
+  }
+
+  /**
+   * Anda até o balcão e abre a loja. Usado na ida e na retomada depois de um
+   * `scene_enter` ter invalidado a posição.
+   */
+  async irAoBalcao(cidade, loja) {
+    try {
+      await this.emitPacket('move_to', { x: loja.pos.x, y: loja.pos.y });
+    } catch {
+      return { error: 'refill.walkSendFailed' };
+    }
+    if (!await this.walkTo(loja.pos)) return { error: 'refill.walkFailed' };
+    if (this.state.scene.id !== cidade) return { error: 'refill.leftShop' };
+
+    try {
+      await this.emitPacket('interact', { entity: loja.entity });
+    } catch {
+      return { error: 'refill.interactSendFailed' };
+    }
+    if (!await this.waitFor('npc_interaction', 5000)) return { error: 'refill.shopNotOpen' };
+    return { error: '' };
+  }
+
+  /**
+   * Reafirma que o personagem continua na cidade e ao alcance do balcão. É o
+   * que impede o `shop.npcRequired`: o servidor só vende com o personagem
+   * fisicamente junto do NPC, e um puxão de grupo ou uma troca de canal tira a
+   * conta de lá no meio das duas passagens de compra. Tenta voltar ao balcão
+   * uma vez; se não der, falha com nome próprio em vez de insistir e colher o
+   * erro do servidor.
+   */
+  async assegurarBalcao(cidade, loja) {
+    const dentro = () => {
+      if (this.state.scene.id !== cidade) return false;
+      const dist = this.distanciaAoBalcao(loja);
+      return dist != null && dist <= NPC_REACH;
+    };
+    if (dentro()) return { error: '' };
+    // Fora da cidade não há balcão para reencontrar: andar seria para o lugar
+    // errado, e o `finally` do ciclo já devolve a conta à caçada.
+    if (this.state.scene.id !== cidade) return { error: 'refill.leftShop' };
+
+    const atual = this.acharLoja() || loja;
+    const retomada = await this.irAoBalcao(cidade, atual);
+    if (retomada.error) return { error: 'refill.leftShop' };
+    return dentro() ? { error: '' } : { error: 'refill.leftShop' };
   }
 
   /**

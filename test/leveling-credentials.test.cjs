@@ -261,17 +261,90 @@ test('sem safeStorage, ainda funciona e avisa que não está cifrado', () => {
 
 test('limpar a conta apaga a credencial e mantém a rota', () => {
   const store = new LevelingCredentialStore({ filePath: tmpFile(), safeStorage: fakeSafeStorage });
-  store.setCredentials(2, 'u', 'p');
+  store.setPendingSignup(2, { username: 'u', password: 'p', email: 'u@exemplo.com' });
   store.setToken(2, 'tok');
   store.setProxy(2, '10.0.0.1:8080');
   store.clear(2);
+
+  // `clear` continua sendo a limpeza branda: quem já a usava conta com o email
+  // e a rota de pé. Apagar de verdade é `wipe`.
+  assert.equal(store.get(2).email, 'u@exemplo.com');
+  assert.equal(store.get(2).proxy, 'http://10.0.0.1:8080');
 
   // O proxy descreve por onde o slot sai, não quem usa: trocar de conta no
   // mesmo slot normalmente mantém a rota.
   assert.deepEqual(store.get(2), {
     username: '', password: '', token: '', proxy: 'http://10.0.0.1:8080',
-    email: '', signup: false, classId: ''
+    email: 'u@exemplo.com', signup: false, classId: ''
   });
+});
+
+test('apagar a conta zera o slot inteiro, inclusive rota, email e classe', () => {
+  // O pedido do "Apagar conta" é outro que o do `clear`: o usuário mandou
+  // remover a conta, e deixar o email do cadastro ou a rota antiga no disco
+  // significaria que "removida" não era verdade.
+  const store = new LevelingCredentialStore({ filePath: tmpFile(), safeStorage: fakeSafeStorage });
+  store.setPendingSignup(2, {
+    username: 'u', password: 'p', email: 'u@exemplo.com', classId: 'mago'
+  });
+  store.setProxy(2, '10.0.0.1:8080');
+  store.setToken(2, 'tok');
+
+  assert.equal(store.wipe(2), true);
+  assert.deepEqual(store.get(2), {
+    username: '', password: '', token: '', proxy: '', email: '', signup: false, classId: ''
+  });
+
+  // E o slot continua existindo: encolher moveria as contas seguintes.
+  assert.equal(store.getPublicStatus().accounts.length, 4);
+});
+
+test('apagar a conta não encosta nas vizinhas', () => {
+  const store = new LevelingCredentialStore({ filePath: tmpFile(), safeStorage: fakeSafeStorage });
+  store.setCredentials(1, 'segunda', 'p1');
+  store.setCredentials(2, 'terceira', 'p2');
+
+  store.wipe(1);
+  assert.equal(store.get(1).username, '');
+  assert.equal(store.get(2).username, 'terceira', 'o índice da conta 3 não anda');
+});
+
+test('apagar fora dos limites recusa em vez de criar slot', () => {
+  const store = new LevelingCredentialStore({ filePath: tmpFile(), safeStorage: fakeSafeStorage });
+  assert.equal(store.wipe(-1), false);
+  assert.equal(store.wipe(99), false);
+  assert.equal(store.getPublicStatus().accounts.length, 4);
+});
+
+test('trocar as credenciais preserva a classe do personagem', () => {
+  // A classe é do personagem, não do login: trocar a senha não o faz renascer.
+  // `setCredentials` omitia o campo, e a escolha do assistente sumia — então a
+  // WebView deixava de marcar o cartão no modal da conta nova.
+  const store = new LevelingCredentialStore({ filePath: tmpFile(), safeStorage: fakeSafeStorage });
+  store.setPendingSignup(0, {
+    username: 'a1', password: 'Abcdef1!', email: 'a@b.com', classId: 'healer'
+  });
+
+  store.setCredentials(0, 'a1', 'outra-senha');
+  assert.equal(store.get(0).classId, 'healer');
+});
+
+test('a conta do sniper volta de um arquivo cifrado', () => {
+  /*
+   * A regressão: o `sniper` era lido numa segunda abertura do arquivo, tratado
+   * como UTF-8 puro (`this.canEncrypt() ? 'utf8' : 'utf8'`, um ternário que não
+   * decidia nada). Num arquivo cifrado o `JSON.parse` estourava sempre, e a
+   * conta do sniper nunca carregava — mesmo estando salva ali ao lado.
+   */
+  const file = tmpFile();
+  const store = new LevelingCredentialStore({ filePath: file, safeStorage: fakeSafeStorage });
+  store.setSniper('atirador', 'segredo', '1.2.3.4:8080');
+
+  const relido = new LevelingCredentialStore({ filePath: file, safeStorage: fakeSafeStorage });
+  assert.equal(relido.getSniper().username, 'atirador');
+  assert.equal(relido.getSniper().password, 'segredo');
+  assert.equal(relido.getSniper().proxy, 'http://1.2.3.4:8080');
+  assert.equal(relido.getPublicStatus().sniper.hasPassword, true);
 });
 
 test('o proxy aceita as formas curtas que os provedores entregam', () => {
@@ -328,6 +401,54 @@ test('a senha mascarada não é carregada para outra rota', () => {
   assert.equal(store.get(0).proxy, 'http://zed@9.9.9.9:9000');
   assert.equal(store.getPublicStatus().accounts[0].proxyIncomplete, true,
     'e a rota sem senha é denunciada, em vez de falhar calada');
+});
+
+test('apagar a conta leva só as vendas dela do banco do mercado', () => {
+  /*
+   * A outra metade do "apagar conta": a credencial saía e o histórico de vendas
+   * ficava, então a aba de anúncios continuava mostrando o que uma conta
+   * removida vendeu.
+   *
+   * O recorte tem de ser estreito. `seller_index IS NULL` é o feed público —
+   * quase todo o banco, e venda de ninguém daqui. Levá-lo junto destruiria o
+   * único lugar onde esse histórico existe: o servidor só lembra meia hora.
+   */
+  const { MarketDatabase } = require('../src/domain/leveling-market-db');
+  const db = new MarketDatabase(':memory:');
+  assert.ok(db.open(), `banco não abriu: ${db.error}`);
+
+  const venda = (id, seller) => ({
+    id: String(id),
+    listing_id: String(id * 7),
+    kind: 'MARKET_KIND_ITEM',
+    def_id: 'espada',
+    name: 'espada',
+    currency: 'MARKET_CURRENCY_GOLD',
+    quantity: '1',
+    unit_price: '100',
+    total: '100',
+    sold_at_ms: String(Date.now()),
+    ...(seller === null ? {} : { seller_index: seller })
+  });
+
+  db.insertSales([venda(1, 0), venda(2, 0), venda(3, 1), venda(4, null)]);
+
+  assert.equal(db.deleteBySeller(0), 2, 'as duas vendas da conta 1');
+  assert.equal(db.mySales({ index: 0 }).length, 0);
+  assert.equal(db.mySales({ index: 1 }).length, 1, 'a conta 2 não é tocada');
+
+  // O feed global fica: ninguém pediu para apagá-lo, e ele não volta.
+  const todas = db.db.prepare('SELECT COUNT(*) AS n FROM sales').get();
+  assert.equal(Number(todas.n), 2, 'sobra a venda da conta 2 e a do feed');
+
+  // Apagar duas vezes não é erro, e não tem nada a apagar na segunda.
+  assert.equal(db.deleteBySeller(0), 0);
+  // Índice inválido não vira um DELETE sem cláusula.
+  assert.equal(db.deleteBySeller(-1), 0);
+  assert.equal(db.deleteBySeller(null), 0);
+  assert.equal(Number(db.db.prepare('SELECT COUNT(*) AS n FROM sales').get().n), 2);
+
+  db.close();
 });
 
 test('rota com usuário e sem senha é sinalizada', () => {

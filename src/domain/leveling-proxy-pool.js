@@ -52,12 +52,28 @@ class LevelingProxyPool {
    *   - host:porta
    *   - host:porta:usuario:senha
    *   - URL completa (http://..., socks5://...)
-   * Uma linha por proxy. Linhas vazias e comentários (#...) são ignorados.
+   * Um proxy por entrada. Linhas vazias e comentários (#...) são ignorados.
    *
-   * Deduplica por URL normalizada. Retorna { added, duplicates, invalid }.
+   * Os separadores aceitos vão além do `\n`: vírgula, ponto-e-vírgula e espaço
+   * também separam. Quem copia de um painel de proxies raramente cola uma linha
+   * por proxy, e antes uma colagem com vírgulas virava uma única entrada
+   * inválida — dez proxies perdidos de uma vez. Dividir por espaço é seguro
+   * porque nenhum formato aceito (`host:porta`, `host:porta:usuario:senha`,
+   * URL) contém espaço.
+   *
+   * Deduplica por URL normalizada completa.
+   *
+   * @param {string} text Texto colado pelo usuário.
+   * @returns {{added: ProxyEntry[], duplicates: string[], invalid: string[]}}
+   *   `added` traz as entradas completas, as mesmas que ficaram em
+   *   `this.proxies` ({ id, url, label, status, ip, checkedAt, error }) — quem
+   *   importa precisa do `id` para testar o que entrou, e devolver só a string
+   *   do id fazia o chamador ler `.id` de uma string e testar `undefined`.
+   *   `duplicates` traz os labels (senha mascarada) do que já estava no pool, e
+   *   `invalid` as entradas cruas que não viraram URL.
    */
   importText(text) {
-    const lines = (text || '').split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+    const lines = splitProxyText(text);
     const added = [];
     const duplicates = [];
     const invalid = [];
@@ -77,7 +93,7 @@ class LevelingProxyPool {
           continue;
         }
 
-        this.proxies.push({
+        const entry = {
           id,
           url,
           label: describeProxy(url),
@@ -85,8 +101,11 @@ class LevelingProxyPool {
           ip: '',
           checkedAt: 0,
           error: ''
-        });
-        added.push(id);
+        };
+        this.proxies.push(entry);
+        // Cópia: `added` atravessa o IPC e não pode ser uma alça para mexer no
+        // estado do pool.
+        added.push({ ...entry });
       } catch (e) {
         invalid.push(line);
       }
@@ -356,11 +375,38 @@ class LevelingProxyPool {
   }
 }
 
+/**
+ * Quebra o texto colado em entradas de proxy.
+ *
+ * Comentários são removidos por linha, antes de dividir pelos outros
+ * separadores: cortar `#` só no começo do token deixava o resto do comentário
+ * virar entrada inválida assim que o espaço passou a separar.
+ * @private
+ */
+function splitProxyText(text) {
+  return String(text || '')
+    .split(/[\r\n]+/)
+    .map(linha => linha.split('#')[0])
+    .flatMap(linha => linha.split(/[,;\s]+/))
+    .map(entrada => entrada.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Chave de dedupe de um proxy.
+ *
+ * A senha entra na chave. Sem ela, uma lista de proxy rotativo — mesmo
+ * gateway, mesmo usuário, sessão codificada na senha — colapsava inteira num
+ * único id: dez linhas coladas viravam um proxy importado e nove "duplicatas".
+ * Normaliza: remove trailing slash, ignora query/fragment.
+ * @private
+ */
 function hashUrl(url) {
   try {
     const u = new URL(url);
-    // Normaliza: remove trailing slash, ignora query/fragment
-    const key = u.protocol + '//' + (u.username ? u.username + '@' : '') + u.host + u.pathname;
+    const credenciais = u.username ? u.username + ':' + u.password + '@' : '';
+    const caminho = u.pathname.replace(/\/+$/, '');
+    const key = u.protocol + '//' + credenciais + u.host + caminho;
     return 'px_' + hashString(key);
   } catch {
     return 'px_' + hashString(String(url));

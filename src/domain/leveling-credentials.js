@@ -162,6 +162,12 @@ class LevelingCredentialStore {
     const file = this.getFilePath();
     let proxyPool = new LevelingProxyPool();
 
+    // O `sniper` sai do mesmo JSON das contas, então é lido no mesmo passo.
+    // Reabrir o arquivo depois era o defeito: a segunda leitura o tratava como
+    // UTF-8 puro e, num arquivo cifrado, estourava sempre — a conta do sniper
+    // nunca carregava, mesmo estando salva.
+    let sniper = emptyAccount();
+
     try {
       if (fs.existsSync(file)) {
         const raw = fs.readFileSync(file);
@@ -177,6 +183,7 @@ class LevelingCredentialStore {
           json = raw.toString('utf-8');
         }
         const parsed = JSON.parse(json);
+        if (parsed.sniper) sniper = { ...emptyAccount(), ...parsed.sniper };
         if (Array.isArray(parsed.accounts)) {
           // O arquivo manda no tamanho: quem já tinha oito contas salvas não
           // pode perder quatro só porque o padrão em memória é quatro.
@@ -208,11 +215,7 @@ class LevelingCredentialStore {
       // Arquivo corrompido não deve impedir o launcher de abrir.
     }
 
-    this.cache = { accounts, sniper: emptyAccount(), proxyPool };
-    try {
-      const parsed = JSON.parse(fs.readFileSync(file, this.canEncrypt() ? 'utf8' : 'utf8'));
-      if (parsed.sniper) this.cache.sniper = { ...emptyAccount(), ...parsed.sniper };
-    } catch {}
+    this.cache = { accounts, sniper, proxyPool };
     return this.cache;
   }
 
@@ -308,7 +311,11 @@ class LevelingCredentialStore {
       email: acc.email || '',
       // Gravar credencial à mão é o caso de uma conta que já existe; só o
       // assistente de cadastro marca `signup`, e ele usa `setSignup`.
-      signup: false
+      signup: false,
+      // A classe é do personagem, não do login: trocar a senha não o faz
+      // renascer. Omitir o campo aqui apagava a escolha do assistente e a
+      // WebView deixava de marcar o cartão no modal da conta nova.
+      classId: acc.classId || ''
     };
     return this.save(data);
   }
@@ -414,6 +421,38 @@ class LevelingCredentialStore {
   /** Apaga a conta e mantém o proxy: o slot costuma receber outra conta na mesma rota. */
   clear(index) {
     return this.setCredentials(index, '', '');
+  }
+
+  /**
+   * Apaga o slot **inteiro**, inclusive proxy, email e classe.
+   *
+   * Diferente de `clear`, que guarda a rota porque o slot costuma receber outra
+   * conta no mesmo lugar. Aqui o pedido é outro: o usuário mandou remover a
+   * conta, e deixar o email do cadastro ou a rota antiga no disco significaria
+   * que "removida" não era verdade. O slot continua existindo, vazio — a
+   * partição é persistente e os índices das outras contas não podem andar.
+   */
+  wipe(index) {
+    if (index < 0 || index >= this.maxAccounts) return false;
+    const data = this.load();
+    data.accounts[index] = emptyAccount();
+    return this.save(data);
+  }
+
+  /**
+   * Apaga o slot **inteiro**, inclusive proxy, email e classe.
+   *
+   * Diferente de `clear`, que guarda a rota porque o slot costuma receber outra
+   * conta no mesmo lugar. Aqui o pedido é outro: o usuário mandou remover a
+   * conta, e deixar o email do cadastro ou a rota antiga no disco significaria
+   * que "removida" não era verdade. O slot continua existindo, vazio — a
+   * partição é persistente e os índices das outras contas não podem andar.
+   */
+  wipe(index) {
+    if (index < 0 || index >= this.maxAccounts) return false;
+    const data = this.load();
+    data.accounts[index] = emptyAccount();
+    return this.save(data);
   }
 
   /** Visão sem segredos, segura para mandar ao renderizador. */
