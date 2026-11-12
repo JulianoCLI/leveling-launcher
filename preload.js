@@ -55,6 +55,9 @@ contextBridge.exposeInMainWorld('pokeAPI', {
   // O assistente guardou um plano: o launcher abre as abas das contas
   // reservadas, cada uma já na sua rota e com o formulário preenchido.
   onSignupReady: (cb) => ipcRenderer.on('leveling:signup:ready', (_e, data) => cb(data)),
+  // O cadastro é sequencial: o principal abre uma janela por vez e narra onde
+  // a fila está, para o painel não parecer travado entre dois captchas.
+  onSignupProgress: (cb) => ipcRenderer.on('leveling:signup:progress', (_e, data) => cb(data)),
 
   // Grupo: monta uma PT com as contas da aba que já estão em modo monitor.
   levelingAssembleParty: (indexes) => ipcRenderer.invoke('leveling:party:assemble', indexes),

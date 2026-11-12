@@ -53,7 +53,7 @@ function makeRoot() {
       root.children = indices.map(index => {
         const card = makeEl();
         card.attrs['data-index'] = index;
-        const roles = ['pill', 'user', 'pass', 'save', 'toggle', 'proxy', 'saveProxy', 'meta'];
+        const roles = ['pill', 'user', 'pass', 'save', 'toggle', 'proxy', 'saveProxy', 'wipe', 'meta'];
         card.children = roles.map(role => {
           const child = makeEl();
           child.attrs['data-role'] = role;
@@ -224,7 +224,7 @@ test('da terceira conta em diante, sem proxy a conta não abre', async () => {
   const { card } = load(api);
   await tick();
 
-  assert.equal(field(card(2), 'proxy').textContent, 'sem proxy · esta conta não abre');
+  assert.equal(field(card(2), 'proxy').textContent, 'sem proxy · atribua um no pool');
   assert.equal(field(card(2), 'toggle').disabled, true, 'o monitor não liga sem rota');
   assert.match(field(card(2), 'toggle').title, /Sem rota de saída/);
 

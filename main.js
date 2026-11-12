@@ -1411,13 +1411,24 @@ ipcMain.handle('leveling:signup:save', event => {
    * rota e o formulário preenchidos, sem o usuário ter de procurar em qual
    * slot cada nome caiu.
    */
+  /*
+   * Quem abre as janelas é o principal, uma por vez (`signupQueue`). O
+   * renderer continua recebendo `salvos` porque é ele que dimensiona as abas:
+   * sem a capacidade aberta, a conta existe em credencial e não tem painel
+   * onde aparecer quando o cadastro terminar.
+   */
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('leveling:signup:ready', salvos);
+    mainWindow.webContents.send('leveling:signup:ready', { accounts: salvos, abrePeloMain: true });
     try {
       mainWindow.show();
       mainWindow.focus();
     } catch { /* janela indisponível; as abas abrem quando ela voltar */ }
   }
+
+  // Depois do aviso: o primeiro `leveling:signup:progress` sai de dentro de
+  // `enfileirar`, e mandá-lo antes do `ready` deixaria o renderer narrando uma
+  // conta que ele ainda não sabe que existe.
+  signupQueue.enfileirar(salvos);
 
   return {
     ok: true,
@@ -3134,6 +3145,25 @@ ipcMain.handle('leveling:signup:window', event => {
  */
 const signupTabs = new Map();
 
+/*
+ * A fila vive aqui, no principal, e não no renderer.
+ *
+ * Só o principal vê os dois sinais que encerram um cadastro: o
+ * `leveling:signup:post-done` do preload da conta e o `closed` da janela. O
+ * renderer não tem evento equivalente — `leveling:signup:monitor` chega 1,5 s
+ * depois e é pulado quando a credencial não valida, então uma fila do lado
+ * dele travaria na primeira conta que falhasse.
+ */
+const { SignupQueue } = require('./src/domain/leveling-signup-queue.js');
+
+const signupQueue = new SignupQueue({
+  abrir: index => openSignupTab(index),
+  progresso: estado => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send('leveling:signup:progress', estado);
+  }
+});
+
 function openSignupTab(index) {
   const num = index + 1;
 
@@ -3164,18 +3194,18 @@ function openSignupTab(index) {
 
     const creds = levelingCredentials.get(index);
 
-    // Escalonadas: com duas contas no mesmo plano, as janelas nasciam uma
-    // exatamente sobre a outra e parecia que só a de cima tinha sido
-    // preenchida. O deslocamento é por janela já aberta, não pelo índice da
-    // conta, senão a conta 7 abriria fora da tela.
-    const desloco = signupTabs.size * 40;
+    // Posição fixa: com a fila sequencial existe uma janela de cadastro por
+    // vez, então o antigo deslocamento em cascata (`signupTabs.size * 40`),
+    // que existia para as janelas não nascerem uma sobre a outra, era sempre
+    // zero. Lugar previsível também ajuda: o captcha aparece sempre no mesmo
+    // canto.
     const win = new BrowserWindow({
       width: 760,
       height: 900,
       minWidth: 420,
       minHeight: 600,
-      x: 80 + desloco,
-      y: 40 + desloco,
+      x: 80,
+      y: 40,
       title: `Cadastrar conta ${num}` + (creds.username ? ` — ${creds.username}` : ''),
       webPreferences: {
         partition: 'persist:conta' + num,
@@ -3189,7 +3219,19 @@ function openSignupTab(index) {
     signupTabs.set(index, win);
     win.loadURL(GAME_URL);
     win.once('ready-to-show', () => win.show());
-    win.on('closed', () => { signupTabs.delete(index); });
+    /*
+     * Avançar aqui é o que impede a fila de travar para sempre. O caminho
+     * feliz avança no `post-done`, mas o usuário pode fechar a janela no meio
+     * do captcha, e o preload da conta também desiste sozinho no teto de
+     * 180 s. Nos dois casos o único aviso que chega é este `closed`.
+     *
+     * `avancar` confere o índice, então o `closed` que o próprio `post-done`
+     * dispara ao fechar a janela não consome uma conta extra.
+     */
+    win.on('closed', () => {
+      signupTabs.delete(index);
+      signupQueue.avancar(index);
+    });
     return { ok: true };
   } catch (e) {
     logErro('signup-tab', `conta${num}: ${e.message}`);
@@ -3994,6 +4036,14 @@ ipcMain.on('leveling:signup:post-done', event => {
   try {
     tab.close();
   } catch { /* já fechando */ }
+
+  /*
+   * Próxima conta da fila. É aqui, e não só no `closed`, porque o `closed`
+   * desta janela pode demorar um tique e o usuário ficaria olhando a tela sem
+   * nada acontecendo. O guard por índice dentro de `avancar` garante que o
+   * `closed` seguinte não avance de novo.
+   */
+  signupQueue.avancar(index);
 
   const creds = levelingCredentials.get(index);
   if (!creds.username || !creds.password) return;

@@ -333,26 +333,48 @@
     aviso.textContent = '';
 
     const titulo = document.createElement('strong');
-    titulo.textContent = `Conta ${index + 1} bloqueada`;
+    titulo.textContent = `Conta ${index + 1}: sem proxy atribuído`;
+
+    // O motivo vem do processo principal (`canOpen`), que é quem conhece o
+    // limite real do pool. Repeti-lo aqui evita divergir da regra.
     const texto = document.createElement('p');
-    texto.textContent = motivo || 'sem rota de saída.';
+    texto.textContent = motivo
+      ? `${motivo}.`
+      : 'Esta conta não tem rota de saída.';
+
+    const regra = document.createElement('p');
+    regra.textContent = 'O servidor recusa mais de duas contas no mesmo endereço, '
+      + 'então só as duas primeiras contas saem pelo IP da máquina. '
+      + 'Da terceira em diante é preciso um proxy aprovado no pool — '
+      + 'cada proxy abre duas contas.';
+
     const dica = document.createElement('p');
     dica.className = 'panel-blocked-hint';
-    dica.textContent = 'Importe e teste um proxy no pool: cada proxy aprovado abre duas contas.';
+    dica.textContent = 'O painel volta sozinho assim que a conta ganhar rota: '
+      + 'não é preciso recarregar nada.';
 
-    const botao = document.createElement('button');
-    botao.type = 'button';
-    botao.textContent = 'Gerenciar proxies';
-    botao.onclick = () => {
-      try {
-        const r = api.proxiesWindow && api.proxiesWindow();
-        if (r && typeof r.catch === 'function') r.catch(e => report('proxies:window', e));
-      } catch (e) {
-        report('proxies:window', e);
-      }
-    };
-
-    aviso.append(titulo, texto, dica, botao);
+    // Só oferece o botão se a bridge existir; sem ela, dizer onde clicar é mais
+    // útil do que um botão que não faz nada.
+    const temBridge = !!(api && typeof api.proxiesWindow === 'function');
+    if (temBridge) {
+      const botao = document.createElement('button');
+      botao.type = 'button';
+      botao.textContent = 'Importar e testar proxies';
+      botao.onclick = () => {
+        try {
+          const r = api.proxiesWindow();
+          if (r && typeof r.catch === 'function') r.catch(e => report('proxies:window', e));
+        } catch (e) {
+          report('proxies:window', e);
+        }
+      };
+      aviso.append(titulo, texto, regra, botao, dica);
+    } else {
+      const onde = document.createElement('p');
+      onde.className = 'panel-blocked-hint';
+      onde.textContent = 'Abra o pool pelo botão "Proxies" na barra do topo.';
+      aviso.append(titulo, texto, regra, onde, dica);
+    }
   }
 
   /** Tira o aviso de bloqueio, quando a conta ganha rota. */
@@ -642,8 +664,10 @@
     }
 
     if (api.onSignupReady) {
-      api.onSignupReady(saved => openSignupTabs(saved).catch(e => report('signup:ready', e)));
+      api.onSignupReady(data => prepareSignup(data).catch(e => report('signup:ready', e)));
     }
+
+    if (api.onSignupProgress) api.onSignupProgress(data => onSignupProgress(data || {}));
 
     if (api.onSignupMonitor) api.onSignupMonitor(data => onSignupMonitor(data || {}));
 
@@ -651,35 +675,28 @@
   }
 
   /**
-   * Abre uma janela de cadastro por conta reservada.
+   * Prepara a barra para o cadastro assistido.
    *
-   * A janela roda na partição da própria conta, então ela já sai pelo proxy
-   * dela e o login que o cadastro gravar fica exatamente onde a WebView do
-   * painel vai procurar. Terminado o cadastro, o principal fecha a janela e
-   * avisa por `onSignupDone`, e o painel recarrega já logado.
+   * Quem abre as janelas é o processo principal, uma de cada vez: só ele vê o
+   * `post-done` do preload da conta e o `closed` da janela, que são os dois
+   * sinais de "este cadastro acabou". Abrir em laço aqui era o modo antigo, e
+   * ele punha todas as janelas em cascata — o usuário resolvia um captcha
+   * enquanto os outros expiravam.
    *
-   * Por isso aqui não se troca de aba nem se mexe em painel: a conta não
-   * precisa estar visível para ser cadastrada. O painel só é tocado no fim,
-   * quando há sessão para mostrar.
+   * Aqui não se troca de aba nem se mexe em painel: a conta não precisa estar
+   * visível para ser cadastrada. O painel só é tocado no fim, quando há sessão
+   * para mostrar.
    */
-  async function openSignupTabs(saved) {
+  async function prepareSignup(saved) {
     const lista = Array.isArray(saved) ? saved.filter(s => s && s.index >= 0) : [];
     if (!lista.length) return;
 
     // A barra acompanha a capacidade que o principal abriu, senão a conta
-    // existe em credencial e não tem painel onde aparecer depois.
+    // existe em credencial e não tem painel onde aparecer depois. Continua
+    // aqui, e antes de tudo: é o renderer que dimensiona os painéis, e a
+    // primeira janela da fila já pode estar aberta quando isto roda.
     const precisa = Math.floor(Math.max(...lista.map(s => s.index)) / PER_TAB) + 1;
     if (precisa > tabs) await setTabCount(precisa);
-
-    for (const s of lista) {
-      const r = await api.levelingSignupTab?.(s.index).catch(e => {
-        report('signup:tab', e);
-        return null;
-      });
-      if (r && r.ok === false) {
-        window.alert(`Não foi possível abrir o cadastro da conta ${s.index + 1}: ${r.error || 'erro'}`);
-      }
-    }
 
     const semProxy = lista.filter(s => !s.proxy).map(s => s.username);
     if (semProxy.length) {
@@ -689,6 +706,39 @@
         + 'Importe proxies antes de concluir o cadastro.'
       );
     }
+  }
+
+  /**
+   * Narra a fila de cadastro no próprio botão, como o grupo faz: é onde o
+   * usuário está olhando, e uma janela por vez é lenta o bastante para que
+   * "sumiu tudo" pareça travamento sem esse retorno.
+   */
+  function onSignupProgress({ index, posicao, total, estado, error, erros }) {
+    const botao = document.getElementById('signupBtn');
+    if (!botao) return;
+
+    if (estado === 'fim') {
+      botao.classList.remove('is-on');
+      botao.disabled = false;
+      botao.title = botao.dataset.title || '';
+      const falhas = Array.isArray(erros) ? erros : [];
+      if (falhas.length) {
+        const linhas = falhas.map(f => `Conta ${f.index + 1}: ${f.error || 'erro'}`);
+        window.alert(`Cadastro concluído, mas estas contas não abriram:\n\n${linhas.join('\n')}`);
+      }
+      return;
+    }
+
+    // Uma conta recusada não para a fila — o principal segue para a próxima —,
+    // então aqui ela é só anotada no título, sem alerta que bloqueie o resto.
+    if (estado === 'erro') {
+      botao.title = `Conta ${index + 1} não abriu: ${error || 'erro'}. Seguindo…`;
+      return;
+    }
+
+    botao.classList.add('is-on');
+    botao.disabled = true;
+    botao.title = `Cadastrando conta ${index + 1} (${posicao} de ${total})…`;
   }
 
   /**
@@ -1200,22 +1250,41 @@
     const tabConfig = tabPrefs(tab);
     const total = Math.min(PER_TAB, Math.max(1, +tabConfig.panels || 1));
 
+    let ligadas = 0;
+
     for (let slot = 0; slot < total; slot++) {
       const index = tab * PER_TAB + slot;
       const entry = stateOf(index);
       if (ACTIVE.has(entry.status)) continue;
+
+      /*
+       * Espaça os logins.
+       *
+       * `levelingStart` devolve assim que o socket é *criado*, não conectado,
+       * então o laço inteiro — e, no boot, o de todas as abas — disparava
+       * `login` no mesmo milissegundo. O servidor responde `ratelimit.login`,
+       * que aqui custa 3 minutos de espera (`RATELIMIT_RETRY_MS`): é o
+       * "monitor carregando infinito que depois volta ao normal".
+       *
+       * O jitter evita que abas diferentes caiam na mesma grade de tempo.
+       */
+      if (ligadas) await espacar(400 + Math.random() * 400);
+
       const result = await api.levelingStart(index).catch(e => {
         report('leveling:start', e);
         return null;
       });
       // Sem credencial a conta fica no jogo normal; não é erro de execução.
       if (!result || result.ok === false) continue;
+      ligadas++;
       unloadGame(index);
       entry.status = 'connecting';
       entry.error = '';
       paintPanel(index);
     }
   }
+
+  const espacar = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   /**
    * Recebe as rotas do pool e decide o que cada painel mostra.

@@ -375,7 +375,9 @@
         // alarme falso no caso mais comum que existe.
         proxy.textContent = 'meu IP · permitido nas 2 primeiras contas';
       } else {
-        proxy.textContent = 'sem proxy · esta conta não abre';
+        // Diz o que fazer, não só o que está errado: o botão "Gerenciar
+        // proxies" está na mesma linha, logo ao lado.
+        proxy.textContent = 'sem proxy · atribua um no pool';
       }
 
       // Avisa quando a rota não serve: proxy reprovado, rota sem senha, ou
@@ -385,7 +387,8 @@
       proxy.title = acc.proxyIncomplete
         ? 'Esta rota tem usuário mas não tem senha: o proxy vai recusar a conexão.'
         : porta && porta.ok === false
-          ? `Esta conta está bloqueada: ${porta.motivo}.`
+          ? `Esta conta não abre: ${porta.motivo}. `
+          + 'Use "Gerenciar proxies" para importar e testar um: cada proxy aprovado abre duas contas.'
           : rota && rota.kind === 'local'
             ? 'Sai pelo IP da máquina. O servidor recusa mais de duas contas no mesmo endereço.'
             : 'A rota vem do pool de proxies, que limita duas contas por proxy.';
@@ -405,7 +408,8 @@
         : semRota
           // A rota vem antes da credencial: conectar sem proxy é o que o
           // servidor pune, e ele pune a conta, não a tentativa.
-          ? `Sem rota de saída: ${porta.motivo}.`
+          ? `Sem rota de saída: ${porta.motivo}. `
+            + 'Atribua um proxy aprovado no pool e o monitor libera.'
           : acc.pendingSignup
             ? 'Esta conta ainda não foi criada: conclua o cadastro na aba do jogo.'
             : 'Faça login na aba do jogo, ou salve usuário e senha aqui.';

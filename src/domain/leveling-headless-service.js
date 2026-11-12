@@ -124,6 +124,15 @@ const RECONNECT_MIN_MS = 2000;
 const RECONNECT_MAX_MS = 30000;
 
 /**
+ * Teto do aperto de mão do WebSocket. O prazo de `REQUEST_TIMEOUT_MS` só começa
+ * a contar dentro do `onopen`, via `authenticate`; se o `onopen` nunca chega —
+ * TCP pendurado, TLS sem resposta, `CONNECT` de proxy em buraco negro — não há
+ * relógio nenhum e a conta fica em 'connecting' para sempre. Mais folgado que
+ * os 8 s de `proxyPublicIp` porque aqui há proxy, TLS e fila de sessão no meio.
+ */
+const HANDSHAKE_TIMEOUT_MS = 20000;
+
+/**
  * O servidor limita tentativas de autenticação (`ratelimit.login`). Insistir no
  * backoff normal só renova a punição, então erro de limite espera bem mais.
  */
@@ -949,8 +958,44 @@ class LevelingHeadlessClient extends EventEmitter {
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
 
+    /*
+     * Teto para o aperto de mão.
+     *
+     * O timeout de 15 s que já existia vive *dentro* do `onopen`, via
+     * `authenticate`: ele só começa a contar depois que o socket abriu. Se o
+     * `onopen` nunca chega — TCP pendurado, TLS sem resposta, `CONNECT` de
+     * proxy em buraco negro — nenhum relógio corria, e a conta ficava em
+     * 'connecting' para sempre. É o "monitor carregando infinito".
+     *
+     * Mesmo espírito dos `headersTimeout` de 8 s de `proxyPublicIp`, com folga
+     * maior porque aqui há proxy, TLS e fila de sessão no caminho.
+     */
+    let handshakeTimer = setTimeout(() => {
+      handshakeTimer = null;
+      if (this.ws !== ws || encerrado) return;
+      encerrado = true;
+      this.fail('connect.timeout');
+      this.close();
+      this.scheduleReconnect();
+    }, this.handshakeTimeoutMs || HANDSHAKE_TIMEOUT_MS);
+    if (handshakeTimer.unref) handshakeTimer.unref();
+
+    const clearHandshake = () => {
+      if (handshakeTimer) clearTimeout(handshakeTimer);
+      handshakeTimer = null;
+    };
+
+    /*
+     * Guarda de transição: `onerror` e `onclose` podem chegar os dois, em
+     * qualquer ordem, e nem sempre os dois chegam. Um erro que não gera
+     * `onclose` deixava o status em 'connecting' — o mesmo carregamento eterno
+     * —, e tratar o erro sem guarda faria a conta agendar duas reconexões.
+     */
+    let encerrado = false;
+
     ws.onopen = () => {
       if (this.ws !== ws) return;
+      clearHandshake();
       this.authenticate().catch(err => {
         // O `request` da autenticação rejeita por timeout ou socket fechado.
         // Só anotar o erro deixava o monitor pendurado para sempre: socket
@@ -971,10 +1016,23 @@ class LevelingHeadlessClient extends EventEmitter {
     ws.onerror = err => {
       if (this.ws !== ws) return;
       this.lastError = (err && err.message) || 'erro de conexão no WebSocket';
+      // Só anotar o erro era o bastante quando o `onclose` vinha atrás; quando
+      // não vem, ninguém mais mexe no status. Fechar e reagendar aqui é o que
+      // tira a conta do 'connecting' — a guarda evita a dupla transição no
+      // caso normal, em que o `onclose` chega depois.
+      if (encerrado) return;
+      encerrado = true;
+      clearHandshake();
+      this.close();
+      this.setStatus('error');
+      this.scheduleReconnect();
     };
 
     ws.onclose = () => {
       if (this.ws !== ws) return;
+      if (encerrado) return;
+      encerrado = true;
+      clearHandshake();
       this.teardown();
       this.setStatus('disconnected');
       this.scheduleReconnect();
